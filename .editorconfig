@@ -1,0 +1,37 @@
+# Surakkha — EditorConfig.
+# The lowest layer of "we all agree on whitespace". Compatible with VS Code,
+# JetBrains, Vim, Sublime, and any editor that reads EditorConfig.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown is prose; trailing whitespace can be meaningful (two-space line
+# break). Disable trimming to preserve author intent.
+[*.md]
+trim_trailing_whitespace = false
+
+# YAML: same.
+[*.yml]
+trim_trailing_whitespace = false
+
+# Makefiles require hard tabs.
+[Makefile]
+indent_style = tab
+
+# Windows-native shell scripts default to CRLF; preserve.
+[*.bat]
+end_of_line = crlf
+
+# Bash/PowerShell: LF is the modern default but tolerate CRLF on Windows checkouts.
+[*.sh]
+end_of_line = lf
+
+[*.ps1]
+end_of_line = crlf

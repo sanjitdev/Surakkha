@@ -1,0 +1,335 @@
+// Surakkha — root ESLint flat config (ESLint 9.x).
+//
+// Tooling stack (kept aligned with CONTRIBUTING.md and architecture §2):
+//   - ESLint 9.x flat config
+//   - TypeScript via @typescript-eslint
+//   - React + hooks + a11y for packages/web
+//   - Node rules via eslint-plugin-n for packages/api and packages/simulator
+//   - Import boundary enforcement: prevents one epic from importing types
+//     from another epic's directory (see CONTRIBUTING.md cross-cutting rule).
+//   - Prettier is wired LAST so it disables conflicting stylistic rules.
+//
+// To run:
+//   pnpm lint          # lint everything
+//   pnpm lint:fix      # auto-fix what can be fixed
+//
+// When packages are added later, append a block under `packages/<name>/**`
+// with the matching plugin profile. Until then, this config is a no-op
+// because ESLint walks the configured globs and finds no files.
+
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import reactPlugin from "eslint-plugin-react";
+import reactHooks from "eslint-plugin-react-hooks";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+import importPlugin from "eslint-plugin-import";
+import nodePlugin from "eslint-plugin-n";
+import prettier from "eslint-config-prettier";
+
+// ---------------------------------------------------------------------------
+// Shared defaults.
+// ---------------------------------------------------------------------------
+
+/** Base rules applied to every TS/TSX file in the workspace. */
+const baseTsRules = {
+  // Quality bar — keep the bar high but pragmatic.
+  "no-console": ["warn", { allow: ["warn", "error"] }],
+  "no-debugger": "error",
+  "no-alert": "warn",
+  "no-var": "error",
+  "prefer-const": "error",
+  "prefer-arrow-callback": "error",
+  "object-shorthand": ["error", "always"],
+  "no-unused-vars": "off", // delegated to TS plugin below
+  "no-undef": "off", // TS handles this
+  eqeqeq: ["error", "always", { null: "ignore" }],
+  "no-implicit-coercion": ["error", { boolean: false, number: true, string: true }],
+  "no-throw-literal": "error",
+  "no-return-await": "off", // TS plugin handles this
+  "no-else-return": ["error", { allowElseIf: false }],
+  "no-lonely-if": "error",
+  "no-useless-rename": "error",
+  "no-useless-return": "error",
+  "no-multi-spaces": ["error", { ignoreEOLComments: true }],
+  "no-trailing-spaces": "error",
+  "comma-dangle": ["error", "always-multiline"],
+  semi: ["error", "always"],
+  quotes: ["error", "double", { avoidEscape: true, allowTemplateLiterals: false }],
+  curly: ["error", "multi-line"],
+  "arrow-body-style": ["error", "as-needed", { requireReturnForObjectLiteral: false }],
+  "no-param-reassign": ["error", { props: true }],
+  "max-lines-per-function": ["warn", { max: 200, skipComments: true, skipBlankLines: true }],
+  complexity: ["warn", { max: 10 }],
+  "max-depth": ["warn", { max: 4 }],
+  "max-nested-callbacks": ["warn", { max: 3 }],
+};
+
+/** @typescript-eslint rules layered on top of `baseTsRules`. */
+const tsRules = {
+  "@typescript-eslint/no-unused-vars": [
+    "error",
+    {
+      argsIgnorePattern: "^_",
+      varsIgnorePattern: "^_",
+      caughtErrorsIgnorePattern: "^_",
+      ignoreRestSiblings: true,
+    },
+  ],
+  "@typescript-eslint/no-explicit-any": "error",
+  "@typescript-eslint/no-non-null-assertion": "warn",
+  "@typescript-eslint/no-unsafe-assignment": "warn",
+  "@typescript-eslint/no-unsafe-member-access": "warn",
+  "@typescript-eslint/no-unsafe-call": "warn",
+  "@typescript-eslint/no-unsafe-return": "warn",
+  "@typescript-eslint/no-floating-promises": "error",
+  "@typescript-eslint/no-misused-promises": "error",
+  "@typescript-eslint/require-await": "error",
+  "@typescript-eslint/await-thenable": "error",
+  "@typescript-eslint/return-await": ["error", "in-try-catch"],
+  "@typescript-eslint/no-unnecessary-condition": ["warn", { allowConstantLoopConditions: true }],
+  "@typescript-eslint/consistent-type-imports": [
+    "error",
+    { prefer: "type-imports", fixStyle: "inline-type-imports" },
+  ],
+  "@typescript-eslint/explicit-module-boundary-types": "off",
+  "@typescript-eslint/no-empty-function": ["error", { allow: ["arrowFunctions"] }],
+  "@typescript-eslint/no-shadow": ["error", { builtinGlobals: false, hoist: "functions" }],
+  "@typescript-eslint/consistent-type-definitions": ["error", "interface"],
+  "@typescript-eslint/array-type": ["error", { default: "array-simple" }],
+};
+
+// ---------------------------------------------------------------------------
+// Config.
+// ---------------------------------------------------------------------------
+
+export default [
+  // Always: ignore generated and vendored paths so the linter doesn't drown.
+  {
+    ignores: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/coverage/**",
+      "**/.next/**",
+      "**/.turbo/**",
+      "**/.cache/**",
+      "**/postgres-data/**",
+      "_bmad/**",
+      "_bmad-output/**/.working/**",
+      "pnpm-lock.yaml",
+    ],
+  },
+
+  // 1. Base JS rules — every JS/TS file.
+  js.configs.recommended,
+
+  // 2. TypeScript recommended + strict-but-pragmatic.
+  ...tseslint.configs.recommended,
+
+  // 3. Apply the project rule sets to TS/TSX files.
+  {
+    files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        // Browser globals for the web package.
+        window: "readonly",
+        document: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        global: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        setImmediate: "readonly",
+        clearImmediate: "readonly",
+        queueMicrotask: "readonly",
+      },
+    },
+    rules: {
+      ...baseTsRules,
+      ...tsRules,
+    },
+  },
+
+  // 4. React-specific rules for packages/web.
+  {
+    files: ["packages/web/**/*.{ts,tsx}"],
+    plugins: {
+      react: reactPlugin,
+      "react-hooks": reactHooks,
+      "jsx-a11y": jsxA11y,
+    },
+    languageOptions: {
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    settings: {
+      react: { version: "detect" },
+    },
+    rules: {
+      ...reactPlugin.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
+      "react/react-in-jsx-scope": "off", // not needed with the new JSX transform
+      "react/prop-types": "off", // TypeScript handles this
+      "react/display-name": "off",
+      "react/jsx-key": "error",
+      "react/jsx-no-duplicate-props": "error",
+      "react/no-unescaped-entities": ["error", { forbid: [">", "}"] }],
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+      "jsx-a11y/anchor-is-valid": "off", // our router handles <a> links
+      "jsx-a11y/click-events-have-key-events": "warn",
+      "jsx-a11y/no-static-element-interactions": "warn",
+    },
+  },
+
+  // 5. Node-specific rules for packages/api and packages/simulator.
+  {
+    files: ["packages/api/**/*.ts", "packages/simulator/**/*.ts"],
+    plugins: { n: nodePlugin },
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+        module: "readonly",
+        require: "readonly",
+        global: "readonly",
+        console: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        setImmediate: "readonly",
+        clearImmediate: "readonly",
+      },
+    },
+    rules: {
+      "n/no-unsupported-features/node-builtins": "error",
+      "n/no-deprecated-api": "error",
+      "n/no-missing-import": "off",
+      "n/no-extraneous-import": "off",
+    },
+  },
+
+  // 6. Import-boundary enforcement (the cross-cutting rule from CONTRIBUTING.md).
+  //    Prevents one epic's source from importing types from another epic's
+  //    directory. Cross-epic types MUST live in packages/shared.
+  {
+    files: ["packages/api/src/**/*.ts", "packages/web/src/**/*.ts", "packages/simulator/src/**/*.ts"],
+    plugins: { import: importPlugin },
+    rules: {
+      "import/no-restricted-paths": [
+        "error",
+        {
+          zones: [
+            // Epic 1 (Auth & Identity) cannot reach into Epic 2..6 internals.
+            {
+              target: "./packages/api/src/auth",
+              from: [
+                "./packages/api/src/ingestion",
+                "./packages/api/src/rules",
+                "./packages/api/src/alerts",
+                "./packages/api/src/workflow",
+                "./packages/api/src/admin",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+            {
+              target: "./packages/api/src/ingestion",
+              from: [
+                "./packages/api/src/auth",
+                "./packages/api/src/rules",
+                "./packages/api/src/alerts",
+                "./packages/api/src/workflow",
+                "./packages/api/src/admin",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+            {
+              target: "./packages/api/src/rules",
+              from: [
+                "./packages/api/src/auth",
+                "./packages/api/src/ingestion",
+                "./packages/api/src/alerts",
+                "./packages/api/src/workflow",
+                "./packages/api/src/admin",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+            {
+              target: "./packages/api/src/alerts",
+              from: [
+                "./packages/api/src/auth",
+                "./packages/api/src/ingestion",
+                "./packages/api/src/rules",
+                "./packages/api/src/workflow",
+                "./packages/api/src/admin",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+            {
+              target: "./packages/api/src/workflow",
+              from: [
+                "./packages/api/src/auth",
+                "./packages/api/src/ingestion",
+                "./packages/api/src/rules",
+                "./packages/api/src/alerts",
+                "./packages/api/src/admin",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+            {
+              target: "./packages/api/src/admin",
+              from: [
+                "./packages/api/src/auth",
+                "./packages/api/src/ingestion",
+                "./packages/api/src/rules",
+                "./packages/api/src/alerts",
+                "./packages/api/src/workflow",
+              ],
+              message: "Cross-epic import blocked (CONTRIBUTING.md). Use packages/shared.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // 7. Tests: relax rules that fight test code.
+  {
+    files: ["**/__tests__/**/*.ts", "**/*.test.ts", "**/*.spec.ts", "**/test/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
+      "no-console": "off",
+      "max-lines-per-function": "off",
+      complexity: "off",
+      "max-nested-callbacks": "off",
+    },
+  },
+
+  // 8. JSON / JSONC (settings, tsconfig, lint configs themselves).
+  {
+    files: ["**/*.json", "**/*.jsonc"],
+    languageOptions: {
+      parser: await import("jsonc-eslint-parser").then((m) => m.default).catch(() => undefined),
+    },
+    rules: {
+      "no-unused-expressions": "off",
+    },
+  },
+
+  // 9. Prettier last — disables any stylistic ESLint rules that conflict.
+  prettier,
+];

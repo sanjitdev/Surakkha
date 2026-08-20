@@ -1,0 +1,214 @@
+# Surakkha — CI workflow (stub).
+#
+# This is a working stub for the post-implementation pipeline. It is checked
+# in now so the workflow slot exists; the actual build/test commands are
+# placeholders until the workspace lands in Step 0 Foundation Seam.
+#
+# When implementation begins, replace the placeholder commands with:
+#   - pnpm install --frozen-lockfile
+#   - pnpm --filter @surakkha/shared build && pnpm --filter @surakkha/shared test
+#   - pnpm --filter @surakkha/db migrate:test
+#   - pnpm --filter @surakkha/api lint && pnpm --filter @surakkha/api test --coverage
+#   - pnpm --filter @surakkha/web lint && pnpm --filter @surakkha/web test --coverage
+#   - pnpm --filter @surakkha/simulator test
+#   - docker compose -f docker-compose.test.yml up --abort-on-container-exit
+#
+# Coverage thresholds (NFR-12): api ≥ 70% lines, web ≥ 50% lines.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------
+  # 1. Shared package build.
+  #    Runs first because every other package depends on @surakkha/shared.
+  # --------------------------------------------------------------------
+  build-shared:
+    name: Build shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up pnpm 9
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        # Placeholder until Step 0 lands.
+        run: echo "TODO: pnpm install --frozen-lockfile"
+
+      - name: Build @surakkha/shared
+        # Placeholder until Step 0 lands.
+        run: echo "TODO: pnpm --filter @surakkha/shared build"
+
+      - name: Test @surakkha/shared
+        # Placeholder until Step 0 lands.
+        run: echo "TODO: pnpm --filter @surakkha/shared test"
+
+  # --------------------------------------------------------------------
+  # 2. API package — backend lint, test, and coverage gate (≥ 70% lines).
+  # --------------------------------------------------------------------
+  api:
+    name: api (lint + test + coverage)
+    runs-on: ubuntu-latest
+    needs: build-shared
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: surakkha
+          POSTGRES_PASSWORD: surakkha
+          POSTGRES_DB: surakkha_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U surakkha"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://surakkha:surakkha@localhost:5432/surakkha_test
+      JWT_SECRET: ci-secret-must-be-at-least-32-characters-long
+      SIMULATOR_SECRET: ci-simulator-secret
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up pnpm 9
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: echo "TODO: pnpm install --frozen-lockfile"
+
+      - name: Migrate database
+        run: echo "TODO: pnpm --filter @surakkha/db migrate:test"
+
+      - name: Lint api
+        run: echo "TODO: pnpm --filter @surakkha/api lint"
+
+      - name: Test api with coverage
+        run: echo "TODO: pnpm --filter @surakkha/api test --coverage"
+
+      - name: Enforce api coverage ≥ 70% lines (NFR-12)
+        # Placeholder — wire to c8/istanbul threshold check once Step 0 lands.
+        run: echo "TODO: enforce api coverage threshold"
+
+  # --------------------------------------------------------------------
+  # 3. Web package — frontend lint, test, and coverage gate (≥ 50% lines).
+  # --------------------------------------------------------------------
+  web:
+    name: web (lint + test + coverage)
+    runs-on: ubuntu-latest
+    needs: build-shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up pnpm 9
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: echo "TODO: pnpm install --frozen-lockfile"
+
+      - name: Lint web
+        run: echo "TODO: pnpm --filter @surakkha/web lint"
+
+      - name: Test web with coverage
+        run: echo "TODO: pnpm --filter @surakkha/web test --coverage"
+
+      - name: Enforce web coverage ≥ 50% lines (NFR-12)
+        run: echo "TODO: enforce web coverage threshold"
+
+  # --------------------------------------------------------------------
+  # 4. Simulator — unit tests only in CI; live integration runs locally.
+  # --------------------------------------------------------------------
+  simulator:
+    name: simulator (test)
+    runs-on: ubuntu-latest
+    needs: build-shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up pnpm 9
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: echo "TODO: pnpm install --frozen-lockfile"
+
+      - name: Test simulator
+        run: echo "TODO: pnpm --filter @surakkha/simulator test"
+
+  # --------------------------------------------------------------------
+  # 5. End-to-end suite — happy path + latency + negative RBAC.
+  # --------------------------------------------------------------------
+  e2e:
+    name: e2e (Playwright happy path + latency + negative RBAC)
+    runs-on: ubuntu-latest
+    needs: [api, web, simulator]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up pnpm 9
+        run: corepack enable && corepack prepare pnpm@9 --activate
+
+      - name: Install dependencies
+        run: echo "TODO: pnpm install --frozen-lockfile"
+
+      - name: Bring up docker compose
+        run: echo "TODO: docker compose -f docker-compose.test.yml up --abort-on-container-exit"
+
+      - name: Run happy-path e2e
+        # Story 6.9 (NFR-1, NFR-12): canonical smoke test.
+        run: echo "TODO: pnpm exec playwright test __tests__/e2e/happy-path.spec.ts"
+
+      - name: Run latency test
+        # Story 6.9 (NFR-1): alert + incident SLA ≤ 3s.
+        run: echo "TODO: pnpm exec playwright test __tests__/e2e/latency.spec.ts"
+
+      - name: Run negative RBAC test
+        # Story 1.8: 10+ denied-action cases.
+        run: echo "TODO: pnpm exec playwright test __tests__/rbac.negative.spec.ts"
+
+      - name: Tear down
+        if: always()
+        run: echo "TODO: docker compose -f docker-compose.test.yml down -v"

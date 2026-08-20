@@ -1,0 +1,23 @@
+# Surakkha — Prettier ignore list.
+# Mirrors ESLint ignores; both tools should agree on what is generated.
+
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.turbo/
+.cache/
+
+# Postgres data volume (mounted by docker-compose).
+postgres-data/
+
+# BMAD internal scripts and working files (not part of the shipped tree).
+_bmad/
+_bmad-output/**/.working/
+
+# Lockfile and generated manifests.
+pnpm-lock.yaml
+
+# HTML mockups are hand-tuned for fidelity — don't reformat.
+_bmad-output/**/mockups/
