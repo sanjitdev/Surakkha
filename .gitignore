@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+.vite/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+*.lcov
+
+# BMAD skill scripts (per-developer install, not a project artefact)
+_bmad/
+
+# BMAD UX working/staging area (drafts land in .working/ then promote to mockups/)
+_bmad-output/**/.working/
+
+# Docker volumes
+postgres-data/

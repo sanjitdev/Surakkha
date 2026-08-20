@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Incident Kanban</title>
+  <style>
+    /* @governs: DESIGN.md tokens (saturated severity palette, dark sidebar, primary gradient), EXPERIENCE.md sections:
+       Component Patterns (KanbanColumn with severity-coloured header strip, IncidentCard with severity border, Freshness tilt on new card, CriticalCard full-colour with red header strip, StatusPill, MiniTimeline)
+       State Patterns (Live update pulse on fresh critical card)
+       Flow (Kanban triage → drilldown → action) */
+
+    :root {
+      --sev-healthy: #1F9D55; --sev-healthy-text: #0F6B3A; --sev-healthy-fill: #16A34A;
+      --sev-healthy-bg: #E8F6EE; --sev-healthy-glow: #1F9D5533;
+      --sev-warning: #D97706; --sev-warning-text: #92400E; --sev-warning-fill: #F59E0B;
+      --sev-warning-bg: #FFF3DA; --sev-warning-glow: #F59E0B33;
+      --sev-critical: #DC2626; --sev-critical-text: #7F1D1D; --sev-critical-fill: #EF4444;
+      --sev-critical-bg: #FEE2E2; --sev-critical-glow: #EF444433;
+      --surface: #FFFFFF; --page: #F5F7F9;
+      --sidebar: #0F172A; --sidebar-text: #CBD5E1;
+      --border: #E2E8F0;
+      --body: #0F172A; --secondary: #475569;
+      --primary: #1E5BB8; --primary-hover: #1E40AF;
+      --primary-gradient: linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--page); color: var(--body); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 22px; }
+    a { color: var(--primary); } button { font-family: inherit; cursor: pointer; }
+
+    .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+    aside.sidebar { background: var(--sidebar); color: var(--sidebar-text); padding: 20px 0; position: sticky; top: 0; height: 100vh; }
+    .brand { padding: 0 20px 20px; border-bottom: 1px solid #1E293B; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .brand-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--primary-gradient); color: #fff; display: grid; place-items: center; font-weight: 700; }
+    .brand-name { font-weight: 600; font-size: 16px; color: #fff; }
+    .nav-group { padding: 0 12px; margin-bottom: 12px; }
+    .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748B; padding: 8px 12px 6px; font-weight: 600; }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 6px; color: var(--sidebar-text); text-decoration: none; font-size: 14px; }
+    .nav-item:hover { background: #1E293B; color: #fff; }
+    .nav-item[aria-current="page"] { background: #1E293B; color: #fff; font-weight: 500; }
+    .nav-item[aria-current="page"] .ico { color: #38BDF8; }
+    .nav-item .ico { width: 18px; height: 18px; display: inline-grid; place-items: center; color: #64748B; }
+
+    main.canvas { padding: 0; }
+    header.topbar { display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 24px; position: sticky; top: 0; background: var(--surface); z-index: 10; border-bottom: 1px solid var(--border); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+    .crumbs { color: var(--secondary); font-size: 13px; }
+    .crumbs a { color: var(--secondary); text-decoration: none; }
+    .crumbs .sep { margin: 0 8px; color: #94A3B8; }
+    .crumbs .cur { color: var(--body); font-weight: 600; }
+    .user { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 13px; margin-left: auto; }
+    .user .avatar { width: 32px; height: 32px; border-radius: 999px; background: #DBEAFE; color: var(--primary); display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+
+    .body { padding: 24px; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; }
+    .page-title { font-size: 22px; font-weight: 600; line-height: 28px; margin: 0; }
+    .page-sub { font-size: 13px; color: var(--secondary); margin-top: 4px; }
+    .filters { display: flex; gap: 8px; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; color: var(--body); font-size: 13px; font-weight: 500; }
+    .btn-ghost:hover { background: var(--page); }
+    .btn-primary { background: var(--primary); color: #fff; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; }
+
+    /* Kanban */
+    .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; align-items: flex-start; }
+    .col { background: transparent; min-width: 0; }
+    .col-h { display: flex; align-items: center; justify-content: space-between; padding: 8px 4px 14px; }
+    .col-h .lbl { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--body); }
+    .col-h .lbl .ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+    .col-h .lbl .ct { display: inline-grid; place-items: center; min-width: 24px; padding: 0 8px; height: 22px; border-radius: 999px; background: #F1F5F9; color: var(--secondary); font-size: 11px; font-weight: 700; }
+    .col.crit .col-h .lbl .ic { background: var(--sev-critical-bg); color: var(--sev-critical); }
+    .col.crit .col-h .lbl .ct { background: var(--sev-critical-bg); color: var(--sev-critical); }
+    .col.warn .col-h .lbl .ic { background: var(--sev-warning-bg); color: var(--sev-warning); }
+    .col.warn .col-h .lbl .ct { background: var(--sev-warning-bg); color: var(--sev-warning); }
+    .col.ok .col-h .lbl .ic { background: var(--sev-healthy-bg); color: var(--sev-healthy); }
+    .col.ok .col-h .lbl .ct { background: var(--sev-healthy-bg); color: var(--sev-healthy); }
+    .col.done .col-h .lbl .ic { background: #E2E8F0; color: var(--secondary); }
+    .col.done .col-h .lbl .ct { background: #E2E8F0; color: var(--secondary); }
+
+    .cards { display: flex; flex-direction: column; gap: 10px; }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06); padding: 14px 14px 14px 18px; position: relative; }
+    .card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 10px 0 0 10px; }
+    .card.crit::before { background: var(--sev-critical); }
+    .card.warn::before { background: var(--sev-warning); width: 2px; }
+    .card.ok::before { background: var(--sev-healthy); width: 3px; }
+    .card.done::before { background: #94A3B8; width: 2px; opacity: 0.6; }
+
+    .card .row1 { display: flex; justify-content: space-between; align-items: center; }
+    .card .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--secondary); font-weight: 600; }
+    .card .school { font-size: 13px; font-weight: 600; margin-top: 4px; }
+    .card .meta { font-size: 12px; color: var(--secondary); margin-top: 4px; }
+    .card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 11px; color: var(--secondary); }
+    .card .foot .assignee { display: flex; align-items: center; gap: 6px; }
+    .card .foot .avatar { width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-weight: 600; font-size: 10px; }
+
+    /* Critical full-colour */
+    .card.full-crit { background: var(--sev-critical-bg); border-color: var(--sev-critical); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 3px var(--sev-critical-glow); padding: 0; }
+    .card.full-crit::before { display: none; }
+    .card.full-crit .strip { background: var(--sev-critical); color: #fff; padding: 6px 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+    .card.full-crit .body-c { padding: 12px 14px 14px; }
+    .card.full-crit .id { color: var(--sev-critical-text); }
+    .card.full-crit .school { color: var(--sev-critical-text); }
+    .card.full-crit .meta { color: var(--sev-critical-text); opacity: 0.85; }
+    .card.full-crit .foot { color: var(--sev-critical-text); }
+    .card.full-crit .foot .avatar { background: rgba(255,255,255,0.9); }
+
+    /* Freshness tilt */
+    .card.fresh { transform: rotate(-1.2deg); transform-origin: left top; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 0 0 3px var(--sev-critical-glow); animation: fresh-pulse 1.5s ease-out infinite; }
+    @keyframes fresh-pulse { 0% { box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 0 0 3px var(--sev-critical-glow); } 50% { box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 0 0 6px var(--sev-critical-glow); } 100% { box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 0 0 3px var(--sev-critical-glow); } }
+
+    .new-badge { display: inline-flex; align-items: center; gap: 4px; background: var(--sev-critical); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 8px; }
+
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pill svg { width: 12px; height: 12px; }
+    .pill.p-critical { background: var(--sev-critical-bg); color: var(--sev-critical); border: 1px solid var(--sev-critical); }
+    .pill.p-warning { background: var(--sev-warning-bg); color: var(--sev-warning); border: 1px solid var(--sev-warning); }
+    .pill.p-healthy { background: var(--sev-healthy-bg); color: var(--sev-healthy); border: 1px solid var(--sev-healthy); }
+    .pill.p-neutral { background: #F1F5F9; color: var(--secondary); border: 1px solid var(--border); }
+
+    /* Empty column */
+    .empty { padding: 18px; text-align: center; font-size: 12px; color: var(--secondary); border: 1px dashed var(--border); border-radius: 10px; background: rgba(255,255,255,0.6); }
+
+    @media (prefers-reduced-motion: reduce) { .card.fresh { animation: none !important; transform: rotate(-1deg); } }
+    @media (max-width: 1023px) {
+      .shell { grid-template-columns: 1fr; }
+      aside.sidebar { display: none; }
+      .board { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div class="brand-name">Surakkha</div></div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+        <a class="nav-item" aria-current="page" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="crumbs">
+          <a href="#">Incidents</a><span class="sep">/</span><span class="cur">Kanban</span>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:8px;">
+          <button class="btn-ghost">Filter</button>
+          <button class="btn-primary">+ New incident</button>
+        </div>
+        <div class="user"><div class="avatar">RH</div>Rahim Hossain</div>
+      </header>
+
+      <div class="body">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Incident board</h1>
+            <div class="page-sub">7 open · 18 acknowledged · 142 resolved</div>
+          </div>
+          <div class="filters">
+            <button class="btn-ghost">All schools ▾</button>
+            <button class="btn-ghost">All severities ▾</button>
+            <button class="btn-ghost">Last 24h ▾</button>
+          </div>
+        </div>
+
+        <div class="board">
+          <div class="col crit">
+            <div class="col-h">
+              <div class="lbl">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
+                Open · Critical
+                <span class="ct">1</span>
+              </div>
+              <span style="color:var(--secondary);font-size:18px;cursor:pointer;">+</span>
+            </div>
+            <div class="cards">
+              <div class="card full-crit fresh">
+                <div class="strip">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+                  New · 2 min ago
+                </div>
+                <div class="body-c">
+                  <div class="row1">
+                    <div class="id">#INC-042 <span class="new-badge">New</span></div>
+                    <span class="pill p-critical"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>Unsafe</span>
+                  </div>
+                  <div class="school">DHAKA-SCHOOL-018 unsafe</div>
+                  <div class="meta">TDS 312 ppm above 300 ppm threshold. Manual re-test pending.</div>
+                  <div class="foot">
+                    <span>2 min ago · Karim (Tech)</span>
+                    <span class="assignee"><span class="avatar" style="background:#FEE2E2;color:#DC2626;">RH</span>Rahim</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col warn">
+            <div class="col-h">
+              <div class="lbl">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+                Open · Warning
+                <span class="ct">2</span>
+              </div>
+              <span style="color:var(--secondary);font-size:18px;cursor:pointer;">+</span>
+            </div>
+            <div class="cards">
+              <div class="card warn">
+                <div class="row1">
+                  <div class="id">#INC-041</div>
+                  <span class="pill p-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Advisory</span>
+                </div>
+                <div class="school">KHULNA-031 turbidity high</div>
+                <div class="meta">Turbidity 5.6 NTU above 5.0 NTU limit.</div>
+                <div class="foot">
+                  <span>18 min ago · Aisha (Health)</span>
+                  <span class="assignee"><span class="avatar" style="background:#FEF3C7;color:#92400E;">AS</span>Aisha</span>
+                </div>
+              </div>
+              <div class="card warn">
+                <div class="row1">
+                  <div class="id">#INC-039</div>
+                  <span class="pill p-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Advisory</span>
+                </div>
+                <div class="school">SYLHET-022 pH drift</div>
+                <div class="meta">pH 8.4 approaching upper 8.5 limit.</div>
+                <div class="foot">
+                  <span>1 hr ago · Karim (Tech)</span>
+                  <span class="assignee"><span class="avatar" style="background:#FEE2E2;color:#DC2626;">KR</span>Karim</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col ok">
+            <div class="col-h">
+              <div class="lbl">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg></div>
+                Acknowledged
+                <span class="ct">3</span>
+              </div>
+              <span style="color:var(--secondary);font-size:18px;cursor:pointer;">+</span>
+            </div>
+            <div class="cards">
+              <div class="card ok">
+                <div class="row1">
+                  <div class="id">#INC-038</div>
+                  <span class="pill p-healthy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Acknowledged</span>
+                </div>
+                <div class="school">RAJSHAHI-014 follow-up</div>
+                <div class="meta">Manual sample confirmed TDS within limits.</div>
+                <div class="foot">
+                  <span>2 hr ago · Rahim Hossain</span>
+                  <span class="assignee"><span class="avatar" style="background:#DBEAFE;color:#1E5BB8;">RH</span>Rahim</span>
+                </div>
+              </div>
+              <div class="card ok">
+                <div class="row1">
+                  <div class="id">#INC-037</div>
+                  <span class="pill p-healthy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Acknowledged</span>
+                </div>
+                <div class="school">BARISAL-009 sensor reset</div>
+                <div class="meta">Sensor came back online. Readings nominal.</div>
+                <div class="foot">
+                  <span>3 hr ago · Nadia (Field)</span>
+                  <span class="assignee"><span class="avatar" style="background:#E8F6EE;color:#1F9D55;">NF</span>Nadia</span>
+                </div>
+              </div>
+              <div class="card ok">
+                <div class="row1">
+                  <div class="id">#INC-036</div>
+                  <span class="pill p-healthy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Acknowledged</span>
+                </div>
+                <div class="school">CHATTOGRAM-007 routine check</div>
+                <div class="meta">Weekly probe complete. All readings normal.</div>
+                <div class="foot">
+                  <span>Yesterday · Karim (Tech)</span>
+                  <span class="assignee"><span class="avatar" style="background:#FEE2E2;color:#DC2626;">KR</span>Karim</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col done">
+            <div class="col-h">
+              <div class="lbl">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                Resolved
+                <span class="ct">142</span>
+              </div>
+              <span style="color:var(--secondary);font-size:18px;cursor:pointer;">+</span>
+            </div>
+            <div class="cards">
+              <div class="card done">
+                <div class="row1">
+                  <div class="id">#INC-040</div>
+                  <span class="pill p-neutral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Resolved</span>
+                </div>
+                <div class="school">RAJSHAHI-014 pH drift</div>
+                <div class="meta">Acknowledged at 10:42 by Rahim.</div>
+                <div class="foot">
+                  <span>Yesterday</span>
+                  <span class="assignee"><span class="avatar" style="background:#DBEAFE;color:#1E5BB8;">RH</span>Rahim</span>
+                </div>
+              </div>
+              <div class="card done">
+                <div class="row1">
+                  <div class="id">#INC-035</div>
+                  <span class="pill p-neutral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Resolved</span>
+                </div>
+                <div class="school">DHAKA-SCHOOL-018 calibration</div>
+                <div class="meta">Re-calibrated Sensor B. Within 1% drift.</div>
+                <div class="foot">
+                  <span>2 days ago</span>
+                  <span class="assignee"><span class="avatar" style="background:#FEE2E2;color:#DC2626;">KR</span>Karim</span>
+                </div>
+              </div>
+              <div class="empty">141 more resolved</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

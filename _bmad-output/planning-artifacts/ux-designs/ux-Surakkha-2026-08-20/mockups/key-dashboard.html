@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Executive Dashboard</title>
+  <style>
+    /* @governs: DESIGN.md tokens (saturated severity palette, dark sidebar, primary gradient), EXPERIENCE.md sections:
+       Component Patterns (KPIStat with critical-first glow, StatusPill, LiveReadingRow with severity left border, MapMarker with pulsing halo, SeverityBanner sticky red)
+       State Patterns (Live update pulse on critical)
+       Flow (Executive glance → drilldown) */
+
+    :root {
+      /* Severity (saturated) */
+      --sev-healthy: #1F9D55; --sev-healthy-text: #0F6B3A; --sev-healthy-fill: #16A34A;
+      --sev-healthy-bg: #E8F6EE; --sev-healthy-glow: #1F9D5533;
+      --sev-warning: #D97706; --sev-warning-text: #92400E; --sev-warning-fill: #F59E0B;
+      --sev-warning-bg: #FFF3DA; --sev-warning-glow: #F59E0B33;
+      --sev-critical: #DC2626; --sev-critical-text: #7F1D1D; --sev-critical-fill: #EF4444;
+      --sev-critical-bg: #FEE2E2; --sev-critical-glow: #EF444433;
+
+      /* Neutrals */
+      --surface: #FFFFFF; --page: #F5F7F9;
+      --sidebar: #0F172A; --sidebar-text: #CBD5E1; --sidebar-text-active: #FFFFFF;
+      --border: #E2E8F0;
+      --body: #0F172A; --secondary: #475569;
+
+      /* Primary */
+      --primary: #1E5BB8; --primary-hover: #1E40AF;
+      --primary-gradient: linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--page); color: var(--body); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 22px; }
+    a { color: var(--primary); }
+    button { font-family: inherit; cursor: pointer; }
+    .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+    /* Shell */
+    .shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+    aside.sidebar { background: var(--sidebar); color: var(--sidebar-text); padding: 20px 0; position: sticky; top: 0; height: 100vh; }
+    .brand { padding: 0 20px 20px; border-bottom: 1px solid #1E293B; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+    .brand-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--primary-gradient); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+    .brand-name { font-weight: 600; font-size: 16px; color: #fff; letter-spacing: -0.01em; }
+    .nav-group { padding: 0 12px; margin-bottom: 12px; }
+    .nav-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748B; padding: 8px 12px 6px; font-weight: 600; }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 6px; color: var(--sidebar-text); text-decoration: none; font-size: 14px; }
+    .nav-item:hover { background: #1E293B; color: var(--sidebar-text-active); }
+    .nav-item[aria-current="page"] { background: #1E293B; color: var(--sidebar-text-active); font-weight: 500; }
+    .nav-item[aria-current="page"] .ico { color: #38BDF8; }
+    .nav-item .ico { width: 18px; height: 18px; display: inline-grid; place-items: center; color: #64748B; }
+    .nav-sub { padding-left: 12px; }
+    .nav-sub .nav-item { padding: 8px 12px; font-size: 13px; }
+
+    /* Topbar */
+    main.canvas { padding: 0; }
+    header.topbar { display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 24px; position: sticky; top: 0; background: var(--surface); z-index: 10; border-bottom: 1px solid var(--border); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+    .search { flex: 1; max-width: 480px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--page); border: 1px solid var(--border); border-radius: 6px; }
+    .search input { flex: 1; border: none; outline: none; background: transparent; font: inherit; color: var(--body); }
+    .search input::placeholder { color: var(--secondary); }
+    .role-pill { display: inline-flex; align-items: center; gap: 6px; background: var(--sev-healthy-bg); color: var(--sev-healthy-text); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--sev-healthy); }
+    .user { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 13px; }
+    .user .avatar { width: 32px; height: 32px; border-radius: 999px; background: #DBEAFE; color: var(--primary); display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; color: var(--body); font-size: 13px; }
+    .btn-ghost:hover { background: var(--page); }
+    .btn-ghost:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+    /* Page body */
+    .body { padding: 24px; }
+    .page-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+    .page-title { font-size: 22px; font-weight: 600; line-height: 28px; margin: 0; color: var(--body); }
+    .page-sub { font-size: 13px; color: var(--secondary); margin-top: 4px; }
+
+    /* Cards */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06); padding: 20px; }
+    .card-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .card-title { font-size: 14px; font-weight: 600; color: var(--body); margin: 0; }
+    .card-sub { font-size: 12px; color: var(--secondary); }
+
+    /* KPI band */
+    .kpi-band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+    .kpi { position: relative; overflow: hidden; padding: 20px; }
+    .kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; }
+    .kpi::after { content: ''; position: absolute; right: 0; top: 0; width: 80px; height: 100%; opacity: 0.55; pointer-events: none; }
+    .kpi-label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--secondary); }
+    .kpi-icon { width: 24px; height: 24px; border-radius: 999px; display: inline-grid; place-items: center; }
+    .kpi-num { font-size: 40px; font-weight: 700; line-height: 44px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+    .kpi-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: var(--secondary); }
+    .kpi.k-healthy { border-left: 3px solid var(--sev-healthy); }
+    .kpi.k-healthy::before { width: 6px; background: var(--sev-healthy); }
+    .kpi.k-healthy .kpi-num { color: var(--sev-healthy); }
+    .kpi.k-healthy .kpi-icon { background: var(--sev-healthy-bg); color: var(--sev-healthy); }
+    .kpi.k-healthy::after { background: linear-gradient(135deg, transparent 0%, var(--sev-healthy-bg) 100%); }
+
+    .kpi.k-warning { border-left: 2px solid var(--sev-warning); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 2px var(--sev-warning-glow); }
+    .kpi.k-warning::before { background: var(--sev-warning); }
+    .kpi.k-warning .kpi-num { color: var(--sev-warning); }
+    .kpi.k-warning .kpi-icon { background: var(--sev-warning-bg); color: var(--sev-warning); }
+    .kpi.k-warning::after { background: linear-gradient(135deg, transparent 0%, var(--sev-warning-bg) 100%); }
+
+    .kpi.k-critical { border-left: 4px solid var(--sev-critical); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 3px var(--sev-critical-glow), 0 8px 24px var(--sev-critical-glow); animation: crit-glow 1.5s ease-out infinite; }
+    .kpi.k-critical::before { background: var(--sev-critical); }
+    .kpi.k-critical .kpi-num { color: var(--sev-critical); font-size: 44px; }
+    .kpi.k-critical .kpi-icon { background: var(--sev-critical-bg); color: var(--sev-critical); width: 26px; height: 26px; }
+    .kpi.k-critical::after { background: linear-gradient(135deg, transparent 0%, var(--sev-critical-bg) 100%); }
+
+    .kpi.k-neutral .kpi-num { color: var(--body); }
+    .kpi.k-neutral .kpi-icon { background: #E2E8F0; color: var(--body); }
+
+    /* Map */
+    .map-card { padding: 0; overflow: hidden; }
+    .map-frame { position: relative; height: 360px; background: #E0F2FE; background-image:
+      linear-gradient(to right, rgba(15, 118, 110, 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(15, 118, 110, 0.06) 1px, transparent 1px);
+      background-size: 40px 40px; }
+    .map-frame svg { width: 100%; height: 100%; display: block; }
+    .map-pin { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .pin-dot { width: 14px; height: 14px; border-radius: 999px; background: var(--sev-healthy); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+    .pin-label { font-size: 10px; background: rgba(255,255,255,0.92); padding: 1px 6px; border-radius: 4px; color: var(--body); font-weight: 500; border: 1px solid var(--border); white-space: nowrap; }
+    .pin-dot.p-warning { background: var(--sev-warning-fill); }
+    .pin-dot.p-critical { background: var(--sev-critical-fill); animation: pin-pulse 2s ease-out infinite; }
+    .pin-dot.p-warning.animated { animation: pin-pulse-w 2s ease-out infinite; }
+    @keyframes pin-pulse { 0% { box-shadow: 0 0 0 0 var(--sev-critical-glow), 0 1px 4px rgba(0,0,0,0.15); } 70% { box-shadow: 0 0 0 18px transparent, 0 1px 4px rgba(0,0,0,0.15); } 100% { box-shadow: 0 0 0 0 transparent, 0 1px 4px rgba(0,0,0,0.15); } }
+    @keyframes pin-pulse-w { 0% { box-shadow: 0 0 0 0 var(--sev-warning-glow), 0 1px 4px rgba(0,0,0,0.15); } 70% { box-shadow: 0 0 0 14px transparent, 0 1px 4px rgba(0,0,0,0.15); } 100% { box-shadow: 0 0 0 0 transparent, 0 1px 4px rgba(0,0,0,0.15); } }
+
+    .map-popup { position: absolute; transform: translate(-50%, -100%); margin-top: -16px; background: #fff; border: 1px solid var(--sev-critical); border-radius: 10px; box-shadow: 0 0 0 4px var(--sev-critical-glow), 0 8px 24px rgba(220, 38, 38, 0.25); padding: 12px 14px; min-width: 240px; }
+    .map-popup::after { content: ''; position: absolute; bottom: -7px; left: 50%; transform: translateX(-50%) rotate(45deg); width: 12px; height: 12px; background: #fff; border-right: 1px solid var(--sev-critical); border-bottom: 1px solid var(--sev-critical); }
+    .pop-h { font-size: 12px; color: var(--secondary); }
+    .pop-t { font-size: 14px; font-weight: 600; margin: 2px 0 6px; }
+    .pop-m { font-size: 12px; color: var(--body); margin-bottom: 8px; }
+
+    /* StatusPill */
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 14px; font-weight: 600; line-height: 22px; }
+    .pill svg { width: 14px; height: 14px; }
+    .pill.p-healthy { background: var(--sev-healthy-bg); color: var(--sev-healthy); border: 1px solid var(--sev-healthy); }
+    .pill.p-warning { background: var(--sev-warning-bg); color: var(--sev-warning); border: 1px solid var(--sev-warning); }
+    .pill.p-critical { background: var(--sev-critical-bg); color: var(--sev-critical); border: 1px solid var(--sev-critical); }
+    .pill.p-neutral { background: #F1F5F9; color: var(--secondary); border: 1px solid var(--border); }
+    .pill .ico-24 { width: 24px; height: 24px; }
+
+    /* Two-column */
+    .two-col { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin-top: 20px; }
+
+    /* LiveReadingRow */
+    .reading-list { display: flex; flex-direction: column; gap: 10px; }
+    .reading { display: grid; grid-template-columns: 12px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--sev-healthy); }
+    .reading.r-warning { border-left: 2px solid var(--sev-warning); box-shadow: 0 0 0 1px var(--sev-warning-glow); }
+    .reading.r-critical { border-left: 4px solid var(--sev-critical); box-shadow: 0 0 0 1px var(--sev-critical-glow), 0 4px 16px var(--sev-critical-glow); animation: crit-row-pulse 1.5s ease-out infinite; }
+    .reading .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--sev-healthy); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--sev-healthy); }
+    .reading.r-warning .dot { background: var(--sev-warning-fill); box-shadow: 0 0 0 1px var(--sev-warning); }
+    .reading.r-critical .dot { background: var(--sev-critical-fill); box-shadow: 0 0 0 1px var(--sev-critical); }
+    .reading .dev { font-weight: 600; font-size: 14px; }
+    .reading .dev-sub { font-size: 12px; color: var(--secondary); }
+    .reading .metric { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; font-weight: 500; color: var(--body); text-align: right; }
+    .reading .metric.violation { color: var(--sev-critical); font-weight: 600; }
+    .reading.r-warning .metric { color: var(--sev-warning); font-weight: 600; }
+
+    @keyframes crit-row-pulse { 0% { box-shadow: 0 0 0 1px var(--sev-critical-glow), 0 4px 16px var(--sev-critical-glow); } 50% { box-shadow: 0 0 0 2px var(--sev-critical-glow), 0 6px 24px var(--sev-critical-glow); } 100% { box-shadow: 0 0 0 1px var(--sev-critical-glow), 0 4px 16px var(--sev-critical-glow); } }
+    @keyframes crit-glow { 0% { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 3px var(--sev-critical-glow), 0 8px 24px var(--sev-critical-glow); } 50% { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 6px transparent, 0 8px 28px var(--sev-critical-glow); } 100% { box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 3px var(--sev-critical-glow), 0 8px 24px var(--sev-critical-glow); } }
+
+    /* SeverityBanner */
+    .sev-banner { position: sticky; top: 56px; z-index: 9; background: var(--sev-critical-bg); border-top: 4px solid var(--sev-critical); border-bottom: 4px solid var(--sev-critical); padding: 12px 24px; display: flex; align-items: center; gap: 14px; box-shadow: 0 0 24px var(--sev-critical-glow); animation: banner-in 200ms ease-out; margin-bottom: 20px; }
+    .sev-banner .bolt { width: 36px; height: 36px; border-radius: 999px; background: var(--sev-critical); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
+    .sev-banner .text { flex: 1; }
+    .sev-banner .text .t1 { font-size: 14px; font-weight: 600; color: var(--sev-critical-text); }
+    .sev-banner .text .t2 { font-size: 12px; color: var(--sev-critical-text); opacity: 0.85; margin-top: 2px; }
+    .btn-danger { background: var(--sev-critical); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px var(--sev-critical-glow); }
+    .btn-danger:hover { background: #B91C1C; }
+    @keyframes banner-in { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+
+    /* Severity showcase */
+    .showcase { margin-top: 28px; }
+    .showcase h3 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    .showcase .sub { font-size: 13px; color: var(--secondary); margin-bottom: 16px; }
+    .show-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .show { padding: 20px; }
+    .show .h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .show .h .ic { width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; }
+    .show .h .lbl { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .show .demo { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+    .show .desc { font-size: 13px; color: var(--secondary); }
+    .show.s-healthy { border-left: 3px solid var(--sev-healthy); }
+    .show.s-healthy .h .ic { background: var(--sev-healthy-bg); color: var(--sev-healthy); }
+    .show.s-healthy .h .lbl { color: var(--sev-healthy); }
+    .show.s-warning { border-left: 2px solid var(--sev-warning); }
+    .show.s-warning .h .ic { background: var(--sev-warning-bg); color: var(--sev-warning); }
+    .show.s-warning .h .lbl { color: var(--sev-warning); }
+    .show.s-critical { border-left: 4px solid var(--sev-critical); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06), 0 0 0 3px var(--sev-critical-glow); }
+    .show.s-critical .h .ic { background: var(--sev-critical-bg); color: var(--sev-critical); }
+    .show.s-critical .h .lbl { color: var(--sev-critical); }
+
+    /* Severity icon mapping (24px) */
+    .ico-24 { width: 24px; height: 24px; display: inline-grid; place-items: center; }
+    .ico-24 svg { width: 16px; height: 16px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .kpi.k-critical, .pin-dot.p-critical, .pin-dot.p-warning.animated, .reading.r-critical, .sev-banner { animation: none !important; }
+    }
+    @media (max-width: 1023px) {
+      .shell { grid-template-columns: 1fr; }
+      aside.sidebar { display: none; }
+      .kpi-band { grid-template-columns: repeat(2, 1fr); }
+      .two-col { grid-template-columns: 1fr; }
+      .show-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div class="brand-name">Surakkha</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" aria-current="page" href="#">
+          <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>
+          Dashboard
+        </a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>Settings</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Schools</div>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>DHAKA-SCHOOL-018</a>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>CHATTOGRAM-007</a>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>SYLHET-022</a>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>KHULNA-031</a>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>RAJSHAHI-014</a>
+        <a class="nav-item nav-sub" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>BARISAL-009</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2" width="16" height="16"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input placeholder="Search incidents, sensors, schools…">
+        </div>
+        <span class="role-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+          Demo Director
+        </span>
+        <button class="btn-ghost">All schools ▾</button>
+        <div class="user"><div class="avatar">RH</div>Rahim Hossain</div>
+      </header>
+
+      <div class="body">
+        <div class="sev-banner">
+          <div class="bolt"><svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
+          <div class="text">
+            <div class="t1">UNSAFE submitted for DHAKA-SCHOOL-018 by Karim (Tech). 2 min ago.</div>
+            <div class="t2">Incident #INC-042 opened. TDS 312 ppm above 300 ppm threshold.</div>
+          </div>
+          <button class="btn-danger">Acknowledge <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg></button>
+        </div>
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Executive dashboard</h1>
+            <div class="page-sub">Six schools under simulation. Last update 12 sec ago.</div>
+          </div>
+        </div>
+
+        <div class="kpi-band">
+          <div class="card kpi k-neutral">
+            <div class="kpi-label"><span class="kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2v6"/><path d="M12 16v6"/><path d="M2 12h6"/><path d="M16 12h6"/><circle cx="12" cy="12" r="3"/></svg></span>Sensors</div>
+            <div class="kpi-num num">6</div>
+            <div class="kpi-foot"><span>Across 6 schools</span><span>5 connected</span></div>
+          </div>
+
+          <div class="card kpi k-healthy">
+            <div class="kpi-label"><span class="kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg></span>Healthy</div>
+            <div class="kpi-num num">4</div>
+            <div class="kpi-foot"><span>Within thresholds</span><span class="pill p-healthy" style="font-size:12px;padding:1px 8px;"><span class="ico-24" style="width:14px;height:14px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Stable</span></div>
+          </div>
+
+          <div class="card kpi k-warning">
+            <div class="kpi-label"><span class="kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Warning</div>
+            <div class="kpi-num num">1</div>
+            <div class="kpi-foot"><span>Approaching limit</span><span class="pill p-warning" style="font-size:12px;padding:1px 8px;"><span class="ico-24" style="width:14px;height:14px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>TDS high</span></div>
+          </div>
+
+          <div class="card kpi k-critical">
+            <div class="kpi-label"><span class="kpi-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>Critical</div>
+            <div class="kpi-num num">1</div>
+            <div class="kpi-foot"><span>Threshold exceeded</span><span class="pill p-critical" style="font-size:12px;padding:1px 8px;"><span class="ico-24" style="width:14px;height:14px;"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>Unsafe</span></div>
+          </div>
+        </div>
+
+        <div class="card map-card">
+          <div class="card-h" style="padding: 16px 20px 0;">
+            <div><h3 class="card-title">Live sensor map</h3><div class="card-sub">6 schools · last update 12 sec ago</div></div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn-ghost">Filter</button>
+              <button class="btn-ghost" style="background:var(--primary);color:#fff;border-color:var(--primary);">Refresh</button>
+            </div>
+          </div>
+          <div class="map-frame">
+            <svg viewBox="0 0 800 360" preserveAspectRatio="none">
+              <!-- abstract Bangladesh outline -->
+              <path d="M120 60 L260 40 L380 70 L460 60 L560 90 L660 70 L720 120 L700 200 L660 270 L580 300 L500 290 L420 310 L340 280 L260 290 L180 260 L140 200 L100 140 Z"
+                fill="#CFFAFE" stroke="#67E8F9" stroke-width="1.5" stroke-dasharray="0" opacity="0.9"/>
+            </svg>
+            <!-- Markers (fixed abstract layout) -->
+            <div class="map-pin" style="left:30%; top:35%;"><div class="pin-dot"></div><div class="pin-label">CHATTOGRAM-007</div></div>
+            <div class="map-pin" style="left:42%; top:48%;"><div class="pin-dot p-critical"></div><div class="pin-label">DHAKA-SCHOOL-018</div></div>
+            <div class="map-pin" style="left:48%; top:28%;"><div class="pin-dot"></div><div class="pin-label">SYLHET-022</div></div>
+            <div class="map-pin" style="left:34%; top:62%;"><div class="pin-dot p-warning animated"></div><div class="pin-label">KHULNA-031</div></div>
+            <div class="map-pin" style="left:24%; top:52%;"><div class="pin-dot"></div><div class="pin-label">RAJSHAHI-014</div></div>
+            <div class="map-pin" style="left:56%; top:72%;"><div class="pin-dot"></div><div class="pin-label">BARISAL-009</div></div>
+
+            <div class="map-popup" style="left:42%; top:48%;">
+              <div class="pop-h">DHAKA-SCHOOL-018 · Sensor A</div>
+              <div class="pop-t">TDS 312 ppm <span class="pill p-critical" style="font-size:11px;padding:1px 6px;margin-left:4px;"><span class="ico-24" style="width:12px;height:12px;"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>Critical</span></div>
+              <div class="pop-m">Threshold 300 ppm. Last reading 14 sec ago.</div>
+              <a href="#" style="font-size:12px;font-weight:600;">Open incident →</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-h">
+              <h3 class="card-title">Live readings</h3>
+              <div class="card-sub">5 of 6 reporting</div>
+            </div>
+            <div class="reading-list">
+              <div class="reading r-critical">
+                <div class="dot"></div>
+                <div><div class="dev">DHAKA-SCHOOL-018 · Sensor A</div><div class="dev-sub">TDS · 12 sec ago</div></div>
+                <div class="metric violation">312 ppm <span style="font-size:11px;color:var(--secondary);">/ 300</span></div>
+              </div>
+              <div class="reading r-warning">
+                <div class="dot"></div>
+                <div><div class="dev">KHULNA-031 · Sensor C</div><div class="dev-sub">Turbidity · 18 sec ago</div></div>
+                <div class="metric">5.6 NTU <span style="font-size:11px;color:var(--secondary);">/ 5.0</span></div>
+              </div>
+              <div class="reading">
+                <div class="dot"></div>
+                <div><div class="dev">CHATTOGRAM-007 · Sensor B</div><div class="dev-sub">pH · 24 sec ago</div></div>
+                <div class="metric">7.2 <span style="font-size:11px;color:var(--secondary);">/ 6.5–8.5</span></div>
+              </div>
+              <div class="reading">
+                <div class="dot"></div>
+                <div><div class="dev">SYLHET-022 · Sensor A</div><div class="dev-sub">TDS · 30 sec ago</div></div>
+                <div class="metric">184 ppm</div>
+              </div>
+              <div class="reading">
+                <div class="dot"></div>
+                <div><div class="dev">RAJSHAHI-014 · Sensor B</div><div class="dev-sub">TDS · 42 sec ago</div></div>
+                <div class="metric">221 ppm</div>
+              </div>
+              <div class="reading">
+                <div class="dot"></div>
+                <div><div class="dev">BARISAL-009 · Sensor A</div><div class="dev-sub">pH · 51 sec ago</div></div>
+                <div class="metric">7.0</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <h3 class="card-title">Recent incidents</h3>
+              <a href="#" style="font-size:12px;font-weight:600;">View all →</a>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border);border-left:4px solid var(--sev-critical);background:#FFF;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <div style="font-weight:600;font-size:14px;">#INC-042 · Unsafe</div>
+                  <span class="pill p-critical"><span class="ico-24"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>Critical</span>
+                </div>
+                <div style="font-size:13px;color:var(--secondary);margin-top:6px;">DHAKA-SCHOOL-018 · TDS 312 ppm</div>
+                <div style="font-size:12px;color:var(--secondary);margin-top:6px;">2 min ago · Karim (Tech)</div>
+              </div>
+              <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border);border-left:2px solid var(--sev-warning);">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <div style="font-weight:600;font-size:14px;">#INC-041 · Advisory</div>
+                  <span class="pill p-warning"><span class="ico-24"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Warning</span>
+                </div>
+                <div style="font-size:13px;color:var(--secondary);margin-top:6px;">KHULNA-031 · Turbidity 5.6 NTU</div>
+                <div style="font-size:12px;color:var(--secondary);margin-top:6px;">18 min ago · Aisha (Health)</div>
+              </div>
+              <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--sev-healthy);">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <div style="font-weight:600;font-size:14px;">#INC-040 · Resolved</div>
+                  <span class="pill p-healthy"><span class="ico-24"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Healthy</span>
+                </div>
+                <div style="font-size:13px;color:var(--secondary);margin-top:6px;">RAJSHAHI-014 · pH drift</div>
+                <div style="font-size:12px;color:var(--secondary);margin-top:6px;">2 hr ago · Acknowledged by Rahim</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section class="showcase">
+          <h3>Severity showcase</h3>
+          <div class="sub">Three colours, three meanings, one voice. Each maps to a fixed response.</div>
+          <div class="show-grid">
+            <div class="card show s-healthy">
+              <div class="h"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg></div><div class="lbl">Healthy</div></div>
+              <div class="demo"><span class="pill p-healthy"><span class="ico-24"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></span>Within range</span></div>
+              <div class="desc">No action. Reading inside configured thresholds. Continues to log.</div>
+            </div>
+            <div class="card show s-warning">
+              <div class="h"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><div class="lbl">Warning</div></div>
+              <div class="demo"><span class="pill p-warning"><span class="ico-24"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Approaching limit</span></div>
+              <div class="desc">Field tech notified. Sample should be re-tested within 30 minutes.</div>
+            </div>
+            <div class="card show s-critical">
+              <div class="h"><div class="ic"><svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></div><div class="lbl">Critical</div></div>
+              <div class="demo"><span class="pill p-critical"><span class="ico-24"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>Unsafe</span></div>
+              <div class="desc">Threshold exceeded. Mark Unsafe, halt consumption, log response.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

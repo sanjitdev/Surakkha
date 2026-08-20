@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Sign in</title>
+  <style>
+    /* @governs: DESIGN.md tokens (primary gradient for hero/login, saturated severity palette), EXPERIENCE.md sections:
+       Component Patterns (Split-screen hero with gradient + SVG water-ripple, Login form with role selector, Primary button with gradient
+       State Patterns (Empty form, Demo-mode toggle)
+       Flow (Entry → role selection → demo access) */
+
+    :root {
+      --sev-healthy: #1F9D55; --sev-healthy-text: #0F6B3A; --sev-healthy-fill: #16A34A;
+      --sev-healthy-bg: #E8F6EE; --sev-healthy-glow: #1F9D5533;
+      --sev-warning: #D97706; --sev-warning-text: #92400E;
+      --sev-warning-bg: #FFF3DA;
+      --sev-critical: #DC2626; --sev-critical-text: #7F1D1D;
+      --sev-critical-bg: #FEE2E2;
+      --surface: #FFFFFF; --page: #F5F7F9;
+      --border: #E2E8F0;
+      --body: #0F172A; --secondary: #475569;
+      --primary: #1E5BB8; --primary-hover: #1E40AF;
+      --primary-gradient: linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; color: var(--body); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 22px; background: var(--surface); }
+    a { color: var(--primary); } button { font-family: inherit; cursor: pointer; }
+
+    /* Split layout */
+    .split { display: grid; grid-template-columns: 1fr 1fr; min-height: 100vh; }
+    .left { background: var(--primary-gradient); color: #fff; padding: 56px; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+    .left .top { display: flex; align-items: center; gap: 12px; position: relative; z-index: 2; }
+    .left .top .mark { width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,0.18); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 16px; backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.25); }
+    .left .top .name { font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+    .left .mid { margin-top: auto; position: relative; z-index: 2; }
+    .left h1 { font-size: 36px; font-weight: 600; line-height: 44px; margin: 0 0 14px; letter-spacing: -0.02em; }
+    .left .lede { font-size: 16px; line-height: 26px; opacity: 0.92; max-width: 460px; }
+    .left .stats { display: flex; gap: 24px; margin-top: 32px; }
+    .left .stat .v { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .left .stat .l { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; font-weight: 600; }
+    .left .bot { margin-top: 32px; font-size: 12px; opacity: 0.7; position: relative; z-index: 2; }
+
+    /* Water ripple illustration */
+    .ripple { position: absolute; right: -80px; top: 50%; transform: translateY(-50%); width: 720px; height: 720px; opacity: 0.55; pointer-events: none; z-index: 1; }
+    .ripple circle { fill: none; stroke: rgba(255,255,255,0.4); stroke-width: 1; transform-origin: center; animation: ripple-out 6s ease-out infinite; }
+    .ripple circle:nth-child(1) { animation-delay: 0s; }
+    .ripple circle:nth-child(2) { animation-delay: 1.2s; }
+    .ripple circle:nth-child(3) { animation-delay: 2.4s; }
+    .ripple circle:nth-child(4) { animation-delay: 3.6s; }
+    .ripple circle:nth-child(5) { animation-delay: 4.8s; }
+    @keyframes ripple-out { 0% { transform: scale(0.4); opacity: 0.6; } 80% { opacity: 0; } 100% { transform: scale(1); opacity: 0; } }
+    .ripple .core { fill: rgba(255,255,255,0.15); stroke: rgba(255,255,255,0.6); }
+
+    /* Right form */
+    .right { background: var(--surface); padding: 56px 64px; display: flex; flex-direction: column; justify-content: center; }
+    .right .wrap { width: 100%; max-width: 420px; margin: 0 auto; }
+    .right h2 { font-size: 24px; font-weight: 600; margin: 0 0 6px; }
+    .right .sub { font-size: 14px; color: var(--secondary); margin-bottom: 28px; }
+    .field { margin-bottom: 16px; }
+    .field label { display: block; font-size: 12px; font-weight: 600; color: var(--body); margin-bottom: 6px; letter-spacing: 0.02em; }
+    .input { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); transition: border-color 120ms, box-shadow 120ms; }
+    .input:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,91,184,0.15); }
+    .input svg { color: var(--secondary); flex-shrink: 0; }
+    .input input { flex: 1; border: none; outline: none; background: transparent; font: inherit; color: var(--body); }
+
+    .row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0 20px; font-size: 13px; color: var(--secondary); }
+    .row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .row a { color: var(--primary); text-decoration: none; font-weight: 500; }
+
+    /* Role selector */
+    .role { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+    .role .opt { position: relative; border: 1px solid var(--border); border-radius: 8px; padding: 10px 8px; text-align: center; cursor: pointer; background: var(--surface); transition: all 120ms; }
+    .role .opt input { position: absolute; opacity: 0; pointer-events: none; }
+    .role .opt .ic { width: 28px; height: 28px; border-radius: 999px; margin: 0 auto 6px; display: grid; place-items: center; }
+    .role .opt .lbl { font-size: 12px; font-weight: 600; }
+    .role .opt.tech .ic { background: var(--sev-critical-bg); color: var(--sev-critical); }
+    .role .opt.health .ic { background: var(--sev-warning-bg); color: var(--sev-warning); }
+    .role .opt.dir .ic { background: #DBEAFE; color: var(--primary); }
+    .role .opt:hover { background: var(--page); }
+    .role .opt.active { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,91,184,0.15); background: #F0F7FF; }
+
+    .btn-primary { width: 100%; background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 12px 16px; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 4px 12px rgba(30,91,184,0.25); }
+    .btn-primary:hover { background: var(--primary-hover); }
+
+    .divider { display: flex; align-items: center; gap: 12px; color: var(--secondary); font-size: 12px; margin: 18px 0; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    .demo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .demo-btn { background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; font-weight: 600; color: var(--body); display: flex; align-items: center; gap: 8px; justify-content: center; }
+    .demo-btn:hover { background: #E2E8F0; }
+    .demo-btn .dot { width: 8px; height: 8px; border-radius: 999px; }
+
+    .foot { font-size: 12px; color: var(--secondary); margin-top: 22px; line-height: 18px; }
+    .foot strong { color: var(--body); }
+
+    @media (prefers-reduced-motion: reduce) { .ripple circle { animation: none !important; } }
+    @media (max-width: 1023px) {
+      .split { grid-template-columns: 1fr; }
+      .left { display: none; }
+      .right { padding: 32px 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="split">
+    <section class="left">
+      <svg class="ripple" viewBox="0 0 720 720">
+        <circle cx="360" cy="360" r="80" />
+        <circle cx="360" cy="360" r="140" />
+        <circle cx="360" cy="360" r="210" />
+        <circle cx="360" cy="360" r="290" />
+        <circle cx="360" cy="360" r="370" />
+        <circle class="core" cx="360" cy="360" r="50" />
+      </svg>
+
+      <div class="top">
+        <div class="mark">S</div>
+        <div class="name">Surakkha</div>
+      </div>
+
+      <div class="mid">
+        <h1>Water safety, observed and recorded.</h1>
+        <div class="lede">Surakkha monitors six demo schools. Readings, thresholds, and incident responses — all in one calm surface.</div>
+        <div class="stats">
+          <div class="stat"><div class="v">6</div><div class="l">Demo schools</div></div>
+          <div class="stat"><div class="v">14</div><div class="l">Active sensors</div></div>
+          <div class="stat"><div class="v">42</div><div class="l">Incidents logged</div></div>
+        </div>
+      </div>
+
+      <div class="bot">© Surakkha. For demonstration only. No real water is monitored.</div>
+    </section>
+
+    <section class="right">
+      <div class="wrap">
+        <h2>Sign in</h2>
+        <div class="sub">Use the demo button to enter without a password.</div>
+
+        <div class="field">
+          <label for="email">Email</label>
+          <div class="input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <input id="email" type="email" value="rahim@surakkha.demo" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="pwd">Password</label>
+          <div class="input">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <input id="pwd" type="password" value="demodemo" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label><input type="checkbox" checked> Remember this device</label>
+          <a href="#">Forgot?</a>
+        </div>
+
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--body);margin-bottom:8px;letter-spacing:0.02em;">Sign in as</label>
+        <div class="role">
+          <label class="opt tech">
+            <input type="radio" name="role" />
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+            <div class="lbl">Tech</div>
+          </label>
+          <label class="opt health">
+            <input type="radio" name="role" />
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+            <div class="lbl">Health</div>
+          </label>
+          <label class="opt dir active">
+            <input type="radio" name="role" checked />
+            <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M3 21v-2a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+            <div class="lbl">Director</div>
+          </label>
+        </div>
+
+        <button class="btn-primary">Sign in (demo) <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg></button>
+
+        <div class="divider">or use a demo persona</div>
+
+        <div class="demo-row">
+          <button class="demo-btn"><span class="dot" style="background:#16A34A;"></span>Rahim · Director</button>
+          <button class="demo-btn"><span class="dot" style="background:#EF4444;"></span>Karim · Tech</button>
+          <button class="demo-btn"><span class="dot" style="background:#F59E0B;"></span>Aisha · Health</button>
+          <button class="demo-btn"><span class="dot" style="background:#1E5BB8;"></span>Nadia · Field</button>
+        </div>
+
+        <div class="foot">
+          <strong>Demo notice.</strong> Surakkha is operating on simulated data for six fictional schools. No real environment is being measured.
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
