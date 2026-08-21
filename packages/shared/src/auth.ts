@@ -84,3 +84,61 @@ export const refreshTokenCookieOptions = (): RefreshTokenCookieOptions => ({
 
 /** Default scope string for a signed-in human user. */
 export const USER_TOKEN_DEFAULT_SCOPE = "user:read" as const;
+
+/**
+ * TTLs (seconds) for device and simulator access tokens, per
+ * architecture §3.4. Story 1.10 invariant: HS256, single secret, no
+ * rotation. Story 2.2 / 3.5 mint at the call site using these.
+ */
+export const SIMULATOR_TOKEN_TTL_SECONDS = 3600;
+export const DEVICE_TOKEN_TTL_SECONDS = 86400;
+
+/**
+ * Validate that `sub` is a UUIDv4 string. We re-parse through
+ * `JwtClaimsSchema` after building the claim so a bad `sub` from the
+ * caller fails fast at the call site instead of producing a token that
+ * the verifier will reject later.
+ */
+const assertUuidV4 = (sub: string): void => {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sub)) {
+    throw new Error(`simulator/device claim template: sub must be a UUIDv4 (got ${sub})`);
+  }
+};
+
+/**
+ * Build a claim *template* (NOT a signed JWT) for the simulator process.
+ * Signing happens at the call site with `JWT_SECRET`; the shared package
+ * must not touch `process.env`. The returned object re-parses cleanly
+ * through `JwtClaimsSchema.parse()`.
+ */
+export const simulatorClaimTemplate = (sub: string): JwtClaims => {
+  assertUuidV4(sub);
+  const iat = Math.floor(Date.now() / 1000);
+  const claim: JwtClaims = {
+    iss: "surakkha-api",
+    aud: "simulator",
+    sub,
+    scope: "telemetry:write",
+    iat,
+    exp: iat + SIMULATOR_TOKEN_TTL_SECONDS,
+  };
+  return JwtClaimsSchema.parse(claim);
+};
+
+/**
+ * Build a claim template for a real device. Same env-independence as
+ * `simulatorClaimTemplate`; 24-hour TTL per architecture §3.4.
+ */
+export const deviceClaimTemplate = (sub: string): JwtClaims => {
+  assertUuidV4(sub);
+  const iat = Math.floor(Date.now() / 1000);
+  const claim: JwtClaims = {
+    iss: "surakkha-api",
+    aud: "device",
+    sub,
+    scope: "telemetry:write",
+    iat,
+    exp: iat + DEVICE_TOKEN_TTL_SECONDS,
+  };
+  return JwtClaimsSchema.parse(claim);
+};
