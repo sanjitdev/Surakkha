@@ -195,3 +195,92 @@ Surakkha follows [Semantic Versioning 2.0.0](https://semver.org/). The current t
 ## License
 
 By contributing to Surakkha, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+
+---
+
+## Code principles
+
+These are the project's bar. They are mechanically enforced by
+[`eslint.config.js`](./eslint.config.js) where possible and review-time
+where mechanical enforcement is impractical. See [`AGENTS.md`](./AGENTS.md)
+for the full rationale and the workflow expected of any AI agent
+working on the codebase.
+
+### Small
+
+- Function: ≤ 200 lines, complexity ≤ 10, depth ≤ 4 (ESLint `warn`).
+- File: ≤ 500 lines (ESLint `warn`). If a file hits this, split it.
+- React component: ≤ 6 levels of JSX depth, no nested component
+  definitions, one component per file unless trivial.
+- Module: one feature per file. Cross-feature code goes in
+  `packages/shared`.
+
+### Typed
+
+- TypeScript strict mode. No `any`, no `@ts-ignore` without a one-line
+  justification, no non-null assertions outside tests, no unjustified
+  `as` casts.
+- Props on every React component. `interface` for object shapes, `type`
+  for unions and aliases.
+- Exported functions have return types.
+
+### Immutable
+
+- In-process state does not mutate. `Array.push/pop/shift/unshift/splice`
+  and `Object.assign` are blocked by ESLint for production code.
+- React state updates use the functional form
+  (`setX(prev => ...)`), never direct mutation.
+- Database writes are exceptions; the rule applies to in-process state.
+
+### Professional
+
+- No `console.log` in committed code. `console.warn` / `console.error`
+  are permitted; everything else uses the shared logger.
+- No commented-out code. No dead exports. No magic numbers.
+- Error boundaries wrap every feature route in `packages/web`.
+- Accessibility is not optional. Every interactive element has an
+  accessible name; every form field has a label.
+- No new dependency without a one-line justification in the PR body.
+
+### Coding standard
+
+The mechanical rules below live in `eslint.config.js` (block 3b).
+They are the project's coding standard. Detailed prose lives in
+[`AGENTS.md`](./AGENTS.md) §1.4.1.
+
+- **Naming**: `camelCase` for variables and functions, `PascalCase`
+  for types/classes/enums/interfaces, `UPPER_CASE` for true constants.
+  Booleans start with `is`/`has`/`should`/`can`/`did`/`will`. Acronyms
+  are uppercase: `userID`, `deviceID`, `incidentID`, `JWT_SECRET`.
+- **No constructor types as type annotations** — `Function`, `Object`,
+  `Boolean`, `Number`, `String`, `Symbol` are wrapper types; use the
+  lowercase primitives instead.
+- **Promise-returning functions must be `async`** (or explicitly typed
+  `Promise<T>`).
+- **Type assertions**: prefer `as const` over `as Foo`. A cast that
+  hides a real type mismatch is forbidden.
+- **Indexed object types**: `Record<string, T>`, not `{ [key: string]: T }`.
+- **Template literals**: must contain stringifiable values. Use
+  `String(x)` or `JSON.stringify(x)` for objects.
+- **Node builtins**: use the `node:` protocol (`"node:fs"`, not `"fs"`).
+- **Throw** `new Error(...)`, not `Error(...)`.
+- **`event.target` over `event.srcElement`**.
+- **No duplicate enum values**.
+- **No array callback reference** for built-in methods.
+- **No inline arrows** in component bodies where a top-level function
+  would do.
+
+### Audited
+
+- The audit log is append-only and exhaustive for security-relevant
+  events. See [ADR 0012](./docs/adr/0012-audit-log-invariants.md) for
+  the closed enumeration.
+- Any new audit action is added to the closed enumeration **and** to
+  the CI test that verifies it.
+
+### When the principles conflict with a request
+
+If a user asks for code that violates a principle, surface the
+conflict before writing the code. Do not silently comply. The PR
+template's "Code principles" checklist is the audit trail for this
+expectation.

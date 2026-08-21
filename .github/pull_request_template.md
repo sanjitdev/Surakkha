@@ -60,6 +60,53 @@ The wire contract is frozen behind `version: 1` (architecture I-1, NFR-14).
 - [ ] No ad-hoc README/docs files added outside the canonical paths
 - [ ] Migrations, if any, are reversible and documented
 
+## Code principles
+
+These are the project's bar, not a per-PR preference. See [`AGENTS.md`](../../AGENTS.md) §1 for full context. Tick every box that applies; leave blank if not applicable.
+
+### Small (AGENTS.md §1.1)
+
+- [ ] No file exceeds 500 lines (warn) / 800 lines (error)
+- [ ] No function exceeds 200 lines or complexity 10
+- [ ] No React component exceeds 6 levels of JSX depth
+- [ ] No nested component definitions (functions defined inside another component)
+- [ ] Component split if a component exceeded these limits (do not silence the lint warning)
+
+### Typed (AGENTS.md §1.2)
+
+- [ ] No `any` (use `unknown` and narrow)
+- [ ] No `@ts-ignore` or `@ts-expect-error` without an explanation comment
+- [ ] No non-null assertion (`!`) outside test files
+- [ ] No unjustified `as` casts that hide a type mismatch
+- [ ] All React components have explicit, typed props
+- [ ] Interface (not type alias) used for object shapes
+
+### Immutable (AGENTS.md §1.3)
+
+- [ ] No `Array.push/pop/shift/unshift/splice/sort/reverse/fill` on shared arrays
+- [ ] No `Object.assign` for state updates (use `{...a, ...b}`)
+- [ ] React state updates use the functional form (`setX(prev => ...)`)
+- [ ] Props and state types use `readonly` / `ReadonlyArray` where appropriate
+
+### Professional (AGENTS.md §1.4)
+
+- [ ] No `console.log` (only `console.warn` / `console.error` allowed; use the shared logger for diagnostics)
+- [ ] No commented-out code
+- [ ] No `TODO` without a date and an owner
+- [ ] No magic numbers — literals are named constants (see `BRD §8.3.1` for thresholds)
+- [ ] No prop drilling past 2 levels (lift to context or a store)
+- [ ] No `useEffect` for derived state — compute during render or `useMemo`
+- [ ] Interactive elements have accessible names; form fields have labels
+- [ ] No new dependencies without a one-line justification in the PR
+
+### Audited (AGENTS.md §1.5)
+
+- [ ] Every state transition writes an audit row
+- [ ] Every rule change writes an audit row with before/after diff
+- [ ] Every failed authorization writes an audit row
+- [ ] No raw `Reading` frames logged
+- [ ] Any new audit action is added to the closed enumeration (ADR 0012)
+
 ## Documentation
 
 - [ ] `docs/` updated where behaviour changed

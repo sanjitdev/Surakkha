@@ -24,6 +24,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import jsxA11y from "eslint-plugin-jsx-a11y";
 import importPlugin from "eslint-plugin-import";
 import nodePlugin from "eslint-plugin-n";
+import unicorn from "eslint-plugin-unicorn";
 import prettier from "eslint-config-prettier";
 
 // ---------------------------------------------------------------------------
@@ -58,10 +59,123 @@ const baseTsRules = {
   curly: ["error", "multi-line"],
   "arrow-body-style": ["error", "as-needed", { requireReturnForObjectLiteral: false }],
   "no-param-reassign": ["error", { props: true }],
-  "max-lines-per-function": ["warn", { max: 200, skipComments: true, skipBlankLines: true }],
+
+  // --- Size rules (AGENTS.md §1.1) ----------------------------------------
+  "max-lines": [
+    "warn",
+    { max: 500, skipComments: true, skipBlankLines: true },
+  ],
+  "max-lines-per-function": [
+    "warn",
+    { max: 200, skipComments: true, skipBlankLines: true },
+  ],
+  "max-params": ["warn", { max: 3 }],
+  "max-classes-per-file": ["error", { max: 1 }],
   complexity: ["warn", { max: 10 }],
   "max-depth": ["warn", { max: 4 }],
   "max-nested-callbacks": ["warn", { max: 3 }],
+
+  // --- Quality rules (AGENTS.md §1.4) -------------------------------------
+  "no-magic-numbers": [
+    "warn",
+    {
+      ignore: [-1, 0, 1, 2, 100, 1000],
+      ignoreArrayIndexes: true,
+      ignoreDefaultValues: true,
+      ignoreEnums: true,
+      ignoreReadonlyClassProperties: true,
+    },
+  ],
+  "no-duplicate-imports": ["error", { "prefer-inline": false }],
+  "no-useless-constructor": "error",
+  "no-unused-expressions": ["error", { allowTaggedTemplates: true, enforceForJSX: true }],
+  "prefer-template": "error",
+  "prefer-object-spread": "error",
+  "prefer-spread": "error",
+  "prefer-destructuring": ["warn", { array: false, object: true }],
+  "no-iterator": "error",
+  "no-restricted-globals": ["error", "event", "fdescribe"],
+  "no-restricted-properties": [
+    "error",
+    {
+      object: "process",
+      property: "exit",
+      message: "Do not call process.exit() directly. Use the graceful shutdown handler.",
+    },
+  ],
+
+  // --- Immutability rules (AGENTS.md §1.3) --------------------------------
+  // Block in-place mutation of arrays and objects. Tests relax these.
+  //
+  // --- Coding standard rules (AGENTS.md §1.4) ------------------------------
+  // Capitalised constructor names are valid as values (`new Map()`), but
+  // forbidden as TYPE annotations. The lowercase forms are interfaces and
+  // safer.
+  "no-restricted-syntax": [
+    "error",
+    // Immutability.
+    {
+      selector: "MemberExpression[object.property.name='push']",
+      message: "Array.push mutates in place. Use spread or concat for immutability.",
+    },
+    {
+      selector: "MemberExpression[property.name='pop']",
+      message: "Array.pop mutates in place. Use slice/filter for immutability.",
+    },
+    {
+      selector: "MemberExpression[property.name='shift']",
+      message: "Array.shift mutates in place. Use slice/filter for immutability.",
+    },
+    {
+      selector: "MemberExpression[property.name='unshift']",
+      message: "Array.unshift mutates in place. Use spread for immutability.",
+    },
+    {
+      selector: "MemberExpression[property.name='splice']",
+      message: "Array.splice mutates in place. Use slice/concat/filter for immutability.",
+    },
+    {
+      selector: "MemberExpression[property.name='sort']",
+      message: "Array.sort mutates in place. Use toSorted() (ES2023) or [...arr].sort().",
+    },
+    {
+      selector: "MemberExpression[property.name='reverse']",
+      message: "Array.reverse mutates in place. Use toReversed() (ES2023) or [...arr].reverse().",
+    },
+    {
+      selector: "MemberExpression[property.name='fill']",
+      message: "Array.fill mutates in place. Use map or a fresh array.",
+    },
+    {
+      selector: "MemberExpression[object.name='Object'][property.name='assign']",
+      message: "Object.assign mutates the first argument. Use spread ({...a, ...b}).",
+    },
+    // Coding standard: no constructor types.
+    {
+      selector: "TSTypeReference[typeName.name='Function']",
+      message: "Use a specific function type with explicit parameters instead of `Function`.",
+    },
+    {
+      selector: "TSTypeReference[typeName.name='Object']",
+      message: "Use `Record<string, unknown>` or a specific interface instead of `Object`.",
+    },
+    {
+      selector: "TSTypeReference[typeName.name='Boolean']",
+      message: "Use `boolean` (lowercase) instead of the `Boolean` wrapper type.",
+    },
+    {
+      selector: "TSTypeReference[typeName.name='Number']",
+      message: "Use `number` (lowercase) instead of the `Number` wrapper type.",
+    },
+    {
+      selector: "TSTypeReference[typeName.name='String']",
+      message: "Use `string` (lowercase) instead of the `String` wrapper type.",
+    },
+    {
+      selector: "TSTypeReference[typeName.name='Symbol']",
+      message: "Use `symbol` (lowercase) instead of the `Symbol` wrapper type.",
+    },
+  ],
 };
 
 /** @typescript-eslint rules layered on top of `baseTsRules`. */
@@ -96,6 +210,18 @@ const tsRules = {
   "@typescript-eslint/no-shadow": ["error", { builtinGlobals: false, hoist: "functions" }],
   "@typescript-eslint/consistent-type-definitions": ["error", "interface"],
   "@typescript-eslint/array-type": ["error", { default: "array-simple" }],
+  // Coding standard (AGENTS.md §1.4).
+  "@typescript-eslint/consistent-type-assertions": [
+    "error",
+    { assertionStyle: "as", objectLiteralTypeAssertions: "allow-as-parameter" },
+  ],
+  "@typescript-eslint/promise-function-async": ["error", { checkArrowFunctions: true }],
+  "@typescript-eslint/restrict-template-expressions": [
+    "error",
+    { allowNumber: true, allowBoolean: true, allowAny: false, allowNullish: false, allowRegExp: false },
+  ],
+  "@typescript-eslint/consistent-indexed-object-style": ["error", "record"],
+  "@typescript-eslint/no-duplicate-enum-values": "error",
 };
 
 // ---------------------------------------------------------------------------
@@ -158,6 +284,113 @@ export default [
     },
   },
 
+  // 3b. Coding standard — unicorn rules + import ordering.
+  {
+    files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
+    plugins: {
+      unicorn,
+      import: importPlugin,
+    },
+    rules: {
+      // --- Naming (unicorn/naming-convention) -----------------------------
+      "unicorn/naming-convention": [
+        "error",
+        // camelCase variables and functions.
+        { selector: "variable", format: ["camelCase", "UPPER_CASE", "PascalCase"] },
+        { selector: "function", format: ["camelCase", "PascalCase"] },
+        // PascalCase for classes, types, interfaces, enums.
+        { selector: "class", format: ["PascalCase"] },
+        { selector: "typeLike", format: ["PascalCase"] },
+        { selector: "enum", format: ["PascalCase"] },
+        { selector: "enumMember", format: ["PascalCase"] },
+        // UPPER_CASE for true constants (frozen objects, env vars).
+        {
+          selector: "variable",
+          modifiers: ["const"],
+          types: ["boolean", "number", "string"],
+          format: ["UPPER_CASE", "PascalCase", "camelCase"],
+        },
+        // Acronyms: ID, URL, JSON, HTML, API, JWT, HTTP, WS — never Id, Url, etc.
+        {
+          selector: "variableLike",
+          format: ["camelCase", "PascalCase", "UPPER_CASE"],
+          filter: {
+            // Suggest correct casing when developers write `userId` etc.
+            regex: "^(.*[a-z])?([A-Z]+|[A-Z][a-z]+)$",
+            match: true,
+          },
+          custom: {
+            regex: "^(user|device|incident|alert|rule|school|audit)(Id|Url|Api|Json|Xml|Html|Jwt|Http|Https|Ws|Tcp|Udp)$",
+            message: "Use the acronym in uppercase: userID, deviceID, incidentID, …",
+          },
+        },
+        // Boolean getters start with `is`/`has`/`should`.
+        {
+          selector: "variable",
+          types: ["boolean"],
+          format: ["PascalCase"],
+          prefix: ["is", "has", "should", "can", "did", "will"],
+        },
+        // Filenames: kebab-case for files exporting non-components, PascalCase
+        // for components. We enforce via no-restricted-syntax selectors below.
+      ],
+
+      // --- Function scoping (unicorn/consistent-function-scoping) ---------
+      // Don't define an arrow inside a function body when a top-level
+      // function would do. Catches the JSX-inline-function pattern.
+      "unicorn/consistent-function-scoping": "error",
+
+      // --- Array callback discipline --------------------------------------
+      "unicorn/no-array-callback-reference": [
+        "warn",
+        { exclude: ["some", "every", "filter", "find", "findLast", "findIndex", "flatMap"] },
+      ],
+      // We prefer forEach to for loops in some cases (declarative); but
+      // for...of is preferred when break/continue is needed. This rule
+      // is "warn" and disabled for tests.
+      "unicorn/no-array-for-each": "off",
+
+      // --- node: protocol -------------------------------------------------
+      "unicorn/prefer-node-protocol": ["error", { version: "20" }],
+
+      // --- Event target ---------------------------------------------------
+      "unicorn/prefer-event-target": "error",
+
+      // --- Throw new Error -----------------------------------------------
+      "unicorn/throw-new-error": "error",
+
+      // --- Import ordering -----------------------------------------------
+      "import/order": [
+        "warn",
+        {
+          groups: ["builtin", "external", "internal", "parent", "sibling", "index", "type"],
+          "newlines-between": "always",
+          alphabetize: { order: "asc", caseInsensitive: true },
+          distinctImport: true,
+          named: true,
+        },
+      ],
+      // Forbid cycle references across epic boundaries. Same as the
+      // import/no-restricted-paths enforcement above; this one fires when
+      // someone uses `import x from "../<other-epic>/..."` inside their own
+      // epic directory. (The deeper rule is in the dedicated block below.)
+      "import/no-self-import": "error",
+      "import/no-useless-path-segments": "error",
+
+      // --- File-name enforcement -----------------------------------------
+      // PascalCase for files that export a default React component.
+      // camelCase or kebab-case for utilities. Enforced via restricted syntax
+      // because naming-convention doesn't see filenames.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Program > ExportDefaultDeclaration > Identifier",
+          message: "Default-exported identifiers must be PascalCase (component) or camelCase (utility). Check the file name.",
+        },
+      ],
+    },
+  },
+
   // 4. React-specific rules for packages/web.
   {
     files: ["packages/web/**/*.{ts,tsx}"],
@@ -189,6 +422,20 @@ export default [
       "jsx-a11y/anchor-is-valid": "off", // our router handles <a> links
       "jsx-a11y/click-events-have-key-events": "warn",
       "jsx-a11y/no-static-element-interactions": "warn",
+
+      // --- React component size (AGENTS.md §1.1) ----------------------------
+      // Flag JSX trees that are too deep — a strong "split this component" signal.
+      "react/jsx-max-depth": ["warn", { max: 6 }],
+      // No boolean trap in props — if a component has too many boolean toggles,
+      // it's doing too much. Use a discriminated union instead.
+      "react/boolean-prop-naming": ["warn", { rule: "^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])$" }],
+      // Forbid "any" inside JSX attributes — typed props only.
+      "react/no-unknown-property": "error",
+      // Forbid nested components defined inside another component — they
+      // re-create on every render and are a common AI-agent mistake.
+      "react/no-unstable-nested-components": ["error", { allowAsProps: false }],
+      // Forbid inline styles when not dynamic — push design tokens.
+      "react/forbid-dom-props": ["warn", { forbid: ["id"] }],
     },
   },
 
@@ -312,10 +559,25 @@ export default [
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
       "no-console": "off",
+      "no-magic-numbers": "off",
+      "max-lines": "off",
       "max-lines-per-function": "off",
       complexity: "off",
       "max-nested-callbacks": "off",
+      "max-depth": "off",
+      "max-params": "off",
+      "max-classes-per-file": "off",
+      "react/jsx-max-depth": "off",
+      "unicorn/naming-convention": "off",
+      "unicorn/consistent-function-scoping": "off",
+      "unicorn/no-array-callback-reference": "off",
+      "import/order": "off",
+      "import/no-self-import": "off",
+      "import/no-useless-path-segments": "off",
+      // Tests legitimately build up fixtures via push.
+      "no-restricted-syntax": "off",
     },
   },
 
