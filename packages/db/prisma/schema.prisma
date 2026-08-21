@@ -1,0 +1,56 @@
+/**
+ * Prisma schema — Surakkha (Story 2.2 + Story 2.3 seed).
+ *
+ * v1.0 entity set. The `Reading` and `Device` placeholders land here in
+ * Story 2.2 (architecture §5). The remaining entities land in their own
+ * stories. Adding/removing a model is a wire-contract-adjacent change;
+ * reviewers should re-read `docs/architecture.md` §5 before merging.
+ */
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * Device — Story 2.2 placeholder. The full model (school_id, label,
+ * fw_version, status, etc.) lands in Story 2.3. v1 ingest only needs
+ * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` so the admin device-
+ * status view can render "last contact" without a separate query.
+ */
+model Device {
+  id         String    @id
+  lastSeenAt DateTime?
+}
+
+/**
+ * Reading — Story 2.2 (architecture §3.2 step 7 + §5).
+ *
+ * `serverReceivedAt` is the source of truth for ordering; device clock
+ * skew must not corrupt the timeline. `metrics` is JSON (Prisma maps
+ * to `jsonb`) so the v1 schema does not impose a metric shape on the
+ * database — the wire-contract Zod schema is the shape authority.
+ *
+ * `flags` is a Postgres text[] so the Story 2.2 flags (`out_of_order`,
+ * future `rate_limited`, `clock_skew_detected`) round-trip without a
+ * separate join table.
+ *
+ * Indexes:
+ *   - (deviceId, ts DESC) — primary chart query.
+ *   - (deviceId, seq DESC) — replay / dedup.
+ */
+model Reading {
+  id               String   @id @default(uuid())
+  deviceId         String
+  ts               DateTime
+  serverReceivedAt DateTime
+  metrics          Json
+  seq              Int
+  flags            String[] @default([])
+
+  @@index([deviceId, ts])
+  @@index([deviceId, seq])
+}

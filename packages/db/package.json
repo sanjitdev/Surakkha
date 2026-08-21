@@ -4,6 +4,9 @@
   "private": true,
   "description": "Prisma schema, migrations, seed script. Six default schools + devices + WHO/BSTI default rules (BRD §8.3.1).",
   "type": "module",
+  "exports": {
+    "./scripts/migrate": "./scripts/migrate.ts"
+  },
   "scripts": {
     "migrate": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",

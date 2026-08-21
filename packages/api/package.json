@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@prisma/client": "5.20.0",
+    "@surakkha/db": "workspace:*",
     "@surakkha/shared": "workspace:*",
     "bcrypt": "5.1.1",
     "cookie-parser": "1.4.7",

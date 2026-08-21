@@ -6,6 +6,7 @@
  *   POST /auth/login     — Story 1.4 (issues access token + refresh cookie)
  *   POST /auth/refresh   — Story 1.4 (mints a new access token from cookie)
  *   GET  /devices        — Story 1.5 (RBAC-protected demo endpoint)
+ *   WS   /ingest/<uuid>  — Story 2.2 (Socket.IO claim-driven ingestion)
  *
  * Story 1.4 AC: JWT_SECRET fail-fast — the process exits with code 1
  * if the env var is missing, empty, or shorter than 32 characters
@@ -18,15 +19,31 @@
  *      login + refresh endpoints remain anonymous.
  *   3. Protected routes are wrapped with `authorize({ action, resource })`
  *      which writes a `rbac_denied` audit row on every denial.
+ *
+ * Story 2.2 wiring:
+ *   1. `app.listen` is wrapped in `http.createServer(app)` so the
+ *      same TCP port serves HTTP and Socket.IO.
+ *   2. `new Server(httpServer)` is constructed; `path: "/ingest/"`
+ *      scopes Socket.IO to the ingest namespace; the `/health`
+ *      endpoint stays on Express.
+ *   3. `buildIngestServer` registers the per-connection handler that
+ *      validates the URL + `?token=`, calls `verifyIngestClaims`,
+ *      and routes inbound `frame` events through `processFrame`.
+ *   4. Prisma is loaded lazily so unit tests that exercise HTTP-only
+ *      flows (auth router) do not require DATABASE_URL.
  */
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+
 import { createLogger } from "@surakkha/shared/logger";
 import cookieParser from "cookie-parser";
 import express, { type Express, type Request, type Response } from "express";
+import { Server as IoServer } from "socket.io";
 
 
 import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
+import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
 import { authenticate, authorize } from "./middleware/authorize";
 
 const DEFAULT_API_PORT = 3000;
@@ -82,8 +99,100 @@ app.use((_req: Request, res: Response) => {
   res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
 });
 
-app.listen(PORT, () => {
-  logger.info({ port: PORT }, "api: listening");
+/**
+ * Story 2.2 — bind Socket.IO to the same HTTP server. `path` keeps
+ * the WS endpoint out of Express's URL space; the ingest handler
+ * parses the URL on its own so the URL device_id can be compared
+ * with the JWT `sub` claim.
+ */
+const httpServer: HttpServer = createHttpServer(app);
+const io = new IoServer(httpServer, {
+  path: INGEST_PATH_PREFIX,
+  pingTimeout: 25_000,
+  pingInterval: 20_000,
+});
+
+/**
+ * Resolve the Prisma reading delegate. Lazy so the HTTP-only
+ * test suite (which never instantiates the WS path) does not need
+ * DATABASE_URL set. The dynamic import surfaces the underlying
+ * error if the Prisma client has not been generated yet — at
+ * which point the api boot path fails fast with a clear message.
+ */
+interface ReadingDelegate {
+  readonly reading: {
+    create(args: {
+      readonly data: {
+        readonly deviceId: string;
+        readonly ts: Date;
+        readonly serverReceivedAt: Date;
+        readonly metrics: unknown;
+        readonly seq: number;
+        readonly flags: readonly string[];
+      };
+    }): Promise<unknown>;
+  };
+}
+
+let cachedPrisma: ReadingDelegate | null = null;
+const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
+  if (cachedPrisma !== null) return cachedPrisma;
+  const mod = (await import("@prisma/client")) as unknown as {
+    PrismaClient: new () => {
+      reading: {
+        create(args: {
+          readonly data: {
+            readonly deviceId: string;
+            readonly ts: Date;
+            readonly serverReceivedAt: Date;
+            readonly metrics: unknown;
+            readonly seq: number;
+            readonly flags: readonly string[];
+          };
+        }): Promise<unknown>;
+      };
+    };
+  };
+  const client = new mod.PrismaClient();
+  cachedPrisma = {
+    reading: {
+      create: (args) => client.reading.create(args as never) as Promise<unknown>,
+    },
+  };
+  return cachedPrisma;
+};
+
+const ingestHandlerPromise = resolveReadingDelegate().then((prisma) =>
+  buildIngestServer({ io, prisma }),
+);
+
+io.on("connection", (socket) => {
+  void ingestHandlerPromise.then((handler) => handler(socket));
+});
+
+/**
+ * Story 2.2 — run migrations before binding the API port so the
+ * schema is guaranteed to exist before the api accepts frames.
+ * `runMigrations()` throws on failure; the catch turns the throw
+ * into `process.exit(1)` so Docker Compose restarts the container
+ * until Postgres + schema are both healthy. We invoke the script
+ * via a dynamic import so a sibling package boundary in the
+ * workspace is preserved without bundling.
+ */
+const boot = async (): Promise<void> => {
+  const migrateModule = (await import(
+    /* webpackIgnore: true */ "@surakkha/db/scripts/migrate"
+  )) as { runMigrations: () => Promise<void> | void };
+  await Promise.resolve(migrateModule.runMigrations());
+  httpServer.listen(PORT, () => {
+    logger.info({ port: PORT }, "api: listening");
+  });
+};
+
+boot().catch((cause) => {
+  logger.error({ err: cause }, "api: boot failed");
+  // eslint-disable-next-line no-restricted-properties
+  process.exit(1);
 });
 
 export { app };

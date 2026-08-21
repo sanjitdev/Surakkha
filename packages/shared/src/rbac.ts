@@ -408,5 +408,12 @@ export const AuditActionSchema = z.enum([
   "csv_exported",
   "simulator_event",
   "jwt_secret_rotated",
+  // Story 2.2 — ingest seam emits these when the 10-step driver completes.
+  // `reading_ingested` fires on every accepted frame, `reading_rate_limited`
+  // fires when the rate-cap step rejects a frame, and `seq_drop_detected`
+  // fires when a gap between consecutive `seq` values is observed.
+  "reading_ingested",
+  "reading_rate_limited",
+  "seq_drop_detected",
 ]);
 export type AuditAction = z.infer<typeof AuditActionSchema>;

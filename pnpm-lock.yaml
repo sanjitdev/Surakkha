@@ -59,6 +59,9 @@ importers:
       '@prisma/client':
         specifier: 5.20.0
         version: 5.20.0(prisma@5.20.0)
+      '@surakkha/db':
+        specifier: workspace:*
+        version: link:../db
       '@surakkha/shared':
         specifier: workspace:*
         version: link:../shared

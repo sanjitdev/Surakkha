@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ActionSchema,
+  AuditActionSchema,
   RBAC_MATRIX,
   RBAC_NEGATIVE_CASES,
   ResourceSchema,
@@ -128,6 +129,20 @@ describe("RBAC_NEGATIVE_CASES registry", () => {
       expect(RoleSchema.options).toContain(c.subject);
       expect(c.endpoint).toMatch(/^(GET|POST|PUT|PATCH|DELETE) \//);
       expect([401, 403]).toContain(c.expected);
+    }
+  });
+});
+
+describe("AuditActionSchema (Story 2.2 extension)", () => {
+  it("includes the three Story 2.2 ingest values", () => {
+    expect(AuditActionSchema.options).toContain("reading_ingested");
+    expect(AuditActionSchema.options).toContain("reading_rate_limited");
+    expect(AuditActionSchema.options).toContain("seq_drop_detected");
+  });
+
+  it("parses every enum value without error", () => {
+    for (const value of AuditActionSchema.options) {
+      expect(AuditActionSchema.parse(value)).toBe(value);
     }
   });
 });

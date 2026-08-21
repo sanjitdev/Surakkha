@@ -131,3 +131,58 @@ export const verifyAccessToken = (token: string): JwtClaims | null => {
     return null;
   }
 };
+
+/**
+ * Story 2.2 — claim-driven verifier for the WS ingest endpoint.
+ *
+ * Devices and simulators are NOT role subjects (architecture §3.4,
+ * I-3, I-4). Wrapping the WS upgrade with the HTTP `authenticate()`
+ * middleware would reject every device connection because that
+ * middleware looks up the `sub` as a `User` row. This sibling
+ * verifier checks the *claims* only — HS256 + audience + scope +
+ * `sub === urlDeviceId` — and returns the parsed claims so the
+ * connection handler can attach them to the socket.
+ *
+ * Returns `null` on signature failure or structural failure
+ * (sub mismatch, audience not in {device,simulator}, wrong scope).
+ * Throws on JWT-level decode failure for malformed tokens so callers
+ * can distinguish "not signed by us" from "wrong audience".
+ */
+const INGEST_ALLOWED_AUDIENCES = ["device", "simulator"] as const;
+const INGEST_REQUIRED_SCOPE = "telemetry:write";
+
+export const verifyIngestClaims = (
+  token: string,
+  expectedSub: string,
+): JwtClaims | null => {
+  let decoded: unknown;
+  try {
+    decoded = jwt.verify(token, getSecret(), {
+      algorithms: ["HS256"],
+      clockTolerance: 30,
+      issuer: JWT_ISSUER,
+    });
+  } catch {
+    // Signature / expiry / format failure — caller treats this as
+    // "unauthenticated" (I-1).
+    return null;
+  }
+  if (typeof decoded !== "object" || decoded === null) return null;
+  const claims = decoded as Partial<JwtClaims>;
+
+  // Structural checks. The JWT library already verified `iss`,
+  // `aud`, `sub`, `exp` against the registered claims; we layer
+  // the application-specific shape on top so the WS endpoint
+  // never accepts a `user` audience (I-3).
+  if (
+    typeof claims.sub !== "string" ||
+    claims.sub !== expectedSub ||
+    typeof claims.aud !== "string" ||
+    !(INGEST_ALLOWED_AUDIENCES as readonly string[]).includes(claims.aud) ||
+    claims.scope !== INGEST_REQUIRED_SCOPE
+  ) {
+    return null;
+  }
+
+  return claims as JwtClaims;
+};

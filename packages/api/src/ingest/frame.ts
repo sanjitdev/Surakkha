@@ -1,31 +1,381 @@
 /**
- * Ingest handler — placeholder for Story 2.2 (AC4).
+ * Ingest handler — Story 2.2.
  *
- * The actual WS handler lives here in Story 2.2; this file exists now so
- * the AC4 contract is visible at the seam before implementation lands.
+ * Replaces the Step 0 placeholder with the 10-step driver from
+ * `PROCESSING_ORDER` (architecture §3.2, ADR 0013). Real logic for
+ * steps 1–6 + 10 (validate, auth check, rate check, seq/drop check,
+ * persist, socket broadcast); typed no-op hook calls for steps 6–9
+ * (rule evaluation, alert emission, state-machine update, audit
+ * append) that Epic 3/4/5 fill in by calling `setIngestHooks`.
  *
- * Processing order (architecture §3.2, ADR 0013). The order is
- * load-bearing — see ADR 0013 for the rationale per step:
+ * The 10-step order is **load-bearing** — see ADR 0013. This module
+ * iterates `PROCESSING_ORDER` in a single `for` loop; the order of
+ * branches in the switch mirrors the literal in
+ * `@surakkha/shared`. The `frame.spec.ts` test asserts
+ * PROCESSING_ORDER.length === 10 and that any adjacent swap is
+ * detectable.
  *
- *   1. validate
- *   2. auth check
- *   3. rate check
- *   4. seq/drop check
- *   5. persist
- *   6. rule evaluation
- *   7. alert emission
- *   8. state-machine update
- *   9. audit append
- *  10. socket broadcast
- *
- * Reordering any adjacent pair is a contract violation. Story 2.2 must
- * run `PROCESSING_ORDER` steps in exactly this order.
- *
- * Reference: docs/adr/0013-server-processing-order.md
+ * Reference:
+ *   - docs/architecture.md §3.2
+ *   - docs/adr/0013-server-processing-order.md
+ *   - Story 2.2 spec (`_bmad-output/implementation-artifacts/2-2-…md`)
  */
-import { PROCESSING_ORDER } from "@surakkha/shared";
+import {
+  PROCESSING_ORDER,
+  type ReadingNewEvent,
+  type TelemetryFrame,
+  TelemetryFrameSchema,
+  translateZodError,
+} from "@surakkha/shared";
 
-// Anchor the import so a future edit cannot delete it without a TS error.
-// Story 2.2 replaces this with the real handler; the tuple length must
-// match the comment block above.
-const _PROCESSING_ORDER_LENGTH = PROCESSING_ORDER.length;
+import { getIngestHooks, type IngestHooks } from "./hooks";
+import { type PerDeviceRateLimiter } from "./rateLimit";
+import { type PerDeviceSequence } from "./sequence";
+
+/**
+ * Minimal shape the persist + broadcast steps need from Prisma.
+ * Tests inject a stub that satisfies this surface; production code
+ * passes the real `@prisma/client` Reading delegate.
+ */
+export interface ReadingRepository {
+  readonly reading: {
+    create(args: {
+      readonly data: {
+        readonly deviceId: string;
+        readonly ts: Date;
+        readonly serverReceivedAt: Date;
+        readonly metrics: TelemetryFrame["metrics"];
+        readonly seq: number;
+        readonly flags: readonly string[];
+      };
+    }): Promise<unknown>;
+  };
+}
+
+/**
+ * Minimal Socket.IO surface — `io.to(room).emit(event, payload)`.
+ * Production passes the real `Server.io`; tests pass a tiny
+ * EventEmitter shim (frame.spec.ts pins the contract).
+ */
+export interface BroadcastTarget {
+  to(room: string): {
+    emit(event: string, payload: unknown): unknown;
+  };
+}
+
+export interface ProcessFrameDeps {
+  readonly deviceId: string;
+  readonly socket: {
+    emit(event: string, payload: unknown): unknown;
+    disconnect(close?: boolean): unknown;
+  };
+  readonly raw: unknown;
+  readonly rateLimiter: PerDeviceRateLimiter;
+  readonly sequence: PerDeviceSequence;
+  readonly prisma: ReadingRepository;
+  readonly io: BroadcastTarget;
+  readonly hooks?: IngestHooks;
+  readonly now?: () => Date;
+}
+
+/**
+ * Per-frame decision returned to the WS handler so it can decide
+ * whether to keep the connection open after a rate-limit. The
+ * handler runs `processFrame` once per inbound frame; the return
+ * value documents the seam without forcing the handler to read
+ * every step's outcome.
+ */
+export type ProcessFrameOutcome =
+  | { readonly status: "accepted" }
+  | { readonly status: "bad_request" }
+  | { readonly status: "rate_limited" }
+  | { readonly status: "ignored" };
+
+const deviceRoom = (deviceId: string): string => `device:${deviceId}`;
+
+/**
+ * Per-step result. Steps that mutate state return a `patch`; the
+ * driver applies the patch in a single assignment so ESLint's
+ * `no-param-reassign` rule does not fire inside step helpers.
+ *
+ * Terminal steps (bad_request, rate_limited, ignored) return an
+ * `exit` outcome and stop the iteration.
+ */
+type StepResult =
+  | { readonly kind: "next"; readonly patch?: FrameStatePatch }
+  | { readonly kind: "exit"; readonly outcome: ProcessFrameOutcome };
+
+interface FrameStatePatch {
+  parsed?: TelemetryFrame;
+  flags?: string[];
+  dropCount?: number;
+  serverReceivedAt?: Date;
+}
+
+interface FrameState {
+  parsed: TelemetryFrame | null;
+  flags: string[];
+  dropCount: number;
+  serverReceivedAt: Date;
+}
+
+const applyPatch = (state: FrameState, patch: FrameStatePatch | undefined): FrameState => {
+  if (patch === undefined) return state;
+  return {
+    parsed: patch.parsed !== undefined ? patch.parsed : state.parsed,
+    flags: patch.flags !== undefined ? patch.flags : state.flags,
+    dropCount: patch.dropCount !== undefined ? patch.dropCount : state.dropCount,
+    serverReceivedAt:
+      patch.serverReceivedAt !== undefined ? patch.serverReceivedAt : state.serverReceivedAt,
+  };
+};
+
+/**
+ * Each per-step function runs ONE of the 10 PROCESSING_ORDER
+ * branches. They are deliberately tiny so the iteration site in
+ * `processFrame` reads top-to-bottom as a step list — not a flow-
+ * chart — and the ESLint complexity ceiling stays within bounds.
+ */
+const stepValidate = (
+  state: FrameState,
+  deps: { readonly raw: unknown; readonly socket: ProcessFrameDeps["socket"]; readonly now: () => Date },
+): StepResult => {
+  const result = TelemetryFrameSchema.safeParse(deps.raw);
+  if (!result.success) {
+    deps.socket.emit("bad_request", translateZodError(result.error));
+    return { kind: "exit", outcome: { status: "bad_request" } };
+  }
+  return {
+    kind: "next",
+    patch: { parsed: result.data, serverReceivedAt: deps.now() },
+  };
+};
+
+const stepAuthCheck = (): StepResult => ({ kind: "next" });
+
+const stepRateCheck = async (
+  state: FrameState,
+  deps: {
+    readonly deviceId: string;
+    readonly socket: ProcessFrameDeps["socket"];
+    readonly rateLimiter: PerDeviceRateLimiter;
+    readonly hooks: IngestHooks;
+  },
+): Promise<StepResult> => {
+  const decision = deps.rateLimiter.tryAccept(deps.deviceId, state.serverReceivedAt.getTime());
+  if (!decision.ok) {
+    deps.socket.emit("rate_limited", { retry_after_seconds: decision.retryAfterSeconds });
+    await deps.hooks.onAuditAppend({
+      auditAction: "reading_rate_limited",
+      deviceId: deps.deviceId,
+      context: { retry_after_seconds: decision.retryAfterSeconds },
+    });
+    deps.socket.disconnect(true);
+    return { kind: "exit", outcome: { status: "rate_limited" } };
+  }
+  return { kind: "next" };
+};
+
+const stepSeqDropCheck = async (
+  state: FrameState,
+  deps: {
+    readonly deviceId: string;
+    readonly sequence: PerDeviceSequence;
+    readonly hooks: IngestHooks;
+  },
+): Promise<StepResult> => {
+  if (state.parsed === null) {
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+  const obs = deps.sequence.observe(deps.deviceId, state.parsed.seq);
+  const patch: FrameStatePatch = { dropCount: obs.dropCount };
+  if (obs.outcome === "reorder") {
+    patch.flags = ["out_of_order"];
+  }
+  if (obs.dropCount > 0) {
+    await deps.hooks.onAuditAppend({
+      auditAction: "seq_drop_detected",
+      deviceId: deps.deviceId,
+      context: { drop_count: obs.dropCount, last_seq: obs.newLastSeen },
+    });
+  }
+  return { kind: "next", patch };
+};
+
+const stepPersist = async (
+  state: FrameState,
+  deps: {
+    readonly deviceId: string;
+    readonly prisma: ReadingRepository;
+    readonly socket: ProcessFrameDeps["socket"];
+  },
+): Promise<StepResult> => {
+  if (state.parsed === null) {
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+  try {
+    await deps.prisma.reading.create({
+      data: {
+        deviceId: deps.deviceId,
+        ts: new Date(state.parsed.ts),
+        serverReceivedAt: state.serverReceivedAt,
+        metrics: state.parsed.metrics,
+        seq: state.parsed.seq,
+        flags: state.flags,
+      },
+    });
+  } catch {
+    deps.socket.emit("persist_failed", { error: "persist_failed" });
+    deps.socket.disconnect(true);
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+  return { kind: "next" };
+};
+
+const stepRuleEvaluation = async (
+  state: FrameState,
+  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
+): Promise<StepResult> => {
+  if (state.parsed === null) {
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+  await deps.hooks.onRuleEvaluation({
+    deviceId: deps.deviceId,
+    frame: state.parsed,
+    flags: state.flags,
+  });
+  return { kind: "next" };
+};
+
+const stepAlertEmission = async (
+  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
+): Promise<StepResult> => {
+  await deps.hooks.onAlertEmission({
+    deviceId: deps.deviceId,
+    ruleId: "",
+    severity: "info",
+  });
+  return { kind: "next" };
+};
+
+const stepStateMachineUpdate = async (
+  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
+): Promise<StepResult> => {
+  await deps.hooks.onStateMachineUpdate({
+    deviceId: deps.deviceId,
+    state: "OBSERVING",
+    previousState: null,
+  });
+  return { kind: "next" };
+};
+
+const stepAuditAppend = async (
+  state: FrameState,
+  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
+): Promise<StepResult> => {
+  await deps.hooks.onAuditAppend({
+    auditAction: "reading_ingested",
+    deviceId: deps.deviceId,
+    context: { seq: state.parsed?.seq, flags: state.flags },
+  });
+  return { kind: "next" };
+};
+
+const stepSocketBroadcast = (
+  state: FrameState,
+  deps: { readonly deviceId: string; readonly io: BroadcastTarget },
+): StepResult => {
+  if (state.parsed === null) {
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+  const payload: ReadingNewEvent = {
+    device_id: deps.deviceId,
+    ts: state.parsed.ts,
+    server_received_at: state.serverReceivedAt.toISOString(),
+    metrics: state.parsed.metrics,
+  };
+  deps.io.to(deviceRoom(deps.deviceId)).emit("reading:new", payload);
+  return { kind: "next" };
+};
+
+/**
+ * Single-entry-point for one inbound frame. Iterates
+ * PROCESSING_ORDER; each step is delegated to a tiny pure function
+ * so the iteration site reads as a step list. Reordering any
+ * adjacent pair is a contract violation — `frame.spec.ts` asserts
+ * the order against the literal in `PROCESSING_ORDER`.
+ */
+export const processFrame = async (
+  deps: ProcessFrameDeps,
+): Promise<ProcessFrameOutcome> => {
+  const { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now = () => new Date() } = deps;
+  const hooks = deps.hooks ?? getIngestHooks();
+
+  let state: FrameState = {
+    parsed: null,
+    flags: [],
+    dropCount: 0,
+    serverReceivedAt: now(),
+  };
+
+  for (const step of PROCESSING_ORDER) {
+    const result = await dispatchStep(step, state, { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now, hooks });
+    if (result.kind === "exit") return result.outcome;
+    state = applyPatch(state, result.patch);
+  }
+
+  return { status: "accepted" };
+};
+
+/* eslint-disable complexity -- 10 cases is the literal
+ * length of PROCESSING_ORDER; collapsing them (e.g. with a
+ * Record<step, handler> map) would re-order adjacent pairs and
+ * break the contract pin in `frame.spec.ts`.
+ */
+/**
+ * Dispatch one step to its handler. Extracted from `processFrame`
+ * so the driver's complexity stays under the lint ceiling (10) and
+ * a future contributor adding an 11th step touches one function.
+ */
+const dispatchStep = async (
+  step: (typeof PROCESSING_ORDER)[number],
+  state: FrameState,
+  deps: {
+    readonly deviceId: string;
+    readonly socket: ProcessFrameDeps["socket"];
+    readonly raw: unknown;
+    readonly rateLimiter: PerDeviceRateLimiter;
+    readonly sequence: PerDeviceSequence;
+    readonly prisma: ReadingRepository;
+    readonly io: BroadcastTarget;
+    readonly now: () => Date;
+    readonly hooks: IngestHooks;
+  },
+): Promise<StepResult> => {
+  switch (step) {
+    case "validate":
+      return stepValidate(state, { raw: deps.raw, socket: deps.socket, now: deps.now });
+    case "auth check":
+      return stepAuthCheck();
+    case "rate check":
+      return stepRateCheck(state, { deviceId: deps.deviceId, socket: deps.socket, rateLimiter: deps.rateLimiter, hooks: deps.hooks });
+    case "seq/drop check":
+      return stepSeqDropCheck(state, { deviceId: deps.deviceId, sequence: deps.sequence, hooks: deps.hooks });
+    case "persist":
+      return stepPersist(state, { deviceId: deps.deviceId, prisma: deps.prisma, socket: deps.socket });
+    case "rule evaluation":
+      return stepRuleEvaluation(state, { deviceId: deps.deviceId, hooks: deps.hooks });
+    case "alert emission":
+      return stepAlertEmission({ deviceId: deps.deviceId, hooks: deps.hooks });
+    case "state-machine update":
+      return stepStateMachineUpdate({ deviceId: deps.deviceId, hooks: deps.hooks });
+    case "audit append":
+      return stepAuditAppend(state, { deviceId: deps.deviceId, hooks: deps.hooks });
+    case "socket broadcast":
+      return stepSocketBroadcast(state, { deviceId: deps.deviceId, io: deps.io });
+    default: {
+      const _exhaustive: never = step;
+      throw new Error(`unknown step: ${step as string}`);
+    }
+  }
+};
