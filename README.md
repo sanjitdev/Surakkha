@@ -18,6 +18,7 @@
 - [What's inside](#whats-inside)
 - [Implementation path](#implementation-path)
 - [Architecture in 60 seconds](#architecture-in-60-seconds)
+- [JWT contract](#jwt-contract)
 - [UX in 60 seconds](#ux-in-60-seconds)
 - [Tests and coverage](#tests-and-coverage)
 - [Environment variables](#environment-variables)
@@ -190,6 +191,22 @@ The plan is ready. Implementation lands in **8 slices over 20 working days** (PR
 - **Four Docker Compose services**: `web` (Nginx serving the Vite build), `api` (Node 20 + Express + Prisma), `simulator` (Node 20), `db` (Postgres 15).
 
 For the full substrate, see [`docs/architecture.md`](./docs/architecture.md). For the v1 operational constraints register (the "do not mistake v1 simplifications for durable decisions" doc), see [`docs/architecture-appendix-opconstraints.md`](./docs/architecture-appendix-opconstraints.md) — produced by Story 6.7.
+
+---
+
+## JWT contract
+
+**v1 uses HS256 with a single `JWT_SECRET`. No key rotation. v2 may introduce JWKS / RS256.**
+
+The api process loads exactly one signing key from `process.env.JWT_SECRET`. The api process fails fast (`exit(1)`) at startup if the secret is missing, empty, or shorter than 32 characters — there is no degraded mode and no unsigned-fallback. Access tokens carry `iss: "surakkha-api"`, `aud: "device"` or `aud: "simulator"` or `aud: "user"`, `sub: <uuid>`, an optional `role` claim, and an 8-hour expiry. Refresh tokens are httpOnly cookies scoped to the api origin with `SameSite=Strict`.
+
+Rotation is **not** a v1 capability. The api source tree contains an invariant test ([`packages/api/__tests__/auth.no-rotation.spec.ts`](./packages/api/__tests__/auth.no-rotation.spec.ts), Story 1.10) that walks every api source file and asserts no rotation-related env var is referenced — `JWT_PUBLIC_KEY`, `JWT_PRIVATE_KEY`, `JWT_KEY_SET`, `JWT_KEY_ID`, `JWT_ALGORITHM`, `JWT_KEY_ROTATION_INTERVAL`. A future change that wants to introduce JWKS / RS256 must:
+
+1. Bump the wire contract to `version: 2` (see `packages/shared/src/auth.ts`).
+2. Update the operational constraints register — relax constraint [I-13](./docs/architecture-appendix-opconstraints.md#i-13--hs256-single-secret-no-rotation) from "single secret, no rotation" to "JWKS-driven RS256 with rotation".
+3. Update the PR description with a v2-bump justification that names the wire-contract bump, the operational-constraint change, and the migration path for issued tokens (existing access tokens issued under the old key must continue to verify or be revoked).
+
+For the v1 operational constraint and the "do not mistake" warning, see [`docs/architecture-appendix-opconstraints.md` I-13](./docs/architecture-appendix-opconstraints.md#i-13--hs256-single-secret-no-rotation).
 
 ---
 
