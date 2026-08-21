@@ -6,6 +6,8 @@
  */
 import { z } from "zod";
 
+import { RoleSchema } from "./rbac.js";
+
 export const JwtAudienceSchema = z.enum(["device", "simulator", "user"]);
 export type JwtAudience = z.infer<typeof JwtAudienceSchema>;
 
@@ -16,6 +18,13 @@ export const SimulatorTokenScopeSchema = z.literal("telemetry:write");
 /** User-token scopes (Operator / Technician / Admin / Viewer). */
 export const UserTokenScopeSchema = z.string().min(1);
 
+/**
+ * Standard registered claims plus Story 1.7's `role` claim. The `role`
+ * is stamped into user-access tokens (Story 1.7) so the SPA can decode
+ * the role synchronously from `localStorage` without an extra `/me`
+ * round-trip on every page reload; device / simulator tokens do NOT
+ * carry `role` (they're scoped to telemetry:write with no UI role).
+ */
 export const JwtClaimsSchema = z.object({
   iss: z.literal("surakkha-api"),
   aud: JwtAudienceSchema,
@@ -23,6 +32,7 @@ export const JwtClaimsSchema = z.object({
   scope: z.string().min(1),
   iat: z.number().int().nonnegative(),
   exp: z.number().int().nonnegative(),
+  role: RoleSchema.optional(),
 });
 export type JwtClaims = z.infer<typeof JwtClaimsSchema>;
 

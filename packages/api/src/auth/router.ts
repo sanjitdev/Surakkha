@@ -39,7 +39,7 @@ import { type AuditLogger } from "../audit";
 import { markPublic } from "../middleware/authorize";
 
 import { issueAccessToken, issueRefreshToken, verifyRefreshToken } from "./jwt";
-import { findUserByEmail, verifyPassword } from "./users";
+import { findUserByEmail, findUserById, verifyPassword } from "./users";
 
 
 const HTTP_OK = 200;
@@ -91,7 +91,10 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
         return;
       }
 
-      const { token, expiresIn } = issueAccessToken({ userId: user.id });
+      const { token, expiresIn } = issueAccessToken({
+        userId: user.id,
+        role: user.role,
+      });
       const refresh = issueRefreshToken(user.id);
 
       res.cookie(REFRESH_TOKEN_COOKIE, refresh, refreshTokenCookieOptions());
@@ -126,7 +129,21 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
         return;
       }
 
-      const { token, expiresIn } = issueAccessToken({ userId: verified.userId });
+      // Story 1.7: stamp the role into the new access token so the SPA
+      // can decode role without an extra `/me` call. If the user has
+      // been removed since the refresh token was issued, treat as
+      // invalid_refresh (consistent with the orphaned-sub case in
+      // `authenticate`).
+      const user = findUserById(verified.userId);
+      if (user === null) {
+        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_refresh" });
+        return;
+      }
+
+      const { token, expiresIn } = issueAccessToken({
+        userId: verified.userId,
+        role: user.role,
+      });
       deps.audit.emit({
         auditAction: "token_refresh",
         userId: verified.userId,

@@ -21,6 +21,7 @@ import {
   USER_ACCESS_TOKEN_TTL_SECONDS,
   USER_TOKEN_DEFAULT_SCOPE,
 } from "@surakkha/shared/auth";
+import { type Role } from "@surakkha/shared/rbac";
 import jwt from "jsonwebtoken";
 
 
@@ -54,17 +55,27 @@ export interface IssueAccessTokenInput {
   readonly userId: string;
   readonly audience?: JwtAudience;
   readonly scope?: string;
+  /**
+   * Story 1.7: optional `role` claim (Admin / Operator / Technician /
+   * Viewer). The role is omitted from device + simulator tokens
+   * (audience !== "user") so the SPA's `CurrentRoleContext` can derive
+   * the role from the JWT alone — no `/me` round-trip on page reload.
+   */
+  readonly role?: Role;
 }
 
 export const issueAccessToken = (
   input: IssueAccessTokenInput,
 ): { readonly token: string; readonly expiresIn: number } => {
-  const payload: Omit<JwtClaims, "iat" | "exp"> = {
+  const basePayload = {
     iss: JWT_ISSUER,
     aud: input.audience ?? "user",
     sub: input.userId,
     scope: input.scope ?? USER_TOKEN_DEFAULT_SCOPE,
   };
+  const payload = input.role === undefined
+    ? basePayload
+    : { ...basePayload, role: input.role };
   const token = jwt.sign(payload, getSecret(), {
     algorithm: "HS256",
     expiresIn: USER_ACCESS_TOKEN_TTL_SECONDS,

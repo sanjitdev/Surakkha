@@ -101,6 +101,25 @@ describe("Story 1.4 — access token", () => {
     setSecret("a-different-secret-that-is-also-thirty-two-chars-long");
     expect(verifyAccessToken(token)).toBeNull();
   });
+
+  it("Story 1.7: embeds the role claim when provided", () => {
+    const { token } = issueAccessToken({
+      userId: "00000000-0000-4000-8000-00000000a002",
+      role: "Operator",
+    });
+    const decoded = verifyAccessToken(token);
+    expect(decoded?.role).toBe("Operator");
+  });
+
+  it("Story 1.7: omits the role claim when not provided (device / simulator tokens)", () => {
+    const { token } = issueAccessToken({
+      userId: "00000000-0000-4000-8000-00000000d001",
+      audience: "device",
+      scope: "telemetry:write",
+    });
+    const decoded = verifyAccessToken(token);
+    expect(decoded?.role).toBeUndefined();
+  });
 });
 
 describe("Story 1.4 — refresh token", () => {
