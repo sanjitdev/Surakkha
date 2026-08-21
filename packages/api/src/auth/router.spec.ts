@@ -21,7 +21,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type AuditAction } from "@surakkha/shared/rbac";
 
-import { buildAuthRouter, type AuditLogger } from "./router";
+import { type AuditLogger } from "../audit";
+import { buildAuthRouter } from "./router";
 
 interface AuditEvent {
   readonly auditAction: AuditAction;

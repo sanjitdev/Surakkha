@@ -5,23 +5,29 @@
  *   GET  /health         — Docker Compose healthcheck (unchanged from Step 0)
  *   POST /auth/login     — Story 1.4 (issues access token + refresh cookie)
  *   POST /auth/refresh   — Story 1.4 (mints a new access token from cookie)
+ *   GET  /devices        — Story 1.5 (RBAC-protected demo endpoint)
  *
  * Story 1.4 AC: JWT_SECRET fail-fast — the process exits with code 1
  * if the env var is missing, empty, or shorter than 32 characters
  * (`@surakkha/shared/auth` exports `JWT_SECRET_MIN_LENGTH`). The check
  * runs BEFORE Express is constructed so no sockets are bound.
  *
- * Stories 2.x (ingestion, rules, alerts, workflow, admin) mount their
- * own routers here; Story 1.5's RBAC middleware sits between this
- * bootstrap and the per-route handlers.
+ * Story 1.5 wiring:
+ *   1. `authenticate()` runs on every request.
+ *   2. Routes mounted under `/auth` mark their handlers PUBLIC so the
+ *      login + refresh endpoints remain anonymous.
+ *   3. Protected routes are wrapped with `authorize({ action, resource })`
+ *      which writes a `rbac_denied` audit row on every denial.
  */
 import { createLogger } from "@surakkha/shared/logger";
 import cookieParser from "cookie-parser";
-import express, { type Request, type Response } from "express";
+import express, { type Express, type Request, type Response } from "express";
 
 
+import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
-import { type AuditLogger, buildAuthRouter } from "./auth/router";
+import { buildAuthRouter } from "./auth/router";
+import { authenticate, authorize } from "./middleware/authorize";
 
 const DEFAULT_API_PORT = 3000;
 const HTTP_OK = 200;
@@ -43,10 +49,28 @@ const audit: AuditLogger = {
   },
 };
 
-const app = express();
+const app: Express = express();
 app.use(express.json({ limit: "32kb" }));
 app.use(cookieParser());
+// The auth router must mount BEFORE `authenticate` so the
+// `markPublic()` wrapper on `/login` and `/refresh` sets
+// `req.public = true` ahead of the bearer-token check.
 app.use("/auth", buildAuthRouter({ audit }));
+app.use(authenticate);
+
+/**
+ * Demo protected endpoint — Story 1.5. The real `/devices` surface
+ * (Epic 2) will land its own router with the same authorize gate.
+ * This stub exists so curl can prove the wiring without spinning up
+ * the full ingestion stack.
+ */
+app.get(
+  "/devices",
+  authorize({ action: "read", resource: "Device" }, audit),
+  (_req: Request, res: Response) => {
+    res.status(HTTP_OK).json({ devices: [] });
+  },
+);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });

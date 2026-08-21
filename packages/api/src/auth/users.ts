@@ -5,8 +5,8 @@
  * The hashes are produced at module-load time so the api can be tested
  * without touching the database. Persistence lands when the Prisma
  * `User` model arrives (Epic 3 device seeding work is the natural
- * moment to introduce it); the surface (`findUserByEmail`) stays
- * stable so the swap is mechanical.
+ * moment to introduce it); the surface (`findUserByEmail`, `findUserById`)
+ * stays stable so the swap is mechanical.
  *
  * Demo credentials (also documented in BRD §13):
  *   admin@surakkha.test    / demo-admin
@@ -84,6 +84,15 @@ export const findUserByEmail = (email: string): UserRecord | null => {
   const normalized = email.trim().toLowerCase();
   return USERS.find((user) => user.email === normalized) ?? null;
 };
+
+/**
+ * Look up a user by their stable UUID. Used by Story 1.5's
+ * authenticate middleware to translate the JWT `sub` into a `Role`.
+ * Trivially stable on the seeded store; the Prisma-backed
+ * implementation lands with Epic 3.
+ */
+export const findUserById = (id: string): UserRecord | null =>
+  USERS.find((user) => user.id === id) ?? null;
 
 export const verifyPassword = async (
   user: UserRecord,
