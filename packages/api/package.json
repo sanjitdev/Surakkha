@@ -16,23 +16,25 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@surakkha/shared": "workspace:*",
     "@prisma/client": "5.20.0",
+    "@surakkha/shared": "workspace:*",
+    "bcrypt": "5.1.1",
+    "cookie-parser": "1.4.7",
     "express": "4.21.0",
+    "jsonwebtoken": "9.0.2",
+    "pino": "9.4.0",
+    "pino-pretty": "11.2.2",
     "socket.io": "4.8.0",
     "ws": "8.18.0",
-    "bcrypt": "5.1.1",
-    "jsonwebtoken": "9.0.2",
-    "zod": "3.23.8",
-    "pino": "9.4.0",
-    "pino-pretty": "11.2.2"
+    "zod": "3.23.8"
   },
   "devDependencies": {
-    "@types/express": "4.17.21",
-    "@types/ws": "8.5.12",
     "@types/bcrypt": "5.0.2",
+    "@types/cookie-parser": "1.4.7",
+    "@types/express": "4.17.21",
     "@types/jsonwebtoken": "9.0.6",
     "@types/node": "20.16.5",
+    "@types/ws": "8.5.12",
     "@vitest/coverage-v8": "2.1.1",
     "tsx": "4.19.1",
     "typescript": "5.5.4",

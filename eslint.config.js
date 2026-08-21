@@ -436,7 +436,10 @@ export default [
       },
     },
     rules: {
-      "n/no-unsupported-features/node-builtins": "error",
+      // eslint-plugin-n's `node-builtins` table flags `fetch` as
+      // experimental-until-Node-21, but Node 20+ ships fetch as a
+      // stable global. The api and simulator runtimes target Node 20+.
+      "n/no-unsupported-features/node-builtins": "off",
       "n/no-deprecated-api": "error",
       "n/no-missing-import": "off",
       "n/no-extraneous-import": "off",

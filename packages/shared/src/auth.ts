@@ -38,3 +38,39 @@ export const REFRESH_TOKEN_COOKIE = "surakkha_refresh" as const;
 
 /** Fail-fast minimum length (Story 1.4 AC). */
 export const JWT_SECRET_MIN_LENGTH = 32 as const;
+
+/**
+ * User-access-token TTL in seconds (Story 1.4 AC: "8-hour expiry").
+ * Device tokens get 24h and simulator tokens get 1h (`docs/architecture.md`
+ * §3.4) — those are minted by Story 2.2 / 3.5, not the web login flow.
+ */
+export const USER_ACCESS_TOKEN_TTL_SECONDS = 28800;
+
+/** Refresh-token TTL in seconds (long-lived; refreshed silently). */
+export const REFRESH_TOKEN_TTL_SECONDS = 2592000;
+
+/**
+ * Cookie attributes for the refresh token (Story 1.4 AC: httpOnly,
+ * SameSite=Strict, scoped to the api origin). `Path=/auth` ensures the
+ * cookie is only sent on refresh requests; v2 may move to `/api/auth`.
+ *
+ * Exported as a function so the `secure` flag is computed at request
+ * time (the env var is not known at module-load and we want the type
+ * to match Express's `CookieOptions`).
+ */
+export interface RefreshTokenCookieOptions {
+  readonly httpOnly: true;
+  readonly sameSite: "strict";
+  readonly path: "/auth";
+  readonly secure: boolean;
+}
+
+export const refreshTokenCookieOptions = (): RefreshTokenCookieOptions => ({
+  httpOnly: true,
+  sameSite: "strict",
+  path: "/auth",
+  secure: process.env["NODE_ENV"] === "production",
+});
+
+/** Default scope string for a signed-in human user. */
+export const USER_TOKEN_DEFAULT_SCOPE = "user:read" as const;

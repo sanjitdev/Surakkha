@@ -1,48 +1,65 @@
 /**
  * Surakkha api — entry point.
  *
- * Real implementation lands in Story 1.4 (JWT Auth + Refresh) and Story 2.2
- * (Ingest WebSocket Endpoint). This stub boots the HTTP server on the
- * configured port and exposes a /health endpoint so Docker Compose can
- * healthcheck the api container before the simulator and web start.
+ * Boots an Express app on `PORT` (default 3000) and exposes:
+ *   GET  /health         — Docker Compose healthcheck (unchanged from Step 0)
+ *   POST /auth/login     — Story 1.4 (issues access token + refresh cookie)
+ *   POST /auth/refresh   — Story 1.4 (mints a new access token from cookie)
+ *
+ * Story 1.4 AC: JWT_SECRET fail-fast — the process exits with code 1
+ * if the env var is missing, empty, or shorter than 32 characters
+ * (`@surakkha/shared/auth` exports `JWT_SECRET_MIN_LENGTH`). The check
+ * runs BEFORE Express is constructed so no sockets are bound.
+ *
+ * Stories 2.x (ingestion, rules, alerts, workflow, admin) mount their
+ * own routers here; Story 1.5's RBAC middleware sits between this
+ * bootstrap and the per-route handlers.
  */
-
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-
 import { createLogger } from "@surakkha/shared/logger";
+import cookieParser from "cookie-parser";
+import express, { type Request, type Response } from "express";
+
+
+import { assertJwtSecret } from "./auth/jwt";
+import { type AuditLogger, buildAuthRouter } from "./auth/router";
 
 const DEFAULT_API_PORT = 3000;
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
-const PORT = Number(process.env.PORT ?? DEFAULT_API_PORT);
+const PORT = Number(process.env["PORT"] ?? DEFAULT_API_PORT);
+
+// Fail-fast — must precede Express construction (Story 1.4 AC + FR-25).
+assertJwtSecret();
+
 const logger = createLogger({ name: "surakkha-api", level: "info" });
 
-const writeJson = (
-  res: ServerResponse,
-  status: number,
-  body: unknown,
-): void => {
-  // ServerResponse is the canonical handle; `no-param-reassign` is the
-  // general rule for in-process state, but a ServerResponse is the IO layer.
-  /* eslint-disable no-param-reassign */
-  res.setHeader("Content-Type", "application/json");
-  res.statusCode = status;
-  res.end(JSON.stringify(body));
-  /* eslint-enable no-param-reassign */
+/**
+ * v1 audit emitter — writes a structured log line that the audit-log
+ * pipeline (Story 5.6) consumes. v2 will write to the database.
+ */
+const audit: AuditLogger = {
+  emit(event) {
+    logger.info({ audit: event }, `audit:${event.auditAction}`);
+  },
 };
 
-const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
-  if (req.url === "/health") {
-    writeJson(res, HTTP_OK, { status: "ok", service: "surakkha-api" });
-    return;
-  }
-  writeJson(res, HTTP_NOT_FOUND, { error: "not_found" });
-};
+const app = express();
+app.use(express.json({ limit: "32kb" }));
+app.use(cookieParser());
+app.use("/auth", buildAuthRouter({ audit }));
 
-const server = createServer(handleRequest);
+app.get("/health", (_req: Request, res: Response) => {
+  res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
+});
 
-server.listen(PORT, () => {
+// Final 404 — the same shape the Step 0 stub returned, so the Docker
+// healthcheck contract is unchanged.
+app.use((_req: Request, res: Response) => {
+  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+});
+
+app.listen(PORT, () => {
   logger.info({ port: PORT }, "api: listening");
 });
 
-export {};
+export { app };
