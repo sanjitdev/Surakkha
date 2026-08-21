@@ -1,47 +1,143 @@
-# Surakkha — sprint status
-# Last verified on 2026-08-21.
+# generated: 2026-08-21
+# last_updated: 2026-08-21
+# project: Surakkha
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
 #
-# Source of truth for which stories have shipped, which are in-flight,
-# and which are pending. Produced by the BMAD per-story loop
-# (docs/BMAD-METHOD.md). Read by `bmad-sprint-planning` (SS) for the
-# readiness-gate + tracking view.
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
 #
-# Schema (per story):
-#   id:        story id (e.g. "1.1", "1.2a", "1.9")
-#   title:     one-line summary
-#   status:    pending | in-progress | completed
-#   epic:      parent epic (Epic 1 / Epic 2 / ...)
-#   commit:    merge commit hash when status == completed
-#   shipped:   ISO date when shipped (or null)
-#   covers:    list of FR / NFR / UX-DR / I- references from epics.md
-#   ledger:
-#     context: path to stories/<id>.context.md (relative to project root)
-#     review:  path to stories/<id>.review.md  (relative to project root)
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story starts (via build's sprint sync)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; sprint-status surfaces open ones
+#
+# Project-specific schema (extends BMAD standard):
+# - Each story retains: commit (merge hash when done), shipped (ISO date), covers (FR/NFR/UX-DR/I-*),
+#   and ledger.{context,review} paths under _bmad-output/implementation-artifacts/stories/<id>.{context,review}.md.
+# - Story status mapping from project → BMAD vocabulary:
+#     completed   → done
+#     pending     → backlog
+# - Epic status mapping:
+#     done        → done
+#     backlog     → backlog
 
-retrospectives:
-  - id: "epic-1-retrospective"
-    title: "Epic 1 — Auth, RBAC, and Login"
-    status: done
-    epic: "1"
-    shipped: "2026-08-21"
-    output: "_bmad-output/implementation-artifacts/epic-1-retrospective.md"
+generated: 2026-08-21
+last_updated: 2026-08-21T18:30:00.000Z
+project: Surakkha
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
 
-epics:
-  - id: "1"
-    title: "Auth, RBAC, and Login"
-    goal: "Operators, Technicians, Admins, and Viewers sign in, refresh, and see only what their role permits."
-    status: done
-    stories: ["1.1", "1.2a", "1.2b", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"]
-  - id: "2"
-    title: "Devices & Telemetry"
-    goal: "A reviewer can launch the docker-compose stack, log in, and see six devices on the map and live readings in the table updating at the configured rate."
-    status: backlog
-    stories: ["2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9"]
+development_status:
+  # ===== Epic 1 — Auth, RBAC, and Login =====
+  epic-1: done
+  1-1-rbac-matrix-lock: done
+  1-2a-design-tokens-density: done
+  1-2b-responsive-layout-shell: done
+  1-3-login-shell: done
+  1-4-jwt-auth-refresh: done
+  1-5-rbac-middleware: done
+  1-6-role-aware-nav-rbac-denied-state: done
+  1-7-401-refresh-flow: done
+  1-8-negative-rbac-tests: done
+  1-9-critical-first-visual-hierarchy-on-the-login-shell: done
+  1-10-single-secret-jwt-rotation-policy: done
+  epic-1-retrospective: done
 
+  # ===== Epic 2 — Devices & Telemetry =====
+  epic-2: in-progress
+  2-1-wire-contract-schemas: review
+  2-2-ingest-websocket-endpoint: backlog
+  2-3-unknown-missing-field-handling: backlog
+  2-4-simulator-process-six-default-devices-seven-scenarios: backlog
+  2-5-admin-simulator-admin-tab: backlog
+  2-6-dashboard-shell: backlog
+  2-7-map-view: backlog
+  2-8-live-readings-table: backlog
+  2-9-connection-state-offline-ux: backlog
+
+  # ===== Epic 3 — Rules & Alerts =====
+  epic-3: backlog
+  3-1-rules-table-prisma-schema: backlog
+  3-2-three-rule-types-evaluation-engine: backlog
+  3-3-default-thresholds-seed-script: backlog
+  3-4-de-bouncing: backlog
+  3-5-alert-lifecycle: backlog
+  3-6-auto-create-incident-from-warning-critical-alert: backlog
+  3-7-admin-thresholds-admin-tab: backlog
+
+  # ===== Epic 4 — Incidents & Workflow =====
+  epic-4: backlog
+  4-1-card-action-affordance-contract: backlog
+  4-2-incident-state-machine-implementation: backlog
+  4-3-kanban-column-projection: backlog
+  4-4-incident-detail-page: backlog
+  4-5-acknowledge-flow: backlog
+  4-6-assign-technician-inspecting-transition: backlog
+  4-7-submit-result-safe-unsafe-monitoring: backlog
+  4-8-sticky-severitybanner-rbac: backlog
+  4-9-notification-writer: backlog
+  4-10-notificationbell-dropdown: backlog
+  4-11-reopen-path: backlog
+  4-12-technician-filtered-kanban: backlog
+  4-13-attachments: backlog
+
+  # ===== Epic 5 — Reporting & Audit =====
+  epic-5: backlog
+  5-1-admin-notifications-read-view: backlog
+  5-2-csv-export-of-30-days-of-readings: backlog
+  5-3-audit-log-surface-at-audit: backlog
+  5-4-readingaggregate-table: backlog
+  5-5-hourly-retention-cron: backlog
+  5-6-negative-tests-for-the-audit-log: backlog
+
+  # ===== Epic 6 — Cross-cutting NFRs =====
+  epic-6: backlog
+  6-1-docker-compose-readme-quickstart: backlog
+  6-2-comprehension-aids: backlog
+  6-3-prefers-reduced-motion-compliance: backlog
+  6-4-accessibility-audit: backlog
+  6-5-backend-70-frontend-50-coverage: backlog
+  6-6-playwright-happy-path: backlog
+  6-7-operational-constraints-register: backlog
+  6-8-60-second-comprehension-test: backlog
+  6-9-telemetry-to-alert-latency-test: backlog
+
+# Project ledger (preserves commit hashes, shipped dates, covers refs, and context/review paths).
+# Mirrors the BMAD development_status map above; this section is the per-story evidence trail.
 stories:
   - id: "1.1"
     title: "RBAC Matrix Lock"
-    status: completed
+    status: done
     epic: "1"
     commit: "fec0834"
     shipped: "2026-08-21"
@@ -52,7 +148,7 @@ stories:
 
   - id: "1.2a"
     title: "Design Tokens + Density"
-    status: completed
+    status: done
     epic: "1"
     commit: "3039b88"
     shipped: "2026-08-21"
@@ -63,7 +159,7 @@ stories:
 
   - id: "1.2b"
     title: "Responsive Layout Shell"
-    status: completed
+    status: done
     epic: "1"
     commit: "822b736"
     shipped: "2026-08-21"
@@ -74,7 +170,7 @@ stories:
 
   - id: "1.3"
     title: "Login Shell"
-    status: completed
+    status: done
     epic: "1"
     commit: "a8ec5ec"
     shipped: "2026-08-21"
@@ -85,7 +181,7 @@ stories:
 
   - id: "1.4"
     title: "JWT Auth + Refresh"
-    status: completed
+    status: done
     epic: "1"
     commit: "8184cda"
     shipped: "2026-08-21"
@@ -96,7 +192,7 @@ stories:
 
   - id: "1.5"
     title: "RBAC Middleware"
-    status: completed
+    status: done
     epic: "1"
     commit: "e272f95"
     shipped: "2026-08-21"
@@ -107,7 +203,7 @@ stories:
 
   - id: "1.6"
     title: "Role-Aware Nav + RBAC Denied State"
-    status: completed
+    status: done
     epic: "1"
     commit: "034634e"
     shipped: "2026-08-21"
@@ -118,7 +214,7 @@ stories:
 
   - id: "1.7"
     title: "401 Refresh Flow"
-    status: completed
+    status: done
     epic: "1"
     commit: "8742339"
     shipped: "2026-08-21"
@@ -129,7 +225,7 @@ stories:
 
   - id: "1.8"
     title: "Negative RBAC Tests"
-    status: completed
+    status: done
     epic: "1"
     commit: "4a4ee53"
     shipped: "2026-08-21"
@@ -140,7 +236,7 @@ stories:
 
   - id: "1.9"
     title: "Critical-First Visual Hierarchy on the Login Shell"
-    status: completed
+    status: done
     epic: "1"
     commit: "baa4aed"
     shipped: "2026-08-21"
@@ -151,7 +247,7 @@ stories:
 
   - id: "1.10"
     title: "Single-Secret JWT Rotation Policy"
-    status: completed
+    status: done
     epic: "1"
     commit: "c9a6ce5"
     shipped: "2026-08-21"
@@ -160,20 +256,21 @@ stories:
       context: "_bmad-output/implementation-artifacts/stories/1.10.context.md"
       review: "_bmad-output/implementation-artifacts/stories/1.10.review.md"
 
+  # ===== Epic 2 — Devices & Telemetry (backlog) =====
   - id: "2.1"
     title: "Wire Contract Schemas"
-    status: pending
+    status: review
     epic: "2"
     commit: null
     shipped: null
     covers: ["FR-2", "AR-2", "AR-5"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/2-1-wire-contract-schemas.md"
       review: null
 
   - id: "2.2"
     title: "Ingest WebSocket Endpoint"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -184,7 +281,7 @@ stories:
 
   - id: "2.3"
     title: "Unknown/Missing Field Handling"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -195,7 +292,7 @@ stories:
 
   - id: "2.4"
     title: "Simulator Process + Six Default Devices + Seven Scenarios"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -206,7 +303,7 @@ stories:
 
   - id: "2.5"
     title: "/admin/simulator Admin Tab"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -217,7 +314,7 @@ stories:
 
   - id: "2.6"
     title: "Dashboard Shell"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -228,7 +325,7 @@ stories:
 
   - id: "2.7"
     title: "Map View"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -239,7 +336,7 @@ stories:
 
   - id: "2.8"
     title: "Live Readings Table"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -250,7 +347,7 @@ stories:
 
   - id: "2.9"
     title: "Connection State + Offline UX"
-    status: pending
+    status: backlog
     epic: "2"
     commit: null
     shipped: null
@@ -258,3 +355,434 @@ stories:
     ledger:
       context: null
       review: null
+
+  # ===== Epic 3 — Rules & Alerts (backlog) =====
+  - id: "3.1"
+    title: "Rules Table + Prisma Schema"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.2"
+    title: "Three Rule Types + Evaluation Engine"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.3"
+    title: "Default Thresholds Seed Script"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.4"
+    title: "De-bouncing"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.5"
+    title: "Alert Lifecycle"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.6"
+    title: "Auto-Create Incident from Warning/Critical Alert"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "3.7"
+    title: "/admin/thresholds Admin Tab"
+    status: backlog
+    epic: "3"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  # ===== Epic 4 — Incidents & Workflow (backlog) =====
+  - id: "4.1"
+    title: "Card Action Affordance Contract"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.2"
+    title: "Incident State Machine Implementation"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.3"
+    title: "Kanban Column Projection"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.4"
+    title: "Incident Detail Page"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.5"
+    title: "Acknowledge Flow"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.6"
+    title: "Assign Technician + INSPECTING Transition"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.7"
+    title: "Submit Result (SAFE / UNSAFE / MONITORING)"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.8"
+    title: "Sticky SeverityBanner + RBAC"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.9"
+    title: "Notification Writer"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.10"
+    title: "NotificationBell Dropdown"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.11"
+    title: "Reopen Path"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.12"
+    title: "Technician-Filtered Kanban"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "4.13"
+    title: "Attachments"
+    status: backlog
+    epic: "4"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  # ===== Epic 5 — Reporting & Audit (backlog) =====
+  - id: "5.1"
+    title: "/admin/notifications Read View"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "5.2"
+    title: "CSV Export of 30 Days of Readings"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "5.3"
+    title: "Audit Log Surface at /audit"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "5.4"
+    title: "ReadingAggregate Table"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "5.5"
+    title: "Hourly Retention Cron"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "5.6"
+    title: "Negative Tests for the Audit Log"
+    status: backlog
+    epic: "5"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  # ===== Epic 6 — Cross-cutting NFRs (backlog) =====
+  - id: "6.1"
+    title: "Docker Compose + README Quickstart"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.2"
+    title: "Comprehension Aids"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.3"
+    title: "prefers-reduced-motion Compliance"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.4"
+    title: "Accessibility Audit"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.5"
+    title: "Backend ≥ 70% / Frontend ≥ 50% Coverage"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.6"
+    title: "Playwright Happy Path"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.7"
+    title: "Operational Constraints Register"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.8"
+    title: "60-Second Comprehension Test"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+  - id: "6.9"
+    title: "Telemetry-to-Alert Latency Test"
+    status: backlog
+    epic: "6"
+    commit: null
+    shipped: null
+    covers: []
+    ledger:
+      context: null
+      review: null
+
+# Retrospectives committed
+retrospectives:
+  - id: "epic-1-retrospective"
+    title: "Epic 1 — Auth, RBAC, and Login"
+    status: done
+    epic: "1"
+    shipped: "2026-08-21"
+    output: "_bmad-output/implementation-artifacts/epic-1-retrospective.md"
+
+# Epic-level summaries (preserved for the readiness gate + tracking view)
+epics:
+  - id: "1"
+    title: "Auth, RBAC, and Login"
+    goal: "Operators, Technicians, Admins, and Viewers sign in, refresh, and see only what their role permits."
+    status: done
+    stories: ["1.1", "1.2a", "1.2b", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10"]
+  - id: "2"
+    title: "Devices & Telemetry"
+    goal: "A reviewer can launch the docker-compose stack, log in, and see six devices on the map and live readings in the table updating at the configured rate."
+    status: in-progress
+    stories: ["2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9"]
+  - id: "3"
+    title: "Rules & Alerts"
+    goal: "Frames are evaluated against the WHO/BSTI rules, severity is assigned, alerts open, and incidents auto-create from warning/critical alerts."
+    status: backlog
+    stories: ["3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"]
+  - id: "4"
+    title: "Incidents & Workflow"
+    goal: "Operators and Technicians acknowledge, assign, inspect, and resolve incidents through the 4-column Kanban with RBAC enforcement at every transition."
+    status: backlog
+    stories: ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11", "4.12", "4.13"]
+  - id: "5"
+    title: "Reporting & Audit"
+    goal: "Admins can review the audit log, export 30 days of readings to CSV, and inspect reading aggregates."
+    status: backlog
+    stories: ["5.1", "5.2", "5.3", "5.4", "5.5", "5.6"]
+  - id: "6"
+    title: "Cross-cutting NFRs"
+    goal: "The stack reaches ≥70% backend / ≥50% frontend coverage, passes the Playwright happy path, and meets the accessibility, motion, and latency gates."
+    status: backlog
+    stories: ["6.1", "6.2", "6.3", "6.4", "6.5", "6.6", "6.7", "6.8", "6.9"]
