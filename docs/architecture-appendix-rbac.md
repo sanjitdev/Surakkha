@@ -2,8 +2,17 @@
 
 > **Purpose.** Lock the full role × action × resource matrix for v1 so that `packages/api/src/middleware/authorize.ts` and every handler test have one canonical, machine-readable authority source.
 >
+> **Source of truth.** The machine-readable matrix lives in
+> `packages/shared/src/rbac.ts` as the `RBAC_MATRIX` typed constant. The
+> tables below are the prose mirror of that constant — every cell here
+> corresponds to exactly one entry there.
+>
+> **Drift detection.** `pnpm lint:rbac` (and therefore `pnpm lint`) reads the
+> Action enum from `rbac.ts` and fails CI when any handler file under
+> `packages/api/src/**` references an action literal that is not in the
+> matrix. Story 1.1 closes the loop by adding this lint.
+>
 > Source: Story 1.1 (`_bmad-output/planning-artifacts/epics.md` §1.1) + architecture §8.3 (RBAC enforcement contract).
-> Re-exported as a typed TypeScript constant from `packages/shared/src/rbac.ts`.
 
 ---
 
