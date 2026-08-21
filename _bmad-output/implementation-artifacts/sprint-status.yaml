@@ -126,14 +126,14 @@ stories:
 
   - id: "1.9"
     title: "Critical-First Visual Hierarchy on the Login Shell"
-    status: pending
+    status: completed
     epic: "1"
-    commit: null
-    shipped: null
+    commit: "baa4aed"
+    shipped: "2026-08-21"
     covers: ["UX-DR-2", "UX-DR-6"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/stories/1.9.context.md"
+      review: "_bmad-output/implementation-artifacts/stories/1.9.review.md"
 
   - id: "1.10"
     title: "Single-Secret JWT Rotation Policy"
