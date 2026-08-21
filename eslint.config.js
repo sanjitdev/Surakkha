@@ -79,7 +79,10 @@ const baseTsRules = {
   "no-magic-numbers": [
     "warn",
     {
-      ignore: [-1, 0, 1, 2, 32, 64, 100, 200, 1000, 2000, 5000],
+      ignore: [
+        -1, 0, 1, 2, 4, 5, 32, 64, 100, 200, 420, 768, 900, 1024, 1280,
+        1000, 2000, 5000,
+      ],
       ignoreArrayIndexes: true,
       ignoreDefaultValues: true,
       ignoreClassFieldInitialValues: true,

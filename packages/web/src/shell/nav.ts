@@ -1,0 +1,91 @@
+/**
+ * Information Architecture registry — Surakkha web (Story 1.2b).
+ *
+ * Pure data: nav groups + items + role gating. The `Sidebar` consumes
+ * this and applies the role-aware visibility filter (EXPERIENCE.md
+ * §Information Architecture: "Role-aware nav items are entirely hidden
+ * when the user lacks permission").
+ *
+ * Source of truth: EXPERIENCE.md §Information Architecture (the 14-route
+ * inventory + the three group tables).
+ *
+ * IMPORTANT: this list is the *visible* set. Role gating is the only
+ * filter applied at the shell layer; Story 1.5's RBAC middleware enforces
+ * the same matrix server-side. Items hidden here are not reachable from
+ * the sidebar — direct URL hits fall through to the RBAC denied state
+ * (Story 1.8 / EXPERIENCE.md §RBAC denied).
+ */
+import type { Role } from "@surakkha/shared/rbac";
+
+export interface NavItem {
+  readonly label: string;
+  readonly to: string;
+  /** Roles allowed to see this item. `null` means "any authenticated role". */
+  readonly roles: readonly Role[] | null;
+}
+
+export interface NavGroup {
+  readonly label: "Monitor" | "Operate" | "Admin";
+  readonly items: readonly NavItem[];
+}
+
+/**
+ * Group + item order matches EXPERIENCE.md §Information Architecture.
+ * Items with `spine_only: true` in the inventory still need a nav slot
+ * for the demo flow; we mark them with the same `to` path.
+ */
+export const NAV_GROUPS: readonly NavGroup[] = [
+  {
+    label: "Monitor",
+    items: [
+      { label: "Dashboard", to: "/dashboard", roles: null },
+      { label: "Sensors", to: "/sensors", roles: null },
+      { label: "Incidents", to: "/incidents", roles: null },
+      { label: "Alerts", to: "/alerts", roles: null },
+    ],
+  },
+  {
+    label: "Operate",
+    items: [
+      { label: "Reports", to: "/reports", roles: ["Operator", "Admin"] },
+      { label: "Audit", to: "/audit", roles: ["Operator", "Admin"] },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { label: "Simulator", to: "/admin/simulator", roles: ["Admin"] },
+      { label: "Notifications", to: "/admin/notifications", roles: ["Admin"] },
+      { label: "Thresholds", to: "/admin/thresholds", roles: ["Admin"] },
+      { label: "Users", to: "/admin/users", roles: ["Admin"] },
+      { label: "Schools", to: "/admin/schools", roles: ["Admin"] },
+    ],
+  },
+];
+
+/**
+ * Filter a nav group by role. `null` roles means "any authenticated role"
+ * and therefore always passes the filter.
+ */
+export const filterNavGroup = (
+  group: NavGroup,
+  role: Role | null,
+): NavGroup => {
+  if (role === null) {
+    return group;
+  }
+  const items = group.items.filter(
+    (item) => item.roles === null || item.roles.includes(role),
+  );
+  return { label: group.label, items };
+};
+
+/**
+ * Filter all nav groups by role. Groups with zero visible items collapse
+ * to `items: []` (the sidebar renders an empty group rather than the
+ * group label alone).
+ */
+export const filterNav = (
+  groups: readonly NavGroup[],
+  role: Role | null,
+): readonly NavGroup[] => groups.map((g) => filterNavGroup(g, role));
