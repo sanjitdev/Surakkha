@@ -38,6 +38,7 @@ import { RbacRoute } from "./access/RbacRoute";
 import { apiLogin, configureApiClient } from "./api/apiClient";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
+import { KpiStat } from "./components/KpiStat";
 import { AppShell } from "./shell/AppShell";
 
 import "./index.css";
@@ -73,6 +74,37 @@ const PageStub = ({ name }: { readonly name: string }) => (
     <p className="mt-2 text-md text-neutral-secondary">
       Story roadmap wires this surface in a later slice.
     </p>
+  </div>
+);
+
+/**
+ * SeverityCards — Story 1.9 / AC1 + AC3.
+ *
+ * The "the authenticated shell mounts" surface. Renders one KpiStat per
+ * severity so a reviewer can verify the saturated palette, the
+ * critical pulse, and the per-severity numeral sizes are wired
+ * end-to-end. The grid is `grid-cols-4` at the desktop breakpoint and
+ * collapses to `grid-cols-1` on mobile so the cards are inspectable
+ * at every viewport.
+ */
+const SeverityCards = () => (
+  <div data-testid="severity-cards">
+    <h1 className="mb-4 text-2xl font-semibold text-neutral-body">
+      Severity palette
+    </h1>
+    <p className="mb-6 text-md text-neutral-secondary">
+      Sample KpiStat cards — Story 1.9 verifies the saturated palette
+      and the critical pulse.
+    </p>
+    <div
+      data-testid="severity-cards-grid"
+      className="grid gap-4 lg:grid-cols-4 sm:grid-cols-2"
+    >
+      <KpiStat severity="healthy" label="pH" value="7.2" sub="in range" />
+      <KpiStat severity="warning" label="Turbidity" value="4.8 NTU" sub="watch" />
+      <KpiStat severity="critical" label="TDS" value="610 ppm" sub="out of range" />
+      <KpiStat severity="offline" label="Signal" value="— " sub="last seen 4h ago" />
+    </div>
   </div>
 );
 
@@ -155,6 +187,16 @@ createRoot(root).render(
             <CurrentRoleProvider>
               <AppShell>
                 <DashboardStub />
+              </AppShell>
+            </CurrentRoleProvider>
+          }
+        />
+        <Route
+          path="/severity-cards"
+          element={
+            <CurrentRoleProvider>
+              <AppShell>
+                <SeverityCards />
               </AppShell>
             </CurrentRoleProvider>
           }

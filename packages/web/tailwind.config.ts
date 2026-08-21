@@ -128,6 +128,10 @@ const tailwindConfig = {
         "2xl": ["24px", { lineHeight: "32px" }],
         "3xl": ["28px", { lineHeight: "32px" }],
         "4xl": ["36px", { lineHeight: "40px" }],
+        // KPI numeral sizes (DESIGN.md §Components: KPIStat numeral_size
+        // 40px; numeral_size_critical 44px). Story 1.9 AC2.
+        "kpi-numeral": ["40px", { lineHeight: "48px" }],
+        "kpi-numeral-critical": ["44px", { lineHeight: "52px" }],
       },
       borderRadius: {
         // DESIGN.md §Shapes — three named radii + standard full pill.
