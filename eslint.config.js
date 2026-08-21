@@ -529,7 +529,7 @@ export default [
 
   // 7. Tests: relax rules that fight test code.
   {
-    files: ["**/__tests__/**/*.ts", "**/*.test.ts", "**/*.spec.ts", "**/test/**/*.ts"],
+    files: ["**/__tests__/**/*.ts", "**/__tests__/**/*.tsx", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/test/**/*.ts", "**/test/**/*.tsx"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",

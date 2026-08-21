@@ -1,17 +1,17 @@
 /**
  * Surakkha web — entry point.
  *
- * Story 1.3 (Login Shell) replaces the unauthenticated view. For now the
- * app boots into the authenticated layout shell (Story 1.2b) so the
- * sidebar/topbar is reachable from the first render. Auth state lands
- * in Story 1.4; the role prop is hardcoded to null today and Story 1.5
- * wires it from the JWT claims.
+ * The router boots the unauthenticated /login surface (Story 1.3) for
+ * every visitor; Story 1.4 wires the auth state, Story 1.7 wires the
+ * redirect-with-next param, and the AppShell takes over after a
+ * successful sign-in.
  */
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
+import { LoginShell } from "./auth/LoginShell";
 import { AppShell } from "./shell/AppShell";
 
 import "./index.css";
@@ -35,10 +35,22 @@ const DashboardStub = () => (
   </div>
 );
 
+/**
+ * Stub submit handler for Story 1.3. Story 1.4 replaces this with a
+ * real `POST /auth/login` call; the contract (`(email, password) =>
+ * Promise<void>`) is the boundary the LoginShell already speaks.
+ */
+const STUB_SIGN_IN_LATENCY_MS = 250;
+const STUB_SIGN_IN = async (_email: string, _password: string): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, STUB_SIGN_IN_LATENCY_MS));
+  throw new Error("Sign-in is not available in this build.");
+};
+
 createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
+        <Route path="/login" element={<LoginShell onSubmit={STUB_SIGN_IN} />} />
         <Route
           path="/"
           element={
@@ -55,6 +67,7 @@ createRoot(root).render(
             </AppShell>
           }
         />
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,
