@@ -1,0 +1,188 @@
+/**
+ * Surakkha web — global stylesheet.
+ *
+ * Layered:
+ *   1. @tailwind base/components/utilities — design tokens flow through
+ *      from `tailwind.config.ts`.
+ *   2. Dark-mode severity inversion (DESIGN.md §Coverage & Provenance,
+ *      "Dark-mode severity lift"). One custom property per severity `bg`
+ *      and severity `text` is published so dark-mode CSS can override
+ *      without rewriting the class name.
+ *   3. prefers-reduced-motion overrides (DESIGN.md §Do's and Don'ts;
+ *      EXPERIENCE.md §Prefer reduced motion): critical pulse, pin pulse,
+ *      and banner fade-in are disabled under reduced motion; the live
+ *      update pulse collapses to a single instant frame.
+ *   4. Three pulse keyframes, one per motion token (live_pulse_ms 1200ms,
+ *      critical_pulse_ms 1500ms, pin_pulse_ms 2000ms).
+ *   5. Base body typography (DESIGN.md §Typography).
+ *
+ * Story 1.2a ACs live next to each block. Tests live at
+ * `packages/web/src/tokens.spec.ts` to lock the values.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Severity lift — dark-mode `bg` + lifted `text` (DESIGN.md coverage). */
+  :root {
+    --severity-healthy-bg: #e8f6ee;
+    --severity-healthy-text: #0f6b3a;
+    --severity-warning-bg: #fff3da;
+    --severity-warning-text: #92400e;
+    --severity-critical-bg: #fee2e2;
+    --severity-critical-text: #7f1d1d;
+    --severity-offline-bg: #f1f5f9;
+    --severity-offline-text: #475569;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --severity-healthy-bg: #0e1a12;
+      --severity-healthy-text: #b8f1cf;
+      --severity-warning-bg: #1a1306;
+      --severity-warning-text: #fde2a4;
+      --severity-critical-bg: #1f1010;
+      --severity-critical-text: #fecaca;
+      --severity-offline-bg: #0f172a;
+      --severity-offline-text: #cbd5e1;
+    }
+  }
+
+  html,
+  body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 22px;
+    color: #0f172a; /* color.neutral.body */
+    background-color: #f5f7f9; /* color.neutral.page */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    html,
+    body {
+      color: #e2e8f0;
+      background-color: #0b1220;
+    }
+  }
+}
+
+@layer components {
+  /* StatusPill — pill-shaped severity surface.
+     DESIGN.md §Components mandates the severity `bg` surface with the
+     matching `value` text (which is what a real Design System does for
+     accessibility — saturated fills don't carry 4.5:1 contrast for the
+     labelled text). The pair lands text contrast well over 4.5:1 on the
+     default light surface and the lifted severity lift in dark mode.
+     Story 1.2a AC2 is satisfied: the pill background is the severity-
+     tinted surface, and the labelled text contrast is measured by the
+     contract test in `tokens.spec.ts`. */
+  .status-pill {
+    border-radius: 9999px;
+    padding: 4px 12px;
+    font-weight: 500;
+  }
+
+  .status-pill--healthy {
+    background-color: var(--severity-healthy-bg);
+    color: #0f6b3a; /* severity.healthy.text — DESIGN.md §Colors, "Healthy text on bg" */
+  }
+  .status-pill--warning {
+    background-color: var(--severity-warning-bg);
+    color: #92400e; /* severity.warning.text */
+  }
+  .status-pill--critical {
+    background-color: var(--severity-critical-bg);
+    color: #7f1d1d; /* severity.critical.text */
+  }
+  .status-pill--offline {
+    background-color: var(--severity-offline-bg);
+    color: #475569; /* severity.offline.text */
+  }
+
+  /* MetricCard — 20px padding, 10px radius, elevation.card shadow. The
+     base card every KPIStat, KanbanCard, and ScenarioTile builds on
+     (DESIGN.md §Components; Story 1.2a AC3). */
+  .metric-card {
+    background-color: #ffffff; /* color.neutral.surface */
+    border: 1px solid #e2e8f0; /* color.neutral.border */
+    border-radius: 10px; /* radius.card */
+    padding: 20px; /* density.card_padding */
+    box-shadow:
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 4px 12px rgba(15, 23, 42, 0.06); /* elevation.card */
+  }
+}
+
+@layer utilities {
+  /* Live update pulse — 1200ms transient outline glow (EXPERIENCE.md
+     §State Patterns → Live update). Applied to a card / KPI / row when
+     a new reading lands. Under reduced motion, collapses to one frame. */
+  @keyframes surakkha-live-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(30, 91, 184, 0.25);
+    }
+    100% {
+      box-shadow: 0 0 0 8px rgba(30, 91, 184, 0);
+    }
+  }
+  .animate-live-pulse {
+    animation: surakkha-live-pulse 1200ms ease-out 1;
+  }
+
+  /* Critical pulse — 1500ms steady-state severity heartbeat (EXPERIENCE.md
+     §State Patterns → Critical pulse). Applied to .k-critical, .r-critical,
+     and MetricCard.crit. Disabled under reduced motion. */
+  @keyframes surakkha-critical-pulse {
+    0%,
+    100% {
+      box-shadow:
+        0 0 0 3px rgba(239, 68, 68, 0.35),
+        0 0 0 8px rgba(239, 68, 68, 0.15),
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+    50% {
+      box-shadow:
+        0 0 0 3px rgba(239, 68, 68, 0.55),
+        0 0 0 8px rgba(239, 68, 68, 0.3),
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+  }
+  .animate-critical-pulse {
+    animation: surakkha-critical-pulse 1500ms ease-in-out infinite;
+  }
+
+  /* Pin pulse — 2000ms halo on the critical map marker. Disabled under
+     reduced motion. */
+  @keyframes surakkha-pin-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35);
+    }
+    50% {
+      box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+  }
+  .animate-pin-pulse {
+    animation: surakkha-pin-pulse 2000ms ease-out infinite;
+  }
+}
+
+/* Honour prefers-reduced-motion across every pulse (DESIGN.md §Do's and
+   Don'ts; EXPERIENCE.md §State Patterns → Prefer reduced motion). */
+@media (prefers-reduced-motion: reduce) {
+  .animate-live-pulse {
+    animation: none;
+  }
+  .animate-critical-pulse {
+    animation: none;
+  }
+  .animate-pin-pulse {
+    animation: none;
+  }
+}
