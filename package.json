@@ -1,0 +1,39 @@
+{
+  "name": "surakkha",
+  "version": "0.1.0-planning",
+  "private": true,
+  "type": "module",
+  "description": "Real-time water-safety monitoring and incident-management platform for Bangladeshi government primary schools",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.12.0",
+    "@typescript-eslint/eslint-plugin": "8.8.0",
+    "@typescript-eslint/parser": "8.8.0",
+    "eslint": "9.12.0",
+    "eslint-config-prettier": "9.1.0",
+    "eslint-plugin-import": "2.31.0",
+    "eslint-plugin-jsx-a11y": "6.10.0",
+    "eslint-plugin-n": "17.10.3",
+    "eslint-plugin-react": "7.37.1",
+    "eslint-plugin-react-hooks": "5.0.0",
+    "eslint-plugin-unicorn": "56.0.0",
+    "jsonc-eslint-parser": "2.1.0",
+    "prettier": "3.3.3",
+    "typescript": "5.5.4",
+    "typescript-eslint": "8.8.0"
+  }
+}

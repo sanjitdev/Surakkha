@@ -1,0 +1,45 @@
+{
+  "name": "@surakkha/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend: Vite + React + TypeScript + Tailwind + shadcn/ui. Dashboard, Kanban, admin views. Connects to the api over Socket.IO. Honours prefers-reduced-motion (UX-DR-7).",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "lint": "eslint . --max-warnings 0",
+    "clean": "rm -rf dist .vite *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@surakkha/shared": "workspace:*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.26.2",
+    "@tanstack/react-query": "5.59.0",
+    "socket.io-client": "4.8.0",
+    "zod": "3.23.8",
+    "zustand": "4.5.5",
+    "clsx": "2.1.1",
+    "tailwind-merge": "2.5.2",
+    "leaflet": "1.9.4"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.10",
+    "@types/react-dom": "18.3.0",
+    "@types/leaflet": "1.9.12",
+    "@vitejs/plugin-react": "4.3.1",
+    "@vitest/coverage-v8": "2.1.1",
+    "@playwright/test": "1.47.2",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.47",
+    "tailwindcss": "3.4.13",
+    "typescript": "5.5.4",
+    "vite": "5.4.8",
+    "vitest": "2.1.1"
+  }
+}

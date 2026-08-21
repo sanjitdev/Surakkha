@@ -1,0 +1,93 @@
+# Surakkha — single Docker Compose stack (NFR-15, ADR 0014).
+#
+# Four services:
+#   db         — Postgres 15 with a volume-mounted data directory (I-10).
+#   api        — Node 20 + Express + Socket.IO. Single process for ingestion,
+#   alerts, rules, workflow, and the hourly cron (I-9).
+#   web        — Vite-built React SPA served by Nginx.
+#   simulator  — Separate Node process on the same wire contract (AR-12, I-12).
+#
+# Bring up:    docker compose up
+# Bring down:  docker compose down -v
+# Validate:    docker compose config
+
+name: surakkha
+
+services:
+  db:
+    image: postgres:15
+    container_name: surakkha-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-surakkha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surakkha}
+      POSTGRES_DB: ${POSTGRES_DB:-surakkha}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-surakkha} -d ${POSTGRES_DB:-surakkha}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: surakkha-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-surakkha}:${POSTGRES_PASSWORD:-surakkha}@db:5432/${POSTGRES_DB:-surakkha}
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
+      NODE_ENV: production
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    container_name: surakkha-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  simulator:
+    build:
+      context: .
+      dockerfile: packages/simulator/Dockerfile
+    container_name: surakkha-simulator
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SIMULATOR_API_URL: http://api:3000
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      NODE_ENV: production
+      LOG_LEVEL: info
+
+volumes:
+  postgres-data:
+    name: surakkha-postgres-data

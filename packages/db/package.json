@@ -1,0 +1,28 @@
+{
+  "name": "@surakkha/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prisma schema, migrations, seed script. Six default schools + devices + WHO/BSTI default rules (BRD §8.3.1).",
+  "type": "module",
+  "scripts": {
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev",
+    "seed": "tsx prisma/seed.ts",
+    "generate": "prisma generate",
+    "studio": "prisma studio",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@prisma/client": "5.20.0"
+  },
+  "devDependencies": {
+    "@surakkha/shared": "workspace:*",
+    "@types/node": "20.16.5",
+    "prisma": "5.20.0",
+    "tsx": "4.19.1",
+    "typescript": "5.5.4",
+    "vitest": "2.1.1"
+  }
+}

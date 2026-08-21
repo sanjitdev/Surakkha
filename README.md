@@ -2,9 +2,11 @@
 
 > A real-time water-safety monitoring and incident-management platform that demonstrates a complete Sensor → Resolution workflow on simulated devices, in 2–4 weeks, designed to be portfolio-defensible.
 
-**Status:** Planning complete; implementation pending. The implementation-readiness gate v2 returns **READY** — 36 / 36 FRs covered, 15 / 15 NFRs covered, 55 stories across 6 epics + Step 0 Foundation Seam, 0 critical issues, 0 major issues, 3 minor (acceptable). See [`_bmad-output/planning-artifacts/implementation-readiness-report-2026-08-20-v2.md`](./_bmad-output/planning-artifacts/implementation-readiness-report-2026-08-20-v2.md).
+**Status:** Planning complete; implementation pending. The implementation-readiness gate v3 returns **READY** — 36 / 36 FRs covered, 15 / 15 NFRs covered, 55 stories across 6 epics + Step 0 Foundation Seam, 0 critical issues, 0 major issues, 4 minor (all pre-documented design choices). See [`_bmad-output/planning-artifacts/implementation-readiness-report-2026-08-21.md`](./_bmad-output/planning-artifacts/implementation-readiness-report-2026-08-21.md).
 
-**Last verified on:** 2026-08-20.
+**Last verified on:** 2026-08-21.
+
+**Substrate readiness:** Step 0 Foundation Seam scaffolded — `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.env.example`, five workspace packages (`api`, `web`, `simulator`, `shared`, `db`), `docker-compose.yml` with the four services, Dockerfiles per service. `pnpm install && pnpm -r build` is the next action before Story 1.1 lands.
 
 ---
 
