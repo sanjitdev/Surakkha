@@ -20,6 +20,8 @@
 import { type Role } from "@surakkha/shared/rbac";
 import { type PropsWithChildren, useEffect, useState } from "react";
 
+import { useCurrentRole } from "../auth/CurrentRoleContext";
+
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -42,10 +44,12 @@ const CANVAS_PADDING: Record<Breakpoint, string> = {
 };
 
 interface AppShellProps extends PropsWithChildren {
-  readonly currentRole: Role | null;
+  readonly currentRole?: Role | null;
 }
 
 export const AppShell = ({ currentRole, children }: AppShellProps) => {
+  const contextRole = useCurrentRole();
+  const effectiveRole = currentRole ?? contextRole;
   const [breakpoint, setBreakpoint] = useState<Breakpoint>("lg");
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -79,7 +83,7 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
             sizes so the test-id is queryable, but Tailwind's `lg:block`
             hides it under 1024px. */}
         <Sidebar
-          role={currentRole}
+          currentRole={effectiveRole}
           mode="fixed"
           isOpen={false}
           onClose={() => undefined}
@@ -101,7 +105,7 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
           breakpoint. */}
       {breakpoint !== "lg" ? (
         <Sidebar
-          role={currentRole}
+          currentRole={effectiveRole}
           mode="drawer"
           isOpen={drawerOpen}
           onClose={() => setDrawerOpen(false)}

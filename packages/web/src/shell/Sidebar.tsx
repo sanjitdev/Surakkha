@@ -26,7 +26,7 @@ const ACTIVE_ICON = "#38BDF8"; /* DESIGN.md §Components → Sidebar */
 const DRAWER_OVERLAY = "rgba(15, 23, 42, 0.45)";
 
 interface SidebarProps {
-  readonly role: Role | null;
+  readonly currentRole: Role | null;
   readonly mode: "fixed" | "drawer";
   readonly isOpen: boolean;
   readonly onClose: () => void;
@@ -78,13 +78,13 @@ const NavRow = ({
 );
 
 const SidebarBody = ({
-  role,
+  currentRole,
   onItemClick,
 }: {
-  readonly role: Role | null;
+  readonly currentRole: Role | null;
   readonly onItemClick?: () => void;
 }) => {
-  const visible = filterNav(NAV_GROUPS, role);
+  const visible = filterNav(NAV_GROUPS, currentRole);
   return (
     <nav
       aria-label="Primary navigation"
@@ -124,7 +124,7 @@ const SidebarBody = ({
 const styles: React.CSSProperties = { width: `${SIDEBAR_WIDTH_PX}px` };
 
 export const Sidebar = ({
-  role,
+  currentRole,
   mode,
   isOpen,
   onClose,
@@ -153,7 +153,7 @@ export const Sidebar = ({
           ].join(" ")}
           style={styles}
         >
-          <SidebarBody role={role} onItemClick={onClose} />
+          <SidebarBody currentRole={currentRole} onItemClick={onClose} />
         </aside>
       </>
     );
@@ -166,7 +166,7 @@ export const Sidebar = ({
       className="hidden lg:block"
       style={styles}
     >
-      <SidebarBody role={role} />
+      <SidebarBody currentRole={currentRole} />
     </aside>
   );
 };

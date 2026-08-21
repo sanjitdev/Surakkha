@@ -115,6 +115,15 @@
       0 1px 2px rgba(15, 23, 42, 0.04),
       0 4px 12px rgba(15, 23, 42, 0.06); /* elevation.card */
   }
+
+  /* RbacDenied back-link focus ring — 2px outer with a 2px white
+     spacer (DESIGN.md accessibility.standard). The white inner ring
+     keeps the indicator visible on the dark primary fill. */
+  .rbac-denied-back:focus-visible {
+    outline: 2px solid #1e5bb8; /* color.primary */
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px #ffffff;
+  }
 }
 
 @layer utilities {

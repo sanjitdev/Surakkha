@@ -89,3 +89,39 @@ export const filterNav = (
   groups: readonly NavGroup[],
   role: Role | null,
 ): readonly NavGroup[] => groups.map((g) => filterNavGroup(g, role));
+
+/**
+ * Look up the nav item that owns a given path. Used by the route
+ * gate (Story 1.6) so the role check on a direct URL hit uses the
+ * SAME `roles[]` list the sidebar hides by — keeps the two surfaces
+ * in lockstep. Returns `null` when the path is not in the IA registry
+ * (in which case the route gate does not deny).
+ */
+export const findNavItemForPath = (
+  groups: readonly NavGroup[],
+  path: string,
+): NavItem | null => {
+  for (const group of groups) {
+    for (const item of group.items) {
+      if (item.to === path) return item;
+    }
+  }
+  return null;
+};
+
+/**
+ * True when a role is allowed to reach a nav item. `null` roles means
+ * "any authenticated role" and therefore always passes. Used by the
+ * RbacRoute gate (Story 1.6).
+ */
+export const isPathAllowedForRole = (
+  groups: readonly NavGroup[],
+  path: string,
+  role: Role | null,
+): boolean => {
+  const item = findNavItemForPath(groups, path);
+  if (item === null) return true;
+  if (item.roles === null) return true;
+  if (role === null) return false;
+  return item.roles.includes(role);
+};
