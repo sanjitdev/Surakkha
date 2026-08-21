@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-21T18:30:00.000Z
+last_updated: 2026-08-21T20:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -76,6 +76,7 @@ development_status:
   # ===== Epic 2 — Devices & Telemetry =====
   epic-2: in-progress
   2-1-wire-contract-schemas: review
+  2-2-ingest-websocket-endpoint: review
   2-2-ingest-websocket-endpoint: backlog
   2-3-unknown-missing-field-handling: backlog
   2-4-simulator-process-six-default-devices-seven-scenarios: backlog
@@ -270,13 +271,13 @@ stories:
 
   - id: "2.2"
     title: "Ingest WebSocket Endpoint"
-    status: backlog
+    status: review
     epic: "2"
     commit: null
     shipped: null
-    covers: []
+    covers: ["FR-5", "FR-7", "FR-8", "FR-10", "AR-3", "I-2"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/2-2-ingest-websocket-endpoint.md"
       review: null
 
   - id: "2.3"
