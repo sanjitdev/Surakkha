@@ -1,0 +1,494 @@
+diff --git a/.env.example b/.env.example
+index bc89455..2e34cb0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -15,8 +15,17 @@ DATABASE_URL=postgresql://surakkha:surakkha@db:5432/surakkha
+ # scenario-change commands. When unset, the tab shows:
+ #   "Simulator disabled. Set SIMULATOR_SECRET."
+ # The api refuses all /admin/simulator requests without this shared secret.
++# The value MUST match the SIMULATOR_SECRET set on the simulator process
++# — otherwise the api's POST gets a 403 secret_mismatch from the
++# simulator's control server.
+ SIMULATOR_SECRET=replace-me-with-a-shared-secret-for-the-admin-simulator-tab
+ 
++# --- Simulator control server -------------------------------------------------
++# Optional. Override the simulator's HTTP control server port (Story 2.5).
++# Default is 4001. The api reads the matching URL via SIMULATOR_URL
++# (api-side) — see packages/api README.
++# SIMULATOR_CONTROL_PORT=4001
++
+ # --- Retention / aggregation cron ---------------------------------------------
+ # Standard 5-field cron. The default is "5 minutes past every hour" which spreads
+ # cron load across the hour. The retention job caps at 10,000 rows per run (I-15).
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index a04f80b..7679c72 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-08-21
+-# last_updated: 2026-08-22T20:00:00.000Z
++# last_updated: 2026-08-22T20:30:00.000Z
+ # project: Surakkha
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -51,7 +51,7 @@
+ #     backlog     → backlog
+ 
+ generated: 2026-08-21
+-last_updated: 2026-08-22T20:00:00.000Z
++last_updated: 2026-08-22T20:30:00.000Z
+ project: Surakkha
+ project_key: NOKEY
+ tracking_system: file-system
+@@ -78,8 +78,8 @@ development_status:
+   2-1-wire-contract-schemas: done
+   2-2-ingest-websocket-endpoint: done
+   2-3-unknown-missing-field-handling: done
+-  2-4-simulator-process-six-default-devices-seven-scenarios: review
+-  2-5-admin-simulator-admin-tab: backlog
++  2-4-simulator-process-six-default-devices-seven-scenarios: done
++  2-5-admin-simulator-admin-tab: in-progress
+   2-6-dashboard-shell: backlog
+   2-7-map-view: backlog
+   2-8-live-readings-table: backlog
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 7e9ef08..3b67177 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -40,6 +40,10 @@ import express, { type Express, type Request, type Response } from "express";
+ import { Server as IoServer } from "socket.io";
+ 
+ 
++import {
++  buildAdminSimulatorPublicRouter,
++  buildAdminSimulatorRouter,
++} from "./admin/simulatorRouter.js";
+ import { type AuditLogger } from "./audit";
+ import { assertJwtSecret } from "./auth/jwt";
+ import { buildAuthRouter } from "./auth/router";
+@@ -73,6 +77,11 @@ app.use(cookieParser());
+ // `markPublic()` wrapper on `/login` and `/refresh` sets
+ // `req.public = true` ahead of the bearer-token check.
+ app.use("/auth", buildAuthRouter({ audit }));
++// Story 2.5 — `/admin/simulator/status` is public (so the disabled
++// banner renders for any visitor). Mount its public surface BEFORE
++// `authenticate`; the authenticated routes (`/devices`,
++// `/:device_id/scenario`) mount AFTER `authenticate` below.
++app.use(buildAdminSimulatorPublicRouter());
+ app.use(authenticate);
+ 
+ /**
+@@ -89,6 +98,58 @@ app.get(
+   },
+ );
+ 
++/**
++ * Story 2.5 — mount the admin simulator router. The router reads
++ * the six Device rows via a lazy Prisma client (same pattern the
++ * ingest handler uses — avoids a hard dependency on DATABASE_URL
++ * for HTTP-only tests).
++ */
++const listDevicesFromPrisma = async (): Promise<
++  ReadonlyArray<{
++    readonly id: string;
++    readonly name: string | null;
++    readonly scenario: string | null;
++  }>
++> => {
++  try {
++    const mod = (await import("@prisma/client")) as unknown as {
++      PrismaClient: new () => {
++        device: {
++          findMany: (args: {
++            readonly select: {
++              readonly id: true;
++              readonly name: true;
++              readonly scenario: true;
++            };
++            readonly orderBy: { readonly id: "asc" };
++          }) => Promise<
++            Array<{
++              readonly id: string;
++              readonly name: string | null;
++              readonly scenario: string | null;
++            }>
++          >;
++        };
++      };
++    };
++    const client = new mod.PrismaClient();
++    const rows = await client.device.findMany({
++      select: { id: true, name: true, scenario: true },
++      orderBy: { id: "asc" },
++    });
++    return rows;
++  } catch {
++    // Without a DB we return an empty list. The admin tab can render
++    // an empty state rather than failing the entire page render.
++    return [];
++  }
++};
++
++app.use(
++  "/admin/simulator",
++  buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
++);
++
+ app.get("/health", (_req: Request, res: Response) => {
+   res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
+ });
+diff --git a/packages/db/prisma/schema.prisma b/packages/db/prisma/schema.prisma
+index 18c1053..b4190e7 100644
+--- a/packages/db/prisma/schema.prisma
++++ b/packages/db/prisma/schema.prisma
+@@ -16,14 +16,23 @@ datasource db {
+ }
+ 
+ /**
+- * Device — Story 2.2 placeholder. The full model (school_id, label,
+- * fw_version, status, etc.) lands in Story 2.3. v1 ingest only needs
+- * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` so the admin device-
+- * status view can render "last contact" without a separate query.
++ * Device — Story 2.2 placeholder, extended in Story 2.5.
++ *
++ * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` were the v1.0 placeholders.
++ * Story 2.5 adds `name` and `scenario` so the `/admin/simulator` tab can
++ * list the six devices and their current scenario without re-reading the
++ * simulator's local `devices.json`. Both columns are nullable to keep the
++ * forward migration safe for any rows already in the table.
+  */
+ model Device {
+   id         String    @id
+   lastSeenAt DateTime?
++  // Story 2.5: human-readable label (e.g. "DHAKA-SCHOOL-023") + the
++  // currently assigned scenario. Nullable so an existing row that
++  // predates Story 2.5 (only `id` + `lastSeenAt`) survives the
++  // forward migration without a manual backfill step.
++  name       String?
++  scenario   String?
+   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
+   // matches the FK constraint in the migration; a removed Device
+   // does not leave orphan Reading rows behind.
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index e1e8071..6faa954 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -34,6 +34,10 @@
+     "./logger": {
+       "types": "./dist/logger.d.ts",
+       "import": "./dist/logger.js"
++    },
++    "./simulator": {
++      "types": "./dist/simulator.d.ts",
++      "import": "./dist/simulator.js"
+     }
+   },
+   "scripts": {
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index 4f678cd..85c93e4 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -10,4 +10,5 @@ export * from "./auth.js";
+ export * from "./events.js";
+ export * from "./incident.js";
+ export * from "./rbac.js";
+-export * from "./logger.js";
+\ No newline at end of file
++export * from "./logger.js";
++export * from "./simulator.js";
+\ No newline at end of file
+diff --git a/packages/simulator/.env.example b/packages/simulator/.env.example
+index 5e7c891..843f1ca 100644
+--- a/packages/simulator/.env.example
++++ b/packages/simulator/.env.example
+@@ -14,6 +14,18 @@ API_URL=http://localhost:4000
+ # The simulator refuses to boot without this set.
+ JWT_SECRET=replace-me-with-at-least-32-characters-please
+ 
++# Story 2.5 — shared secret for the admin control HTTP server.
++# Optional. When unset, the /admin/simulator tab on the SPA renders
++# a calm disabled banner ("Simulator disabled. Set SIMULATOR_SECRET.")
++# and the simulator's control server returns 503 on every request.
++# When set, the value MUST match the api's `SIMULATOR_SECRET` env var.
++SIMULATOR_SECRET=replace-me-with-the-same-shared-secret-as-the-api
++
++# Optional. Override the simulator control HTTP server port. Default
++# is 4001. The api-side URL is configured via `SIMULATOR_URL` in the
++# api's env (defaults to `http://localhost:4001`).
++# SIMULATOR_CONTROL_PORT=4001
++
+ # Optional. Override the per-device default tick interval (2_000 ms in
+ # devices.json). Must be >= 1_000 ms — the api rate-caps to 1 reading /
+ # 2s per device (architecture §3.2, I-2), and a faster tick would only
+diff --git a/packages/simulator/src/index.ts b/packages/simulator/src/index.ts
+index cf25710..3688a00 100644
+--- a/packages/simulator/src/index.ts
++++ b/packages/simulator/src/index.ts
+@@ -1,15 +1,19 @@
+ /**
+- * Surakkha simulator — entry point (Story 2.4).
++ * Surakkha simulator — entry point (Story 2.4 + Story 2.5).
+  *
+  * Boot sequence:
+  *   1. Read + validate `devices.json` (UUIDv4 device_ids, scenarios
+  *      in SCENARIO_NAMES, no duplicate UUIDs).
+  *   2. Read env: `API_URL` (default `http://localhost:4000`),
+  *      `JWT_SECRET` (required, ≥ JWT_SECRET_MIN_LENGTH), optional
+- *      `TICK_INTERVAL_MS` (must be ≥ 1000).
++ *      `TICK_INTERVAL_MS` (must be ≥ 1000), optional
++ *      `SIMULATOR_SECRET` (Story 2.5).
+  *   3. Mint one simulator JWT per device.
+- *   4. Spawn one `WsClient` per device.
+- *   5. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
++ *   4. Spawn one `WsClient` per device. The clients[] array is
++ *      registered into a module-scoped `clientsRegistry` (Story 2.5)
++ *      so the control HTTP server can read it without re-running boot.
++ *   5. Boot the control HTTP server (Story 2.5).
++ *   6. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
+  *      drain the per-device buffers, exit code 0).
+  */
+ import { readFileSync } from "node:fs";
+@@ -18,6 +22,10 @@ import { fileURLToPath } from "node:url";
+ 
+ import { createLogger } from "@surakkha/shared/logger";
+ 
++import {
++  setClientsRegistry,
++  startControlServer,
++} from "./control/server.js";
+ import {
+   assertJwtSecretOrExit,
+   mintSimulatorTokensForDevices,
+@@ -287,6 +295,36 @@ export const boot = (): void => {
+     client.start();
+   }
+ 
++  // 5b. Story 2.5 — publish the client registry so the control HTTP
++  // server can read it without re-running boot(). Lifted from the
++  // closure for module scope (the registry is read-only after boot
++  // completes; the only writes are the in-loop `setScenario` /
++  // `setPaused` calls from the control server).
++  // The structural type mirrors `control/server.ts:SimulatorClientLike`
++  // exactly so we don't need a type-only import from that module
++  // (which would force us to mix `import type` into a sibling import
++  // and trip eslint's import/order + no-duplicate-imports rules).
++  interface RegistryClient {
++    setScenario(name: ScenarioName): void;
++    setPaused(paused: boolean): void;
++  }
++  const registryEntries: Array<[string, RegistryClient]> = [];
++  for (const c of clients) {
++    registryEntries.push([c.__test__deviceId(), c]);
++  }
++  setClientsRegistry(new Map(registryEntries));
++
++  // 5c. Story 2.5 — boot the control server. Failure is logged but
++  // does NOT fail-fast: the simulator's primary job is emitting
++  // frames; the admin control tab is a secondary surface.
++  void startControlServer()
++    .then(({ port }) => {
++      logger.info({ port }, "simulator: control server listening");
++    })
++    .catch((err: unknown) => {
++      logger.warn({ err }, "simulator: control server failed to start");
++    });
++
+   // 6. Graceful shutdown.
+   const shutdown = (signal: string): void => {
+     logger.info({ signal }, "simulator: shutdown requested");
+diff --git a/packages/simulator/src/wsClient.ts b/packages/simulator/src/wsClient.ts
+index 99d5bec..6c0b2e4 100644
+--- a/packages/simulator/src/wsClient.ts
++++ b/packages/simulator/src/wsClient.ts
+@@ -105,9 +105,9 @@ export interface MinimalSocket {
+ }
+ 
+ /**
+- * Per-device simulator state. Public surface is `start()` + `stop()`;
+- * tests construct one directly and exercise the internals via the
+- * private helpers exposed through `__test__`.
++ * Per-device simulator state. Public surface is `start()` + `stop()`
++ * + `setScenario()`; tests construct one directly and exercise the
++ * internals via the private helpers exposed through `__test__`.
+  */
+ export class WsClient {
+   private readonly opts: WsClientOptions;
+@@ -121,9 +121,25 @@ export class WsClient {
+   private reconnectHandle: NodeJS.Timeout | null = null;
+   private overflowLoggedThisRun = false;
+   private stopped = false;
++  /**
++   * Story 2.5 — current scenario. Initialised from `opts.scenario`
++   * at construction and mutated by the admin control server via
++   * `setScenario()`. Decoupled from `opts` so the public
++   * `WsClientOptions` shape stays immutable (constructor parameters
++   * can never be re-bound by a runtime call).
++   */
++  private currentScenario: ScenarioName;
++  /**
++   * Story 2.5 — pause flag toggled by the control server's
++   * `start` / `pause` verb. When `true` the tick loop skips frame
++   * generation but keeps the WS socket alive so the device stays
++   * "connected" from the api's perspective.
++   */
++  private paused = false;
+ 
+   constructor(options: WsClientOptions) {
+     this.opts = options;
++    this.currentScenario = options.scenario;
+     this.logger = options.logger.child({ deviceId: options.deviceId });
+   }
+ 
+@@ -133,7 +149,7 @@ export class WsClient {
+       return;
+     }
+     this.logger.info(
+-      { scenario: this.opts.scenario, tickIntervalMs: this.opts.tickIntervalMs },
++      { scenario: this.currentScenario, tickIntervalMs: this.opts.tickIntervalMs },
+       "simulator: scenario started",
+     );
+     this.openSocket();
+@@ -170,6 +186,49 @@ export class WsClient {
+   /** Test seam: read the backoff state for assertions. */
+   public __test__reconnectAttempts = (): number => this.reconnectAttempts;
+ 
++  /** Test seam: read the active scenario name. */
++  public __test__scenario = (): ScenarioName => this.currentScenario;
++
++  /** Test seam: read the pause flag. */
++  public __test__paused = (): boolean => this.paused;
++
++  /**
++   * Test seam: read the device_id. Used by `index.ts:boot()` to
++   * register the client into the control server's lookup map. The
++   * device_id is immutable after construction so this is a one-way
++   * getter — there's no `__test__setDeviceId`.
++   */
++  public __test__deviceId = (): string => this.opts.deviceId;
++
++  /**
++   * Story 2.5 — runtime scenario swap. Called by the control server
++   * when an Admin clicks "Switch to <Scenario>" in the admin tab.
++   * Mutates `currentScenario` so the next `tickOnce()` picks up the
++   * new curve; no constructor re-run, no reconnect.
++   *
++   * We do NOT reset `this.seq` — the simulator's per-device `seq` is
++   * monotonic across scenario changes (architecture §3.2 wire contract
++   * field rule). If the admin wanted a fresh seq they would restart
++   * the simulator process.
++   */
++  public setScenario = (name: ScenarioName): void => {
++    this.currentScenario = name;
++    this.logger.info({ scenario: name }, "simulator: scenario swapped");
++  };
++
++  /**
++   * Story 2.5 — pause the tick loop without closing the WS socket.
++   * When `true`, `tickOnce()` re-schedules without generating a frame
++   * so the device appears "online but idle" to the api. The api
++   * does not see a disconnect envelope; the absence of new frames
++   * is the signal.
++   */
++  public setPaused = (paused: boolean): void => {
++    if (this.paused === paused) return;
++    this.paused = paused;
++    this.logger.info({ paused }, "simulator: pause toggled");
++  };
++
+   /**
+     Test seam: inject a pre-built socket. Production never calls this
+     — `start()` opens its own. Tests substitute a stub that captures
+@@ -343,7 +402,16 @@ export class WsClient {
+       return;
+     }
+ 
+-    const tick = runScenario(this.opts.scenario, {}, this.seq);
++    // Story 2.5 — admin-triggered pause. We KEEP the WS socket open
++    // (no `disconnect` envelope) and just skip frame generation until
++    // the admin resumes. This is distinct from the rate-limit pause
++    // above, which has a wake-up timestamp and re-enables automatically.
++    if (this.paused) {
++      this.scheduleNextTick(this.opts.tickIntervalMs);
++      return;
++    }
++
++    const tick = runScenario(this.currentScenario, {}, this.seq);
+     if (tick.kind === "offline") {
+       // Offline scenario emits nothing — back off but stay connected.
+       this.scheduleNextTick(this.opts.tickIntervalMs);
+diff --git a/packages/web/src/main.tsx b/packages/web/src/main.tsx
+index b949090..8b51f0a 100644
+--- a/packages/web/src/main.tsx
++++ b/packages/web/src/main.tsx
+@@ -24,6 +24,7 @@
+  *   - The `*` catch-all redirects to /login when no route matches.
+  */
+ 
++import { QueryClientProvider } from "@tanstack/react-query";
+ import { StrictMode, useEffect } from "react";
+ import { createRoot } from "react-dom/client";
+ import {
+@@ -35,10 +36,12 @@ import {
+ } from "react-router-dom";
+ 
+ import { RbacRoute } from "./access/RbacRoute";
++import { SimulatorPage } from "./admin/simulator/SimulatorPage";
+ import { apiLogin, configureApiClient } from "./api/apiClient";
+ import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
+ import { LoginShell } from "./auth/LoginShell";
+ import { KpiStat } from "./components/KpiStat";
++import { queryClient } from "./queryClient";
+ import { AppShell } from "./shell/AppShell";
+ 
+ import "./index.css";
+@@ -168,9 +171,10 @@ const LoginRoute = () => {
+ 
+ createRoot(root).render(
+   <StrictMode>
+-    <BrowserRouter>
+-      <Routes>
+-        <Route path="/login" element={<LoginRoute />} />
++    <QueryClientProvider client={queryClient}>
++      <BrowserRouter>
++        <Routes>
++          <Route path="/login" element={<LoginRoute />} />
+         <Route
+           path="/"
+           element={
+@@ -261,7 +265,7 @@ createRoot(root).render(
+             <CurrentRoleProvider>
+               <AppShell>
+                 <RbacRoute>
+-                  <PageStub name="Simulator" />
++                  <SimulatorPage />
+                 </RbacRoute>
+               </AppShell>
+             </CurrentRoleProvider>
+@@ -318,5 +322,6 @@ createRoot(root).render(
+         <Route path="*" element={<Navigate to="/login" replace />} />
+       </Routes>
+     </BrowserRouter>
++    </QueryClientProvider>
+   </StrictMode>,
+ );
+\ No newline at end of file
+_bmad-output/implementation-artifacts/.edge-case-hunter-2.4-l1.json
+_bmad-output/implementation-artifacts/.review-diff-2.4-l1.txt
+_bmad-output/implementation-artifacts/.review-diff-2.5-l1.txt
+_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md
+packages/api/src/admin/simulatorClient.ts
+packages/api/src/admin/simulatorRouter.spec.ts
+packages/api/src/admin/simulatorRouter.ts
+packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql
+packages/db/prisma/seed.ts
+packages/shared/src/simulator.spec.ts
+packages/shared/src/simulator.ts
+packages/simulator/src/control/server.spec.ts
+packages/simulator/src/control/server.ts
+packages/web/.env.example
+packages/web/src/admin/simulator/DeviceRow.tsx
+packages/web/src/admin/simulator/DisabledBanner.tsx
+packages/web/src/admin/simulator/SimulatorPage.spec.tsx
+packages/web/src/admin/simulator/SimulatorPage.tsx
+packages/web/src/admin/simulator/useSimulatorDevices.ts
+packages/web/src/queryClient.ts

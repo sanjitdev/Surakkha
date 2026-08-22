@@ -1,15 +1,19 @@
 /**
- * Surakkha simulator — entry point (Story 2.4).
+ * Surakkha simulator — entry point (Story 2.4 + Story 2.5).
  *
  * Boot sequence:
  *   1. Read + validate `devices.json` (UUIDv4 device_ids, scenarios
  *      in SCENARIO_NAMES, no duplicate UUIDs).
  *   2. Read env: `API_URL` (default `http://localhost:4000`),
  *      `JWT_SECRET` (required, ≥ JWT_SECRET_MIN_LENGTH), optional
- *      `TICK_INTERVAL_MS` (must be ≥ 1000).
+ *      `TICK_INTERVAL_MS` (must be ≥ 1000), optional
+ *      `SIMULATOR_SECRET` (Story 2.5).
  *   3. Mint one simulator JWT per device.
- *   4. Spawn one `WsClient` per device.
- *   5. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
+ *   4. Spawn one `WsClient` per device. The clients[] array is
+ *      registered into a module-scoped `clientsRegistry` (Story 2.5)
+ *      so the control HTTP server can read it without re-running boot.
+ *   5. Boot the control HTTP server (Story 2.5).
+ *   6. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
  *      drain the per-device buffers, exit code 0).
  */
 import { readFileSync } from "node:fs";
@@ -18,6 +22,10 @@ import { fileURLToPath } from "node:url";
 
 import { createLogger } from "@surakkha/shared/logger";
 
+import {
+  setClientsRegistry,
+  startControlServer,
+} from "./control/server.js";
 import {
   assertJwtSecretOrExit,
   mintSimulatorTokensForDevices,
@@ -287,11 +295,86 @@ export const boot = (): void => {
     client.start();
   }
 
+  // 5b. Story 2.5 — publish the client registry so the control HTTP
+  // server can read it without re-running boot(). Lifted from the
+  // closure for module scope (the registry is read-only after boot
+  // completes; the only writes are the in-loop `setScenario` /
+  // `setPaused` calls from the control server).
+  // The structural type mirrors `control/server.ts:SimulatorClientLike`
+  // exactly so we don't need a type-only import from that module
+  // (which would force us to mix `import type` into a sibling import
+  // and trip eslint's import/order + no-duplicate-imports rules).
+  interface RegistryClient {
+    setScenario(name: ScenarioName): void;
+    setPaused(paused: boolean): void;
+  }
+  const registryEntries: Array<[string, RegistryClient]> = [];
+  for (const c of clients) {
+    registryEntries.push([c.__test__deviceId(), c]);
+  }
+  setClientsRegistry(new Map(registryEntries));
+
+  // 5c. Story 2.5 — boot the control server. Capture the `close`
+  // handle so SIGINT/SIGTERM can shut the port down cleanly (without
+  // it, the port leaks and the admin tab stays open for new requests
+  // after the simulator stops emitting). EADDRINUSE is the only
+  // fatal startup error: it means the admin tab can NEVER come up,
+  // so we hard-exit rather than running silently broken. Other
+  // errors (permission denied, etc.) stay as warnings — the simulator
+  // is still emitting frames.
+  //
+  // `boot()` is intentionally synchronous (`(): void`), so we wrap the
+  // async startup path in an IIFE rather than leaking a Promise out of
+  // the public surface.
+  let closeControlServer: (() => Promise<void>) | null = null;
+  void (async () => {
+    try {
+      const handle = await startControlServer();
+      closeControlServer = handle.close;
+      logger.info(
+        { port: handle.port },
+        "simulator: control server listening",
+      );
+    } catch (err: unknown) {
+      const errObj = err as { code?: string; message?: string };
+      if (errObj.code === "EADDRINUSE") {
+        logger.error(
+          { err: errObj.message ?? String(err) },
+          "simulator: control server port already in use — exiting",
+        );
+        // Stop the already-started WsClients so we don't leave zombie
+        // connections on the api side.
+        for (const c of clients) {
+          c.stop();
+        }
+        // eslint-disable-next-line no-restricted-properties
+        process.exit(1);
+      }
+      logger.warn(
+        { err },
+        "simulator: control server failed to start",
+      );
+    }
+  })();
+
   // 6. Graceful shutdown.
   const shutdown = (signal: string): void => {
     logger.info({ signal }, "simulator: shutdown requested");
     for (const c of clients) {
       c.stop();
+    }
+    // Close the control HTTP server (if it ever came up) so the
+    // port is freed and no further admin requests are accepted
+    // after the simulator has stopped emitting. Wrap in try/catch
+    // because `close()` may throw if the server was already closed
+    // (e.g. boot-time failure left it in a half-open state).
+    if (closeControlServer !== null) {
+      void closeControlServer().catch((err: unknown) => {
+        logger.warn(
+          { err },
+          "simulator: control server close threw",
+        );
+      });
     }
     logger.info("simulator: shutdown complete");
     // eslint-disable-next-line no-restricted-properties

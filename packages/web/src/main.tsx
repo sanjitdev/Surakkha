@@ -24,6 +24,7 @@
  *   - The `*` catch-all redirects to /login when no route matches.
  */
 
+import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -35,10 +36,12 @@ import {
 } from "react-router-dom";
 
 import { RbacRoute } from "./access/RbacRoute";
+import { SimulatorPage } from "./admin/simulator/SimulatorPage";
 import { apiLogin, configureApiClient } from "./api/apiClient";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
 import { KpiStat } from "./components/KpiStat";
+import { queryClient } from "./queryClient";
 import { AppShell } from "./shell/AppShell";
 
 import "./index.css";
@@ -168,9 +171,10 @@ const LoginRoute = () => {
 
 createRoot(root).render(
   <StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginRoute />} />
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginRoute />} />
         <Route
           path="/"
           element={
@@ -261,7 +265,7 @@ createRoot(root).render(
             <CurrentRoleProvider>
               <AppShell>
                 <RbacRoute>
-                  <PageStub name="Simulator" />
+                  <SimulatorPage />
                 </RbacRoute>
               </AppShell>
             </CurrentRoleProvider>
@@ -318,5 +322,6 @@ createRoot(root).render(
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
+    </QueryClientProvider>
   </StrictMode>,
 );

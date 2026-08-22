@@ -34,6 +34,10 @@
     "./logger": {
       "types": "./dist/logger.d.ts",
       "import": "./dist/logger.js"
+    },
+    "./simulator": {
+      "types": "./dist/simulator.d.ts",
+      "import": "./dist/simulator.js"
     }
   },
   "scripts": {

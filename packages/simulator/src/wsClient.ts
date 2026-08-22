@@ -16,7 +16,7 @@ import { type TelemetryFrame, TelemetryFrameSchema } from "@surakkha/shared/tele
 import { type Logger } from "pino";
 import { io, type Socket } from "socket.io-client";
 
-import { runScenario, type ScenarioName } from "./scenarios.js";
+import { runScenario, SCENARIO_NAMES, type ScenarioName } from "./scenarios.js";
 
 /** Frame buffer cap per device (architecture §6.1, I-2). */
 export const BUFFER_CAP = 5_000;
@@ -105,9 +105,9 @@ export interface MinimalSocket {
 }
 
 /**
- * Per-device simulator state. Public surface is `start()` + `stop()`;
- * tests construct one directly and exercise the internals via the
- * private helpers exposed through `__test__`.
+ * Per-device simulator state. Public surface is `start()` + `stop()`
+ * + `setScenario()`; tests construct one directly and exercise the
+ * internals via the private helpers exposed through `__test__`.
  */
 export class WsClient {
   private readonly opts: WsClientOptions;
@@ -121,9 +121,25 @@ export class WsClient {
   private reconnectHandle: NodeJS.Timeout | null = null;
   private overflowLoggedThisRun = false;
   private stopped = false;
+  /**
+   * Story 2.5 — current scenario. Initialised from `opts.scenario`
+   * at construction and mutated by the admin control server via
+   * `setScenario()`. Decoupled from `opts` so the public
+   * `WsClientOptions` shape stays immutable (constructor parameters
+   * can never be re-bound by a runtime call).
+   */
+  private currentScenario: ScenarioName;
+  /**
+   * Story 2.5 — pause flag toggled by the control server's
+   * `start` / `pause` verb. When `true` the tick loop skips frame
+   * generation but keeps the WS socket alive so the device stays
+   * "connected" from the api's perspective.
+   */
+  private paused = false;
 
   constructor(options: WsClientOptions) {
     this.opts = options;
+    this.currentScenario = options.scenario;
     this.logger = options.logger.child({ deviceId: options.deviceId });
   }
 
@@ -133,7 +149,7 @@ export class WsClient {
       return;
     }
     this.logger.info(
-      { scenario: this.opts.scenario, tickIntervalMs: this.opts.tickIntervalMs },
+      { scenario: this.currentScenario, tickIntervalMs: this.opts.tickIntervalMs },
       "simulator: scenario started",
     );
     this.openSocket();
@@ -169,6 +185,57 @@ export class WsClient {
 
   /** Test seam: read the backoff state for assertions. */
   public __test__reconnectAttempts = (): number => this.reconnectAttempts;
+
+  /** Test seam: read the active scenario name. */
+  public __test__scenario = (): ScenarioName => this.currentScenario;
+
+  /** Test seam: read the pause flag. */
+  public __test__paused = (): boolean => this.paused;
+
+  /**
+   * Test seam: read the device_id. Used by `index.ts:boot()` to
+   * register the client into the control server's lookup map. The
+   * device_id is immutable after construction so this is a one-way
+   * getter — there's no `__test__setDeviceId`.
+   */
+  public __test__deviceId = (): string => this.opts.deviceId;
+
+  /**
+   * Story 2.5 — runtime scenario swap. Called by the control server
+   * when an Admin clicks "Switch to <Scenario>" in the admin tab.
+   * Mutates `currentScenario` so the next `tickOnce()` picks up the
+   * new curve; no constructor re-run, no reconnect.
+   *
+   * We do NOT reset `this.seq` — the simulator's per-device `seq` is
+   * monotonic across scenario changes (architecture §3.2 wire contract
+   * field rule). If the admin wanted a fresh seq they would restart
+   * the simulator process.
+   */
+  public setScenario = (name: ScenarioName): void => {
+    // Defense-in-depth: the api validates `scenario ∈ SCENARIO_NAMES`
+    // before forwarding; this guard catches any internal caller that
+    // bypasses the api's check (e.g. a future direct-control seam).
+    // Throwing here makes the violation loud at the call site instead
+    // of a cryptic `runScenario` exhaustive-check throw inside `tickOnce`.
+    if (!(SCENARIO_NAMES as readonly string[]).includes(name)) {
+      throw new Error(`simulator: setScenario rejects unknown name ${name}`);
+    }
+    this.currentScenario = name;
+    this.logger.info({ scenario: name }, "simulator: scenario swapped");
+  };
+
+  /**
+   * Story 2.5 — pause the tick loop without closing the WS socket.
+   * When `true`, `tickOnce()` re-schedules without generating a frame
+   * so the device appears "online but idle" to the api. The api
+   * does not see a disconnect envelope; the absence of new frames
+   * is the signal.
+   */
+  public setPaused = (paused: boolean): void => {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    this.logger.info({ paused }, "simulator: pause toggled");
+  };
 
   /**
     Test seam: inject a pre-built socket. Production never calls this
@@ -343,7 +410,16 @@ export class WsClient {
       return;
     }
 
-    const tick = runScenario(this.opts.scenario, {}, this.seq);
+    // Story 2.5 — admin-triggered pause. We KEEP the WS socket open
+    // (no `disconnect` envelope) and just skip frame generation until
+    // the admin resumes. This is distinct from the rate-limit pause
+    // above, which has a wake-up timestamp and re-enables automatically.
+    if (this.paused) {
+      this.scheduleNextTick(this.opts.tickIntervalMs);
+      return;
+    }
+
+    const tick = runScenario(this.currentScenario, {}, this.seq);
     if (tick.kind === "offline") {
       // Offline scenario emits nothing — back off but stay connected.
       this.scheduleNextTick(this.opts.tickIntervalMs);

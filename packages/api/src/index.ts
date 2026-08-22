@@ -40,6 +40,10 @@ import express, { type Express, type Request, type Response } from "express";
 import { Server as IoServer } from "socket.io";
 
 
+import {
+  buildAdminSimulatorPublicRouter,
+  buildAdminSimulatorRouter,
+} from "./admin/simulatorRouter.js";
 import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
@@ -73,6 +77,11 @@ app.use(cookieParser());
 // `markPublic()` wrapper on `/login` and `/refresh` sets
 // `req.public = true` ahead of the bearer-token check.
 app.use("/auth", buildAuthRouter({ audit }));
+// Story 2.5 — `/admin/simulator/status` is public (so the disabled
+// banner renders for any visitor). Mount its public surface BEFORE
+// `authenticate`; the authenticated routes (`/devices`,
+// `/:device_id/scenario`) mount AFTER `authenticate` below.
+app.use(buildAdminSimulatorPublicRouter());
 app.use(authenticate);
 
 /**
@@ -87,6 +96,58 @@ app.get(
   (_req: Request, res: Response) => {
     res.status(HTTP_OK).json({ devices: [] });
   },
+);
+
+/**
+ * Story 2.5 — mount the admin simulator router. The router reads
+ * the six Device rows via a lazy Prisma client (same pattern the
+ * ingest handler uses — avoids a hard dependency on DATABASE_URL
+ * for HTTP-only tests).
+ */
+const listDevicesFromPrisma = async (): Promise<
+  ReadonlyArray<{
+    readonly id: string;
+    readonly name: string | null;
+    readonly scenario: string | null;
+  }>
+> => {
+  try {
+    const mod = (await import("@prisma/client")) as unknown as {
+      PrismaClient: new () => {
+        device: {
+          findMany: (args: {
+            readonly select: {
+              readonly id: true;
+              readonly name: true;
+              readonly scenario: true;
+            };
+            readonly orderBy: { readonly id: "asc" };
+          }) => Promise<
+            Array<{
+              readonly id: string;
+              readonly name: string | null;
+              readonly scenario: string | null;
+            }>
+          >;
+        };
+      };
+    };
+    const client = new mod.PrismaClient();
+    const rows = await client.device.findMany({
+      select: { id: true, name: true, scenario: true },
+      orderBy: { id: "asc" },
+    });
+    return rows;
+  } catch {
+    // Without a DB we return an empty list. The admin tab can render
+    // an empty state rather than failing the entire page render.
+    return [];
+  }
+};
+
+app.use(
+  "/admin/simulator",
+  buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
 );
 
 app.get("/health", (_req: Request, res: Response) => {

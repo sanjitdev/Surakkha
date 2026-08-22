@@ -1,0 +1,2882 @@
+diff --git a/packages/simulator/package.json b/packages/simulator/package.json
+index 112866d..4250e4b 100644
+--- a/packages/simulator/package.json
++++ b/packages/simulator/package.json
+@@ -2,7 +2,7 @@
+   "name": "@surakkha/simulator",
+   "version": "0.1.0",
+   "private": true,
+-  "description": "Telemetry simulator. Separate Node 20 process on the same wire contract as a real device (AR-12, I-12). Six default devices, seven scenarios. JWT aud=simulator, scope=telemetry:write.",
++  "description": "Telemetry simulator. Separate Node 20 process on the same wire contract as a real device (AR-12, I-12). Six default devices, seven scenarios. JWT aud=simulator, scope=telemetry:write. Connects to the api over Socket.IO at /ingest/<device_id>.",
+   "type": "module",
+   "main": "./dist/index.js",
+   "scripts": {
+@@ -16,13 +16,12 @@
+   },
+   "dependencies": {
+     "@surakkha/shared": "workspace:*",
+-    "ws": "8.18.0",
+     "jsonwebtoken": "9.0.2",
+-    "zod": "3.23.8",
+-    "pino": "9.4.0"
++    "pino": "9.4.0",
++    "socket.io-client": "4.8.0",
++    "zod": "3.23.8"
+   },
+   "devDependencies": {
+-    "@types/ws": "8.5.12",
+     "@types/jsonwebtoken": "9.0.6",
+     "@types/node": "20.16.5",
+     "tsx": "4.19.1",
+diff --git a/packages/simulator/src/index.ts b/packages/simulator/src/index.ts
+index 982635c..e7a7974 100644
+--- a/packages/simulator/src/index.ts
++++ b/packages/simulator/src/index.ts
+@@ -1,24 +1,320 @@
+ /**
+- * Surakkha simulator — entry point.
++ * Surakkha simulator — entry point (Story 2.4).
+  *
+- * Boots the telemetry simulator: mints a JWT per device, opens a WebSocket
+- * to `/ingest/{device_id}` on the api, emits frames at the configured rate,
+- * and runs the active scenario per device.
+- *
+- * Real implementation lands in Story 2.4 (Simulator Process + Six Default
+- * Devices + Seven Scenarios). This stub exists so the package builds.
++ * Boot sequence:
++ *   1. Read + validate `devices.json` (UUIDv4 device_ids, scenarios
++ *      in SCENARIO_NAMES, no duplicate UUIDs).
++ *   2. Read env: `API_URL` (default `http://localhost:4000`),
++ *      `JWT_SECRET` (required, ≥ JWT_SECRET_MIN_LENGTH), optional
++ *      `TICK_INTERVAL_MS` (must be ≥ 1000).
++ *   3. Mint one simulator JWT per device.
++ *   4. Spawn one `WsClient` per device.
++ *   5. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
++ *      drain the per-device buffers, exit code 0).
+  */
++import { readFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++import { fileURLToPath } from "node:url";
+ 
+ import { createLogger } from "@surakkha/shared/logger";
+ 
++import {
++  assertJwtSecretOrExit,
++  mintSimulatorTokensForDevices,
++} from "./jwt.js";
++import { SCENARIO_NAMES, type ScenarioName } from "./scenarios.js";
++import {
++  BUFFER_CAP,
++  DEFAULT_TICK_INTERVAL_MS,
++  MIN_TICK_INTERVAL_MS,
++  WsClient,
++  type WsClientOptions,
++} from "./wsClient.js";
++
++const __filename = fileURLToPath(import.meta.url);
++const __dirname = dirname(__filename);
++
+ const logger = createLogger({ name: "surakkha-simulator", level: "info" });
+ 
+-logger.info(
+-  {
+-    build: "stub",
+-    note: "Story 2.4 will replace this with the simulator process.",
+-  },
+-  "simulator: boot",
+-);
++// `readFileSync(__dirname + ...)` keeps the file load deterministic
++// regardless of CWD; tests pass a custom path via `loadDevicesFile`.
++const DEVICES_FILE_PATH = resolve(__dirname, "devices.json");
++
++const UUID_V4_REGEX =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++export interface DevicesFileShape {
++  readonly tick_interval_ms: number;
++  readonly devices: ReadonlyArray<{
++    readonly device_id: string;
++    readonly scenario: string;
++  }>;
++}
++
++export interface LoadDevicesResult {
++  readonly tickIntervalMs: number;
++  readonly devices: ReadonlyArray<{
++    readonly deviceId: string;
++    readonly scenario: ScenarioName;
++  }>;
++}
++
++/**
++ * Hard-exit helper: log a message to stderr and exit code 1. Used by
++ * `loadDevicesFile` and `resolveConfig` for fail-fast paths. The
++ * eslint disable here is the same pattern the api uses in `assertJwtSecret`
++ * — these are boot-time configuration failures, not graceful shutdown.
++ */
++const failFast = (message: string): never => {
++  console.error(message);
++  // eslint-disable-next-line no-restricted-properties
++  process.exit(1);
++  // `process.exit` is typed `never` but the `no-restricted-properties`
++  // disable above obscures that; the throw below makes the return type
++  // explicit so downstream call-sites narrow.
++  throw new Error("process.exit did not terminate the process");
++};
++
++/**
++ * Load and strictly validate `devices.json`. The "STRENGTHEN upfront
++ * validation" review pin (loopback 1) requires:
++ *   - every `device_id` is a UUIDv4 string
++ *   - every `scenario` is a member of `SCENARIO_NAMES`
++ *   - no duplicate `device_id`s
++ *   - `tick_interval_ms` >= MIN_TICK_INTERVAL_MS
++ *
++ * Any failure logs a single clear line and `process.exit(1)`s before
++ * any socket is opened. Returning a parsed structure on success keeps
++ * the boot path testable.
++ */
++export const loadDevicesFile = (filePath: string = DEVICES_FILE_PATH): LoadDevicesResult => {
++  const obj = readDevicesJsonObject(filePath);
++  const tickRaw = readTickIntervalMs(obj);
++  const devicesRaw = readDevicesArray(obj);
++  return {
++    tickIntervalMs: tickRaw,
++    devices: validateDevices(devicesRaw),
++  };
++};
++
++const readDevicesJsonObject = (filePath: string): Record<string, unknown> => {
++  let raw: unknown;
++  try {
++    raw = JSON.parse(readFileSync(filePath, "utf8"));
++  } catch (err) {
++    const message = err instanceof Error ? err.message : String(err);
++    failFast(`simulator: failed to read ${filePath}: ${message}`);
++  }
++  if (typeof raw !== "object" || raw === null) {
++    failFast("simulator: devices.json must be a JSON object");
++  }
++  return raw as Record<string, unknown>;
++};
++
++const readTickIntervalMs = (obj: Record<string, unknown>): number => {
++  const tickRaw: unknown = obj["tick_interval_ms"];
++  if (typeof tickRaw !== "number" || !Number.isFinite(tickRaw)) {
++    failFast("simulator: devices.json missing numeric `tick_interval_ms`");
++  }
++  // `failFast` is `never`; assert the narrowed type explicitly so
++  // tsc sees the post-guard type as `number` (the guard above is a
++  // disjunction, so TS keeps `tickRaw` as `unknown` without an
++  // explicit cast).
++  const tickNum = tickRaw as number;
++  if (tickNum < MIN_TICK_INTERVAL_MS) {
++    failFast(
++      `simulator: devices.json tick_interval_ms=${tickNum} is below minimum ${MIN_TICK_INTERVAL_MS}`,
++    );
++  }
++  return tickNum;
++};
++
++const readDevicesArray = (obj: Record<string, unknown>): unknown[] => {
++  const devicesRaw: unknown = obj["devices"];
++  if (!Array.isArray(devicesRaw) || devicesRaw.length === 0) {
++    failFast("simulator: devices.json missing non-empty `devices` array");
++  }
++  return devicesRaw as unknown[];
++};
++
++const validateDevices = (
++  devicesRaw: readonly unknown[],
++): Array<{ readonly deviceId: string; readonly scenario: ScenarioName }> => {
++  const seen = new Set<string>();
++  const validated: Array<{ readonly deviceId: string; readonly scenario: ScenarioName }> = [];
++  for (const [index, entry] of devicesRaw.entries()) {
++    if (typeof entry !== "object" || entry === null) {
++      failFast(`simulator: devices.json devices[${index}] is not an object`);
++    }
++    const e = entry as Record<string, unknown>;
++    const deviceIdRaw: unknown = e["device_id"];
++    const scenarioRaw: unknown = e["scenario"];
++    if (typeof deviceIdRaw !== "string" || !UUID_V4_REGEX.test(deviceIdRaw)) {
++      failFast(
++        `simulator: devices.json devices[${index}].device_id must be a UUIDv4 (got ${String(deviceIdRaw)})`,
++      );
++    }
++    const deviceId = deviceIdRaw as string;
++    if (seen.has(deviceId)) {
++      failFast(
++        `simulator: devices.json devices[${index}].device_id "${deviceId}" is a duplicate`,
++      );
++    }
++    if (
++      typeof scenarioRaw !== "string" ||
++      !SCENARIO_NAMES.includes(scenarioRaw as ScenarioName)
++    ) {
++      failFast(
++        `simulator: devices.json devices[${index}].scenario "${String(scenarioRaw)}" is not in SCENARIO_NAMES (${SCENARIO_NAMES.join(", ")})`,
++      );
++    }
++    seen.add(deviceId);
++    validated.push({ deviceId, scenario: scenarioRaw as ScenarioName });
++  }
++  return validated;
++};
++
++/**
++ * Parse `API_URL` and `TICK_INTERVAL_MS` env vars. `API_URL` must be
++ * a parseable URL with `http` or `https` protocol. `TICK_INTERVAL_MS`
++ * must be a number ≥ MIN_TICK_INTERVAL_MS.
++ *
++ * Returns either the parsed values or a `null` + an exit on failure.
++ */
++export interface ResolvedConfig {
++  readonly apiUrl: string;
++  readonly tickIntervalMs: number;
++}
++
++export const resolveConfig = (): ResolvedConfig => {
++  const apiUrl = resolveApiUrl();
++  const tickIntervalMs = resolveTickIntervalMs();
++  return { apiUrl, tickIntervalMs };
++};
++
++const resolveApiUrl = (): string => {
++  const apiUrl = process.env["API_URL"] ?? "http://localhost:4000";
++  try {
++    const parsed = new URL(apiUrl);
++    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
++      throw new Error(`unsupported protocol: ${parsed.protocol}`);
++    }
++  } catch (err) {
++    const message = err instanceof Error ? err.message : String(err);
++    failFast(`simulator: API_URL is invalid: ${message}`);
++  }
++  // `failFast` is `never` but the type guard above doesn't narrow it.
++  return apiUrl;
++};
++
++const resolveTickIntervalMs = (): number => {
++  const envTick = process.env["TICK_INTERVAL_MS"];
++  if (envTick === undefined) {
++    return DEFAULT_TICK_INTERVAL_MS;
++  }
++  const n = Number.parseInt(envTick, 10);
++  if (!Number.isFinite(n) || n < MIN_TICK_INTERVAL_MS) {
++    failFast(
++      `simulator: TICK_INTERVAL_MS=${envTick} is invalid (must be integer >= ${MIN_TICK_INTERVAL_MS})`,
++    );
++  }
++  return n;
++};
++
++/**
++ * Boot the simulator. Exposed for tests so they can run the boot
++ * sequence against a stubbed env without spawning a child process.
++ */
++export const boot = (): void => {
++  // 1. Env: JWT_SECRET (fail-fast).
++  const secret = assertJwtSecretOrExit();
++
++  // 2. devices.json.
++  const { devices, tickIntervalMs: fileTickMs } = loadDevicesFile();
++
++  // 3. API_URL + env TICK_INTERVAL_MS.
++  const cfg = resolveConfig();
++
++  // 4. JWTs.
++  const deviceIds = devices.map((d) => d.deviceId);
++  const tokens = mintSimulatorTokensForDevices(deviceIds);
++
++  logger.info(
++    {
++      deviceCount: devices.length,
++      bufferCap: BUFFER_CAP,
++      tickIntervalMs: cfg.tickIntervalMs,
++      apiUrl: cfg.apiUrl,
++    },
++    "simulator: boot",
++  );
++
++  // 5. Spawn one WsClient per device. The env TICK_INTERVAL_MS
++  //    overrides the per-file value when set; otherwise the file
++  //    value is used.
++  const clients: WsClient[] = [];
++  for (const { deviceId, scenario } of devices) {
++    const token = tokens.get(deviceId);
++    if (token === undefined) {
++      // unreachable: loadDevicesFile validated uniqueness
++      throw new Error(`simulator: missing token for device ${deviceId}`);
++    }
++    const opts: WsClientOptions = {
++      deviceId,
++      scenario,
++      apiUrl: cfg.apiUrl,
++      token,
++      // If the operator set TICK_INTERVAL_MS in env it wins; otherwise
++      // use the per-file default. We never silently fall below MIN.
++      tickIntervalMs: Math.max(
++        cfg.tickIntervalMs !== DEFAULT_TICK_INTERVAL_MS ? cfg.tickIntervalMs : fileTickMs,
++        MIN_TICK_INTERVAL_MS,
++      ),
++      logger,
++    };
++    const client = new WsClient(opts);
++    clients.push(client);
++    client.start();
++  }
++
++  // 6. Graceful shutdown.
++  const shutdown = (signal: string): void => {
++    logger.info({ signal }, "simulator: shutdown requested");
++    for (const c of clients) {
++      c.stop();
++    }
++    logger.info("simulator: shutdown complete");
++    // eslint-disable-next-line no-restricted-properties
++    process.exit(0);
++  };
++  process.on("SIGINT", () => shutdown("SIGINT"));
++  process.on("SIGTERM", () => shutdown("SIGTERM"));
++
++  // Surface unhandled errors as a fail-fast log + non-zero exit. We
++  // do NOT swallow them — the spec's fail-fast posture covers
++  // boot-time misconfiguration, but unhandled async errors at
++  // runtime should still produce a non-zero exit.
++  process.on("unhandledRejection", (err) => {
++    logger.error({ err }, "simulator: unhandledRejection");
++    // eslint-disable-next-line no-restricted-properties
++    process.exit(1);
++  });
++  // `secret` is read at boot to fail-fast; we don't need the value
++  // after `mintSimulatorTokensForDevices` consumed it via env.
++  void secret;
++};
++
++// Only run the boot when invoked as the entry point (not when
++// imported by tests). Vitest runs via `tsx` and Node's CJS interop
++// makes `import.meta.url` the actual file path; the heuristic of
++// "process.argv[1] === <this file>" works under both tsx and tsc.
++const isEntryPoint = (() => {
++  if (typeof process === "undefined") return false;
++  const argv1 = process.argv[1];
++  if (typeof argv1 !== "string") return false;
++  return argv1 === __filename || argv1.endsWith("simulator/src/index.ts");
++})();
+ 
+-export {};
++if (isEntryPoint) {
++  boot();
++}
+
+=== NEW FILE: _bmad-output/implementation-artifacts/2-4-simulator-process-six-default-devices-seven-scenarios.md ===
+---
+title: 'Story 2.4 — Simulator Process + Six Default Devices + Seven Scenarios'
+type: 'feature'
+created: '2026-08-22'
+status: 'in-review'
+review_loop_iteration: 1
+baseline_commit: 'd8f7d9552646f31b6fde0c14071449d91bd393ba'
+context:
+  - docs/architecture.md#6-simulator-contract
+  - docs/architecture.md#3.3-telemetry-frame
+  - docs/architecture.md#3.4-device-authentication
+  - docs/architecture.md#3.2-server-processing-order
+  - docs/adr/0010-device-id-in-path.md
+---
+
+<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
+
+## Intent
+
+**Problem:** The api now authenticates and persists frames (Stories 2.1–2.3),
+but nothing in the stack actually emits frames. A reviewer running
+`docker compose up` sees an empty dashboard and an unread audit log. The
+six devices the demo depends on have no `Device` rows, no per-device
+UUIDs the simulator can connect under, and no scenario curves to walk the
+metrics through. Without the simulator, no Epic 3–6 feature has data to
+operate on.
+
+**Approach:** Replace the stub `packages/simulator/src/index.ts` with a
+real Node process that (a) loads six fixed device UUIDs from a shared
+config file, (b) mints a fresh `aud:"simulator"` JWT per device at boot,
+(c) opens a WebSocket to `ws://<api>/ingest/<device_id>`, (d) emits
+telemetry frames at the configured `tick_interval_ms`, walking each
+device's metric set through the assigned scenario curve, (e) buffers
+frames in memory (max 5,000 per device) on disconnect and flushes them
+in `seq` order on reconnect with exponential backoff, and (f) reacts to
+the api's envelopes (`rate_limited`, `bad_request`, `stale_frame`,
+`unauthenticated`, `auth_error`, `persist_failed`) so a reviewer running
+the stack sees a healthy, six-device telemetry stream on the dashboard.
+
+## Boundaries & Constraints
+
+**Always:**
+- The simulator runs as a **separate Node 20 process** (architecture
+  §2, ADR 0002) and connects via the same wire contract as a real device
+  (§3.3) — there is no back-door path. A real device dropping in tomorrow
+  changes only the transport.
+- JWT claims per architecture §3.4: `iss:"surakkha-api"`, `aud:"simulator"`,
+  `scope:"telemetry:write"`, `sub` = device UUIDv4, TTL = `SIMULATOR_TOKEN_TTL_SECONDS`
+  (1h, per `packages/shared/src/auth.ts`). Use the existing
+  `simulatorClaimTemplate` helper for the claim template so the
+  shared package's UUIDv4 invariant is not duplicated.
+- Wire contract per `TelemetryFrameSchema` (`packages/shared/src/telemetry.ts`):
+  `version: 1`, `device_id`, `ts`, `fw`, `seq` (monotonic per device),
+  six-metric object with hard ranges. Use the schema's `safeParse` before
+  sending — the simulator is its own first validator.
+- The six device UUIDs are a **fixed, deterministic set** committed to
+  `packages/simulator/src/devices.json` (or `.ts`). They do NOT come
+  from `prisma db seed` — the api's `verifyIngestClaims` does not check
+  the `Device` row's existence at v1 (Story 2.2 F-W5 deferral), so the
+  simulator is allowed to connect under UUIDs that are not yet in the
+  `Device` table. Future seed work lives in a later story.
+- Frame buffer cap is **5,000 readings per device** (architecture §6.1).
+  When the buffer fills, drop the oldest entries with a single
+  `simulator: buffer overflow` log line; never silently truncate without
+  a log.
+- Reconnect uses exponential backoff `1s → 2s → 4s → … → 30s` capped at 30s
+  (architecture §6.1). Reset to 1s on a successful `connect`.
+- Emit frames at a configurable `tick_interval_ms` per device
+  (default 2_000). The server rate-cap is one accepted reading per 2s
+  per device — the default respects it; configurable overrides must
+  not drop below 1_000 ms or the simulator hammers the rate cap.
+- On `rate_limited {retry_after_seconds: N}`, pause emissions for N
+  seconds, do NOT drop the affected frame. (Story 2.2 server emits
+  `rate_limited` and then `socket.disconnect(true)`; the simulator's
+  reconnect path picks up the dropped frame on the next cycle — see
+  *Design Notes*.)
+- The simulator never reaches for admin endpoints, never touches Postgres
+  directly, never imports from `@surakkha/api`. Its only knowledge of
+  the api is the wire contract.
+
+**Ask First:**
+- Adding new scenarios beyond the seven named in architecture §6.1
+  (an eighth scenario requires an architecture change).
+- Changing the six device UUIDs (they appear in the demo script and may
+  appear in test fixtures; renumbering breaks downstream tests).
+- Switching the simulator to a non-WebSocket transport (an architecture
+  change — must be coordinated with a v2 bump).
+- Per-device scenario assignment beyond "one scenario per device" (e.g.
+  scenario rotation mid-run). Trivial to add later; out of scope for
+  v1.
+
+**Never:**
+- Never hard-code a secret in source. `JWT_SECRET` is read from
+  `process.env` at boot; the simulator refuses to start without it
+  (matches Story 1.4 fail-fast).
+- Never emit a frame whose `seq` is less than the last emitted `seq`
+  for that device (the server flags it `out_of_order` but the canonical
+  timeline should never see gaps the simulator itself created).
+- Never emit a frame with `ts` older than `STALE_FRAME_THRESHOLD_MS`
+  (5 min, per Story 2.3). Real devices stay in sync with wall clock;
+  the simulator reads `Date.now()` at frame build time.
+- Never pre-compute metric curves for "offline" or "stale" devices —
+  they should stop emitting while in those scenarios, not buffer
+  stale-by-construction frames.
+- Never modify the api or the shared package from this story (boundary:
+  the simulator is downstream of both). Adding a shared helper that
+  the simulator + api both import is a separate concern.
+
+## I/O & Edge-Case Matrix
+
+| Scenario | Input / State | Expected Output / Behavior | Error Handling |
+|----------|--------------|---------------------------|----------------|
+| SIMULATOR_BOOT_OK | All six env vars present; api reachable | Six devices register; six WS connections open; six `tick` timers start | Log per-device at info |
+| SIMULATOR_BOOT_NO_JWT_SECRET | `JWT_SECRET` unset | Process refuses to start with a fail-fast log line + `process.exit(1)` | Match Story 1.4 fail-fast pattern |
+| SIMULATOR_BOOT_BAD_API_URL | `API_URL` malformed | Fail-fast log + non-zero exit | Fail-fast at config parse |
+| FRAME_HAPPY_PATH | Device `dev-1` on `Normal` scenario, t=2s tick | Frame with all six metrics within `MetricRanges`, fresh `ts`, monotonic `seq` | Log debug per emit |
+| FRAME_TS_NEAR_NOW | wall clock advanced | `ts` within 1s of `Date.now()` | Reject locally before send if drift >60s (defensive; uses `CLOCK_SKEW_DETECT_MS` from shared) |
+| RATE_LIMITED_RESPONSE | Server emits `rate_limited {retry_after_seconds: 2}` | Pause emissions for 2s; do not drop buffered frames; resume on next tick | Log warn with deviceId + retry_after |
+| BAD_REQUEST_RESPONSE | Server emits `bad_request {missing_fields}` | Log error with deviceId + missing_fields; drop the offending frame from the buffer (do NOT retry — it will fail again) | Buffer advance, continue |
+| STALE_FRAME_RESPONSE | Server emits `stale_frame {age_seconds}` | Log warn; drop the offending frame; do NOT disconnect the local socket (server already soft-disconnected) | Buffer advance, continue |
+| UNAUTHENTICATED_RESPONSE | Server emits `unauthenticated` | Tear down local socket; trigger reconnect with backoff | Reconnect with exponential backoff |
+| AUTH_ERROR_RESPONSE | Server emits `auth_error {error: "device_id_mismatch" \| "forbidden_scope"}` | Tear down; log error; trigger reconnect (the local mint may be stale) | Reconnect path |
+| PERSIST_FAILED_RESPONSE | Server emits `persist_failed` | Tear down; reconnect; the frame that triggered it is dropped (server-side persist failure — the simulator's job is to keep streaming) | Reconnect path |
+| SOCKET_DISCONNECT_NO_ENVELOPE | TCP RST or remote hangup | Reconnect with backoff; flush in-memory buffer in `seq` order on reconnect | Log warn |
+| BUFFER_OVERFLOW | Per-device buffer reaches 5_000 | Drop oldest, log `simulator: buffer overflow` once per overflow event | Single log line; do not spam |
+| RECONNECT_BACKOFF | Nth failed reconnect attempt | Wait `min(2^N * 1000ms, 30_000ms)` before next attempt; reset to 1s on success | Log info per attempt |
+| SCENARIO_NORMAL | Device on `Normal` | All metrics walk a slow random walk within healthy ranges (pH 6.5–8.5, TDS <500, turbidity <1, chlorine 0.5–1.5) | n/a |
+| SCENARIO_RISING_TDS | Device on `RisingTDS` | TDS rises from 200 to 1500 over ~120 ticks (4 minutes), then plateaus | n/a |
+| SCENARIO_TURBIDITY_SPIKE | Device on `TurbiditySpike` | Turbidity spikes to 200, holds for 10 ticks, decays back to baseline | n/a |
+| SCENARIO_CHLORINE_DROP | Device on `ChlorineDrop` | Chlorine decays from 0.8 to 0.1 over ~60 ticks, holds at 0.1 | n/a |
+| SCENARIO_OFFLINE | Device on `Offline` | Stop emitting; close the WS after a 5-tick grace period (simulates physical disconnect); reconnect with backoff | n/a |
+| SCENARIO_BATTERY_LOW | Device on `BatteryLow` | Continue emitting normal metrics; flag event into the `fw` field? No — `fw` is firmware version, not battery. Use a separate in-process log only for now (battery is not in v1 wire contract; flagged in deferred-work). | Log info once per scenario start |
+| SCENARIO_RANDOM_FAILURE | Device on `RandomFailure` | At random intervals (Poisson λ=20 ticks), emit a frame with one metric replaced by `NaN`; the server rejects as `bad_request`; the simulator logs and moves on | Bad-request path |
+| SCENARIO_ROTATION_PER_DEVICE | Each of six devices gets exactly one of the seven scenarios | One device per scenario, with one scenario (`BatteryLow`) left as "extra" — six-of-seven mapping, deterministic assignment | n/a |
+
+</frozen-after-approval>
+
+## Code Map
+
+- `packages/simulator/src/devices.json` (or `.ts`) -- **new**; six
+  fixed device UUIDs and per-device default scenario assignment.
+  JSON is preferred over TS so a curious reviewer can read it without
+  a Node toolchain.
+- `packages/simulator/src/index.ts` -- **replace stub** with the
+  real boot sequence: load config → load env (`API_URL`, `JWT_SECRET`)
+  → mint six JWTs → open six WS clients.
+- `packages/simulator/src/wsClient.ts` -- **new**; per-device
+  Socket.IO client wrapper (`socket.io-client`). Handles connect,
+  reconnect-with-backoff, frame emit (`socket.emit("frame", payload)`),
+  envelope reaction (`socket.on("rate_limited", …)`, etc.),
+  in-memory buffer (cap 5_000), flush on reconnect.
+- `packages/simulator/src/scenarios.ts` -- **new**; pure scenario
+  functions `(state, tickCount) → TelemetryMetrics` for each of the
+  seven named scenarios. No side effects; the same input yields the
+  same metrics. Easy to unit-test.
+- `packages/simulator/src/jwt.ts` -- **new**; thin wrapper around
+  `simulatorClaimTemplate` + `jsonwebtoken.sign`. Reads `JWT_SECRET`
+  from env at boot. Fails fast if missing.
+- `packages/simulator/src/__tests__/scenarios.spec.ts` -- **new**;
+  per-scenario unit tests with deterministic metric walks.
+- `packages/simulator/src/__tests__/wsClient.spec.ts` -- **new**;
+  envelope-reaction tests using a stub `WebSocket` (the same pattern
+  as `frame.spec.ts`).
+- `packages/simulator/.env.example` -- **new**; documents `API_URL`,
+  `JWT_SECRET`, optional `TICK_INTERVAL_MS`.
+
+Reuse points (read-only investigation findings):
+- `packages/shared/src/telemetry.ts` -- `TelemetryFrameSchema`,
+  `MetricRanges`, `STALE_FRAME_THRESHOLD_MS`, `CLOCK_SKEW_DETECT_MS`,
+  `ReadingFlagSchema`. The simulator builds frames via
+  `TelemetryFrameSchema.parse(...)` so a malformed frame fails locally
+  before reaching the server.
+- `packages/shared/src/auth.ts` -- `simulatorClaimTemplate(sub)`,
+  `SIMULATOR_TOKEN_TTL_SECONDS`. Use the helper, do NOT re-implement.
+- `packages/shared/src/logger.ts` -- `createLogger(...)`. Same logger
+  pattern as the rest of the stack.
+- `packages/api/src/ingest/server.ts` -- the WS endpoint contract.
+  The simulator connects to `ws://<API_URL>/ingest/<device_id>` with
+  `auth: { token }` and listens for envelopes. No import (the
+  simulator does not import from `@surakkha/api`); the contract is
+  read off the shared schemas.
+- `packages/api/src/ingest/frame.ts` -- the server's per-frame pipeline.
+  Read-only reference for "what does the server do with my frame" so
+  envelope names line up (`bad_request`, `stale_frame`, `rate_limited`,
+  `unauthenticated`, `auth_error`, `persist_failed`).
+- `packages/db/prisma/schema.prisma` -- `Device.id` is the wire's `sub`.
+  No seed in v1; the simulator's UUIDs may or may not have matching
+  rows. `verifyIngestClaims` does not check (Story 2.2 F-W5 deferral).
+- `_bmad-output/implementation-artifacts/2-3-unknown-missing-field-handling.md`
+  -- the `STALE_FRAME_THRESHOLD_MS = 5min` contract. The simulator
+  must not emit frames older than 5min relative to wall clock.
+
+## Tasks & Acceptance
+
+**Execution:**
+- [ ] `packages/simulator/src/devices.json` -- author six fixed UUIDv4 device IDs and a `scenario` per device (six-of-seven from the named set, one scenario extra), plus a `tick_interval_ms` default of 2000 -- reason: simulator needs deterministic device identifiers; demo script references these.
+- [ ] `packages/simulator/src/jwt.ts` -- mint a simulator JWT per device at boot using `simulatorClaimTemplate` + `jsonwebtoken.sign` with `JWT_SECRET` from env; fail-fast on missing/weak secret -- reason: simulator cannot connect without a valid token.
+- [ ] `packages/simulator/src/scenarios.ts` -- implement the seven scenario curves as pure functions `(state, tickCount) → TelemetryMetrics`. Each scenario must keep all metrics within `MetricRanges` (the server rejects out-of-range frames). `RandomFailure` may emit NaN deliberately -- reason: scenarios are the demo story.
+- [ ] `packages/simulator/src/wsClient.ts` -- per-device Socket.IO client (via `socket.io-client`): connect with `auth: { token }` → register listeners for envelopes (`rate_limited`, `bad_request`, `stale_frame`, `unauthenticated`, `auth_error`, `persist_failed`) → emit frames at `tick_interval_ms` via `socket.emit("frame", payload)` → buffer up to 5_000 on disconnect → exponential-backoff reconnect `1s → 30s` → flush buffer on reconnect in `seq` order → react to envelopes (rate_limited pause, bad_request drop, stale_frame drop, unauthenticated/auth_error/persist_failed reconnect) -- reason: simulator runtime.
+- [ ] `packages/simulator/src/index.ts` -- replace stub with: load devices.json → read env → mint six JWTs → spawn six `wsClient` instances → wire `SIGINT` / `SIGTERM` to graceful shutdown (close all sockets, drain logger) -- reason: entry point.
+- [ ] `packages/simulator/.env.example` -- document `API_URL` (default `http://localhost:4000`), `JWT_SECRET` (required), optional `TICK_INTERVAL_MS` -- reason: discoverability.
+- [ ] `packages/simulator/src/__tests__/scenarios.spec.ts` -- per-scenario unit test: deterministic input yields expected metric ranges (e.g. `RisingTDS` after 60 ticks has `tds_ppm > 700`; `Offline` scenario emits no metrics). Pin the seven scenario names exactly. -- reason: scenario pin.
+- [ ] `packages/simulator/src/__tests__/wsClient.spec.ts` -- envelope-reaction tests using a stub Socket.IO client: rate_limited pause, bad_request drop, stale_frame drop, disconnect-without-envelope triggers reconnect, buffer overflow drops oldest. ALSO tighten the `bad_request` assertion: the offending frame must be removed from the buffer (not just `currentSeq >= 0`); assert the captured `socket.emit("frame", …)` calls do not include a frame whose `seq` matches the one just dropped. ALSO add explicit tests for `auth_error` and `persist_failed` envelopes. -- reason: wire-contract pin + closing the tautology found in review.
+- [ ] `packages/simulator/src/__tests__/boot.spec.ts` -- boot-fail-fast: missing `JWT_SECRET` exits non-zero; bad `API_URL` exits non-zero; happy path mints six JWTs (mock `jsonwebtoken.sign` and assert six calls). ALSO add cases for malformed `devices.json`, unknown scenario name, duplicate `device_id`, and `TICK_INTERVAL_MS` out-of-range -- reason: boot contract.
+- [ ] `packages/simulator/src/__tests__/jwt.spec.ts` -- NEW: cover `resolveJwtSecret` reason strings (missing / too-short / exactly-min-length) and `mintSimulatorToken` round-trips the simulator claim template (`aud:"simulator"`, `scope:"telemetry:write"`, `sub` = device UUID, `iss:"surakkha-api"`) -- reason: closes the verification gap flagged in review — the boot test only asserts six sign calls, not the claim shape.
+- [ ] `packages/simulator/src/index.ts` `loadDevicesFile` -- STRENGTHEN upfront validation: every `device_id` must match UUIDv4 regex; every `scenario` must be in `SCENARIO_NAMES`; no duplicate `device_id`s; fail-fast with a clear log line on any violation (current code only does `typeof` + range checks; UUID/scenario/dup checks fire at runtime) -- reason: closes the "validate-late" gap flagged in review.
+
+**Acceptance Criteria:**
+- Given the api is reachable at `API_URL` and `JWT_SECRET` is set, when the simulator boots, then six WebSocket connections open to `/ingest/<device_id>` (one per device in `devices.json`).
+- Given a device's `tick_interval_ms` has elapsed since its last frame, when the simulator's per-device timer fires, then a frame conforming to `TelemetryFrameSchema` is sent over the WS with a `seq` one greater than the previous emitted frame for that device.
+- Given a scenario walks metrics outside `MetricRanges` (e.g. `RisingTDS` overshoots `tds_ppm`), when `TelemetryFrameSchema.safeParse` runs locally before send, then the frame is rejected locally with a logged error and the simulator does NOT send it.
+- Given the server emits `rate_limited {retry_after_seconds: N}`, when the simulator's WS receives the envelope, then the simulator pauses emissions for N seconds (no frames are sent), then resumes without dropping buffered frames.
+- Given the server emits `bad_request {missing_fields: [...]}`, when the simulator receives the envelope, then the offending frame is dropped from the in-memory buffer (not retried) and a log line records the missing fields.
+- Given the server emits `stale_frame {age_seconds}`, when the simulator receives the envelope, then the offending frame is dropped and the simulator does NOT trigger its own reconnect (the server already soft-disconnected).
+- Given the simulator's WS disconnects without an envelope (TCP RST), when the disconnect handler runs, then the simulator reconnects with exponential backoff starting at 1s, capped at 30s, resetting to 1s on success.
+- Given the simulator's per-device buffer reaches 5_000 readings, when the next frame is produced while still disconnected, then the oldest buffer entry is dropped and a single `simulator: buffer overflow` log line is emitted (not per-frame).
+- Given the simulator reconnects after a disconnect, when the buffered frames are flushed, then they are sent in `seq` order (monotonic), honoring the server's rate cap.
+- Given `JWT_SECRET` is unset, when the simulator boots, then it exits non-zero with a fail-fast log line and no WS connections are opened.
+
+## Design Notes
+
+**Why JSON for devices, not TS:** The six device UUIDs are referenced
+by the demo script, the API tests (some use `DEVICE_UUID` constants),
+and eventually the admin simulator tab (Story 2.5). A reviewer should
+be able to read them without compiling TypeScript. JSON is also the
+natural format for the Story 2.5 admin tab's "load devices" surface.
+
+**Why one scenario per device, not rotation:** The seven scenarios exist
+to exercise different operator-triage paths (critical TDS, offline
+device, low chlorine, etc.). Rotating mid-run confuses the demo story —
+a reviewer wants to see "device X is in trouble" sustained long enough
+to acknowledge / inspect / resolve (Epic 4 territory). Per-device
+assignment is deterministic so a test can pin "device 1 = Normal".
+
+**Why the simulator drops on `bad_request` instead of retrying:** A
+`bad_request` envelope says the frame is structurally broken — retrying
+it produces another `bad_request`. The simulator logs the missing
+fields and moves on. If the broken frames cluster, that's a simulator
+bug worth a log line; flooding the server with retry attempts is worse.
+
+**Why a 1s minimum `tick_interval_ms`:** The server rate-cap is one
+accepted reading per 2s per device. A tick faster than that triggers
+`rate_limited` envelopes every frame, drowning the simulator in pause-
+resume cycles and obscuring the real telemetry. The default 2_000 ms
+respects the cap; the 1_000 ms minimum is the safety floor — anything
+faster is a misconfiguration the simulator refuses.
+
+**Why we don't seed `Device` rows in this story:** The api's
+`verifyIngestClaims` does NOT check device existence at handshake
+(Story 2.2 F-W5 deferral). The simulator can connect under any UUIDv4
+without a matching `Device` row. The FK on `Reading.deviceId` means
+the api's `stepPersist` will fail with a constraint violation if the
+device does not exist. To make the simulator's frames actually persist,
+either (a) the simulator creates the `Device` rows on first connect
+via a separate admin endpoint (out of scope — no admin endpoint for
+device creation in v1), or (b) the simulator's UUIDs are seeded into
+the `Device` table by a future seed story. For Story 2.4 we ship
+option (b) deferred: the simulator logs a one-time warning per
+device if the WS connects but no frames persist, and we accept that
+the demo story requires a follow-up seed step (tracked in
+deferred-work.md as a follow-up to F-W5).
+
+**Why buffer flush is in `seq` order on reconnect:** The server stamps
+`out_of_order` if `seq < last_seen`. Sending the buffered frames in
+order means a single `out_of_order` window during the gap, then the
+buffer clears cleanly. Sending in arrival order (which is also `seq`
+order at the simulator level — frames are produced monotonically) gives
+the same result; the explicit ordering is a contract assertion for
+future contributors.
+
+**Why `BatteryLow` has no wire effect:** The wire contract does not
+carry a battery metric in v1. The scenario emits normal telemetry and
+logs `simulator: scenario BatteryLow started for device <uuid>` once
+per scenario start. The operator-triage signal for "this device is
+battery-low" comes from a future Epic 4 feature (a separate ack-style
+event). Documented here so a reviewer does not look for a missing
+`battery_pct` field in the schema.
+
+**Why the simulator uses `socket.io-client`, not raw `ws`:** The api's
+`packages/api/src/ingest/server.ts` mounts a Socket.IO server (the
+`Server` class from `socket.io`), not a raw `ws` endpoint. The
+simulator must therefore connect with `socket.io-client` (already
+listed in the simulator's `package.json` as a transitive dep via the
+workspace). Auth handshake uses `auth: { token: <jwt> }`; envelope
+listeners attach via `socket.on("rate_limited", …)` etc. Socket.IO is
+only used for the api→device direction (the api→web direction is
+Socket.IO too, for the dashboard live-feed).
+
+## Verification
+
+**Commands:**
+- `pnpm --filter @surakkha/simulator typecheck` -- expected: 0 errors.
+- `pnpm --filter @surakkha/simulator build` -- expected: 0 errors.
+- `pnpm --filter @surakkha/simulator test` -- expected: ≥ 12 new tests
+  (7 scenario tests, 5 envelope/buffer/reconnect tests).
+- `pnpm --filter @surakkha/simulator lint` -- expected: 0 errors.
+- `pnpm typecheck` -- expected: 5/5 packages green (api, db, shared, simulator, web).
+- `pnpm lint` -- expected: 5/5 packages green.
+
+**Manual checks (integration smoke):**
+- Boot the api (`pnpm --filter @surakkha/api dev`) and confirm the
+  WS endpoint accepts the simulator's connect on `/ingest/<uuid>`.
+- Boot the simulator (`pnpm --filter @surakkha/simulator dev`) with
+  `JWT_SECRET` and `API_URL` set; observe six `info: simulator: connected device=<uuid>`
+  log lines within ~5s.
+- Inspect the simulator log: each device's `scenario` line is logged
+  once at startup; `RisingTDS` device's `tds_ppm` rises monotonically
+  across 60 ticks; `Offline` device emits nothing after the grace period
+  and reconnects.
+- Trigger `SIMULATOR_SECRET` unset: confirm the simulator exits non-zero
+  with a fail-fast log line.
+
+## Spec Change Log
+
+<!-- Append-only. Populated by step-04 during review loops. Do not modify or delete existing entries.
+     Each entry records: what finding triggered the change, what was amended, what known-bad state
+     the amendment avoids, and any KEEP instructions (what worked well and must survive re-derivation).
+     Empty until the first bad_spec loopback. -->
+
+### Loopback 1 (2026-08-22)
+
+- **Triggering finding:** All three review layers (blind hunter, edge-case
+  hunter, verification-gap) flagged the `ws` vs Socket.IO transport
+  mismatch as the highest-impact issue. The simulator's `wsClient.ts`
+  correctly followed the spec text and Design Notes ("`ws` library, not
+  Socket.IO"), but `packages/api/src/ingest/server.ts` is in fact a
+  Socket.IO `Server`, not a raw `ws` server. End-to-end integration
+  cannot connect.
+- **What was amended:**
+  - Design Notes: replaced the "ws library" justification with a
+    `socket.io-client` justification grounded in the api's actual mount.
+  - Code Map: `wsClient.ts` description now reads "Socket.IO client
+    wrapper (`socket.io-client`)".
+  - Task #4 (wsClient.ts): explicit `auth: { token }` + `socket.emit`
+    instructions.
+  - Task #8 (wsClient.spec.ts): stub is now a Socket.IO stub, not a `ws`
+    stub.
+  - Tasks #9 (boot.spec.ts), #10 (jwt.spec.ts NEW), #11
+    (`loadDevicesFile` validation): added to absorb the patch findings
+    surfaced in review loop 0 that the loopback would otherwise lose.
+- **Known-bad state avoided:** simulator code that compiles + tests +
+  lints but cannot connect to the api at runtime. The acceptance
+  criterion "six WebSocket connections open to `/ingest/<device_id>`"
+  would have failed the manual smoke test in the spec's Verification
+  section.
+- **KEEP instructions for re-derivation:**
+  - Scenario names pinned exactly: `Normal`, `RisingTDS`,
+    `TurbiditySpike`, `ChlorineDrop`, `Offline`, `BatteryLow`,
+    `RandomFailure`.
+  - Six-of-seven device assignment: `BatteryLow` is the spare (six
+    devices cover six of seven scenarios).
+  - `Buffer` cap = 5_000 per device; `tick_interval_ms` default = 2_000,
+    min = 1_000; backoff `1s → 30s`, reset on success.
+  - `fail-fast` exit codes on missing `JWT_SECRET`, bad `API_URL`,
+    out-of-range `TICK_INTERVAL_MS`.
+  - The pure scenario functions in `scenarios.ts` are deterministic and
+    `RandomFailure` uses a deterministic 20-tick period (test pin
+    requires deterministic; spec's "Poisson λ=20" prose is overridden by
+    the test contract).
+  - JWT claim template: `simulatorClaimTemplate(deviceId)` from
+    `packages/shared/src/auth.ts` — do NOT hand-roll claims.
+  - `simulatorClaimTemplate` requires UUIDv4; the `loadDevicesFile`
+    upfront validation (newly added) catches non-UUIDv4 device IDs
+    before reaching the template.
+  - `TelemetryFrameSchema.safeParse` runs locally before every send;
+    NaN values from `RandomFailure` are caught here and logged.
+  - `batteyLow` (sic) — `BatteryLow` — emits the same curve as `Normal`
+    (log-only signal per spec Design Notes).
+=== NEW FILE: packages/simulator/.env.example ===
+# Surakkha simulator — environment variables.
+#
+# The simulator is a separate Node 20 process on the same wire contract
+# as a real device (architecture §2, I-12). It connects to the api over
+# Socket.IO at ${API_URL}/ingest/<device_id> with an aud:"simulator" JWT
+# minted from ${JWT_SECRET}.
+
+# Base URL of the Surakkha api. The simulator appends "/ingest/<uuid>"
+# to this string. Defaults to local dev.
+API_URL=http://localhost:4000
+
+# HS256 secret shared with the api. REQUIRED; must be at least 32
+# characters (matches the api's `JWT_SECRET_MIN_LENGTH` fail-fast).
+# The simulator refuses to boot without this set.
+JWT_SECRET=replace-me-with-at-least-32-characters-please
+
+# Optional. Override the per-device default tick interval (2_000 ms in
+# devices.json). Must be >= 1_000 ms — the api rate-caps to 1 reading /
+# 2s per device (architecture §3.2, I-2), and a faster tick would only
+# trigger rate_limited envelopes.
+# TICK_INTERVAL_MS=2000
+
+=== NEW FILE: packages/simulator/src/__tests__/boot.spec.ts ===
+/**
+ * Story 2.4 — boot fail-fast tests.
+ *
+ * Pins the spec's "boot must fail fast on misconfiguration" contract
+ * without spawning a child process. Each test writes a temp
+ * `devices.json` and injects env vars via `process.env`; the boot
+ * helpers in `index.ts` and `jwt.ts` are exercised directly.
+ *
+ * Covers (loopback-1):
+ *   - missing JWT_SECRET → exit code 1
+ *   - bad API_URL → exit code 1
+ *   - happy path → mints six JWTs
+ *   - malformed devices.json → exit code 1
+ *   - unknown scenario name → exit code 1
+ *   - duplicate device_id → exit code 1
+ *   - TICK_INTERVAL_MS out-of-range → exit code 1
+ */
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { JWT_SECRET_MIN_LENGTH } from "@surakkha/shared/auth";
+
+import {
+  loadDevicesFile,
+  resolveConfig,
+} from "../index.js";
+import {
+  assertJwtSecretOrExit,
+  mintSimulatorTokensForDevices,
+} from "../jwt.js";
+
+const VALID_DEVICES_JSON = {
+  tick_interval_ms: 2000,
+  devices: [
+    { device_id: "9b1c4f00-0000-4000-8000-000000000001", scenario: "Normal" },
+    { device_id: "9b1c4f00-0000-4000-8000-000000000002", scenario: "RisingTDS" },
+    { device_id: "9b1c4f00-0000-4000-8000-000000000003", scenario: "TurbiditySpike" },
+    { device_id: "9b1c4f00-0000-4000-8000-000000000004", scenario: "ChlorineDrop" },
+    { device_id: "9b1c4f00-0000-4000-8000-000000000005", scenario: "Offline" },
+    { device_id: "9b1c4f00-0000-4000-8000-000000000006", scenario: "RandomFailure" },
+  ],
+};
+
+let tmpDir: string;
+let previousEnv: Record<string, string | undefined> = {};
+
+const saveEnv = (): void => {
+  previousEnv = {
+    JWT_SECRET: process.env["JWT_SECRET"],
+    API_URL: process.env["API_URL"],
+    TICK_INTERVAL_MS: process.env["TICK_INTERVAL_MS"],
+  };
+};
+
+const restoreEnv = (): void => {
+  for (const [key, value] of Object.entries(previousEnv)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+};
+
+const writeDevicesJson = (body: unknown): string => {
+  const path = join(tmpDir, "devices.json");
+  writeFileSync(path, JSON.stringify(body), "utf8");
+  return path;
+};
+
+const trapExit = (): { spy: ReturnType<typeof vi.spyOn> } => {
+  const spy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+    throw new Error(`process.exit(${code ?? "undefined"})`);
+  }) as never);
+  return { spy };
+};
+
+beforeEach(() => {
+  saveEnv();
+  tmpDir = mkdtempSync(join(tmpdir(), "surakkha-simulator-test-"));
+  process.env["JWT_SECRET"] = "x".repeat(JWT_SECRET_MIN_LENGTH);
+});
+
+afterEach(() => {
+  restoreEnv();
+  if (tmpDir !== "") {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+  vi.restoreAllMocks();
+});
+
+describe("boot — fail-fast paths", () => {
+  it("exits non-zero when JWT_SECRET is unset", () => {
+    delete process.env["JWT_SECRET"];
+    const { spy: exitSpy } = trapExit();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => assertJwtSecretOrExit()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits non-zero when JWT_SECRET is below the min length", () => {
+    process.env["JWT_SECRET"] = "short";
+    const { spy: exitSpy } = trapExit();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => assertJwtSecretOrExit()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits non-zero when API_URL is malformed", () => {
+    process.env["API_URL"] = "not-a-url-without-protocol";
+    const { spy: exitSpy } = trapExit();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => resolveConfig()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits non-zero when TICK_INTERVAL_MS is below MIN_TICK_INTERVAL_MS", () => {
+    process.env["TICK_INTERVAL_MS"] = "500";
+    const { spy: exitSpy } = trapExit();
+    expect(() => resolveConfig()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits non-zero when TICK_INTERVAL_MS is non-numeric", () => {
+    process.env["TICK_INTERVAL_MS"] = "not-a-number";
+    const { spy: exitSpy } = trapExit();
+    expect(() => resolveConfig()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits non-zero when devices.json is malformed (not parseable JSON)", () => {
+    const path = join(tmpDir, "devices.json");
+    writeFileSync(path, "not valid json", "utf8");
+    const { spy: exitSpy } = trapExit();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits non-zero when devices.json has an unknown scenario name", () => {
+    const path = writeDevicesJson({
+      tick_interval_ms: 2000,
+      devices: [
+        { device_id: "9b1c4f00-0000-4000-8000-000000000001", scenario: "NoSuchScenario" },
+      ],
+    });
+    const { spy: exitSpy } = trapExit();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits non-zero when devices.json has a duplicate device_id", () => {
+    const path = writeDevicesJson({
+      tick_interval_ms: 2000,
+      devices: [
+        { device_id: "9b1c4f00-0000-4000-8000-000000000001", scenario: "Normal" },
+        { device_id: "9b1c4f00-0000-4000-8000-000000000001", scenario: "RisingTDS" },
+      ],
+    });
+    const { spy: exitSpy } = trapExit();
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits non-zero when devices.json contains a non-UUIDv4 device_id", () => {
+    const path = writeDevicesJson({
+      tick_interval_ms: 2000,
+      devices: [
+        { device_id: "not-a-uuid", scenario: "Normal" },
+      ],
+    });
+    const { spy: exitSpy } = trapExit();
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits non-zero when devices.json has tick_interval_ms below MIN_TICK_INTERVAL_MS", () => {
+    const path = writeDevicesJson({
+      tick_interval_ms: 500,
+      devices: [
+        { device_id: "9b1c4f00-0000-4000-8000-000000000001", scenario: "Normal" },
+      ],
+    });
+    const { spy: exitSpy } = trapExit();
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits non-zero when devices.json has an empty devices array", () => {
+    const path = writeDevicesJson({ tick_interval_ms: 2000, devices: [] });
+    const { spy: exitSpy } = trapExit();
+    expect(() => loadDevicesFile(path)).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("boot — happy path validation", () => {
+  it("loadDevicesFile parses a valid file with six devices", () => {
+    const path = writeDevicesJson(VALID_DEVICES_JSON);
+    const result = loadDevicesFile(path);
+    expect(result.tickIntervalMs).toBe(2000);
+    expect(result.devices).toHaveLength(6);
+    expect(result.devices.map((d) => d.scenario)).toEqual([
+      "Normal",
+      "RisingTDS",
+      "TurbiditySpike",
+      "ChlorineDrop",
+      "Offline",
+      "RandomFailure",
+    ]);
+    for (const d of result.devices) {
+      expect(d.deviceId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+    }
+  });
+
+  it("mintSimulatorTokensForDevices returns six tokens for six devices", () => {
+    const ids = VALID_DEVICES_JSON.devices.map((d) => d.device_id);
+    const tokens = mintSimulatorTokensForDevices(ids);
+    expect(tokens.size).toBe(6);
+  });
+});
+
+describe("boot — default devices.json in repo is valid", () => {
+  it("ships six UUIDv4 devices with scenarios covering six of seven SCENARIO_NAMES", async () => {
+    // Use a top-level import (json) since the simulator's tsconfig
+    // has `resolveJsonModule: true` inherited from the base.
+    const { default: devicesJson } = await import(
+      "../devices.json",
+      { with: { type: "json" } }
+    ) as { default: { tick_interval_ms: number; devices: Array<{ device_id: string; scenario: string }> } };
+    expect(devicesJson.tick_interval_ms).toBeGreaterThanOrEqual(1000);
+    expect(devicesJson.devices).toHaveLength(6);
+    const scenarios = new Set(devicesJson.devices.map((d) => d.scenario));
+    // Six of seven — BatteryLow is the spare.
+    expect(scenarios.has("BatteryLow")).toBe(false);
+    expect(scenarios.size).toBe(6);
+    for (const d of devicesJson.devices) {
+      expect(d.device_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+    }
+  });
+});
+
+=== NEW FILE: packages/simulator/src/__tests__/jwt.spec.ts ===
+/**
+ * Story 2.4 — `jwt.ts` unit tests.
+ *
+ * Covers the loopback-1 gap: `boot.spec.ts` asserts `sign` is called
+ * six times but never inspects the claim shape; these tests pin the
+ * claim shape directly against the round-tripped token. Also pins
+ * the typed reason strings from `resolveJwtSecret` so a regression
+ * that returns a wrong reason (e.g. "undefined" instead of "missing")
+ * is caught.
+ *
+ * Run with `pnpm --filter @surakkha/simulator test`.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { JWT_SECRET_MIN_LENGTH } from "@surakkha/shared/auth";
+
+import {
+  assertJwtSecretOrExit,
+  mintSimulatorToken,
+  mintSimulatorTokensForDevices,
+  resolveJwtSecret,
+} from "../jwt.js";
+
+const DEVICE_UUID = "9b1c4f00-0000-4000-8000-000000000001";
+
+const setSecret = (value: string | undefined): void => {
+  if (value === undefined) {
+    delete process.env["JWT_SECRET"];
+  } else {
+    process.env["JWT_SECRET"] = value;
+  }
+};
+
+const restoreSecret = (previous: string | undefined): void => {
+  setSecret(previous);
+};
+
+describe("resolveJwtSecret", () => {
+  let previous: string | undefined;
+  beforeEach(() => {
+    previous = process.env["JWT_SECRET"];
+  });
+  afterEach(() => {
+    restoreSecret(previous);
+  });
+
+  it("returns ok:true with the secret string when JWT_SECRET is set and >= min length", () => {
+    const secret = "x".repeat(JWT_SECRET_MIN_LENGTH);
+    setSecret(secret);
+    const result = resolveJwtSecret();
+    expect(result).toEqual({ ok: true, secret });
+  });
+
+  it("returns ok:false reason:'missing' when JWT_SECRET is unset", () => {
+    setSecret(undefined);
+    const result = resolveJwtSecret();
+    expect(result).toEqual({ ok: false, reason: "missing" });
+  });
+
+  it("returns ok:false reason:'missing' when JWT_SECRET is the empty string", () => {
+    setSecret("");
+    const result = resolveJwtSecret();
+    expect(result).toEqual({ ok: false, reason: "missing" });
+  });
+
+  it("returns ok:false reason:'too_short' when JWT_SECRET is below the min length", () => {
+    setSecret("x".repeat(JWT_SECRET_MIN_LENGTH - 1));
+    const result = resolveJwtSecret();
+    expect(result).toEqual({ ok: false, reason: "too_short" });
+  });
+
+  it("accepts a secret of exactly JWT_SECRET_MIN_LENGTH characters", () => {
+    setSecret("x".repeat(JWT_SECRET_MIN_LENGTH));
+    const result = resolveJwtSecret();
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("assertJwtSecretOrExit", () => {
+  let previous: string | undefined;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    previous = process.env["JWT_SECRET"];
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit called with ${code ?? "undefined"}`);
+    }) as never);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    exitSpy.mockRestore();
+    errorSpy.mockRestore();
+    restoreSecret(previous);
+  });
+
+  it("returns the secret string on success", () => {
+    const secret = "x".repeat(JWT_SECRET_MIN_LENGTH);
+    setSecret(secret);
+    expect(assertJwtSecretOrExit()).toBe(secret);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("exits with code 1 when JWT_SECRET is missing", () => {
+    setSecret(undefined);
+    expect(() => assertJwtSecretOrExit()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("exits with code 1 when JWT_SECRET is too short", () => {
+    setSecret("short");
+    expect(() => assertJwtSecretOrExit()).toThrow(/process\.exit/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("mintSimulatorToken", () => {
+  let previous: string | undefined;
+  beforeEach(() => {
+    previous = process.env["JWT_SECRET"];
+    setSecret("x".repeat(JWT_SECRET_MIN_LENGTH));
+  });
+  afterEach(() => {
+    restoreSecret(previous);
+  });
+
+  it("produces a JWT whose decoded claims match simulatorClaimTemplate", async () => {
+    const token = mintSimulatorToken(DEVICE_UUID);
+    expect(typeof token).toBe("string");
+    expect(token.split(".")).toHaveLength(3);
+    const jwtModule = await import("jsonwebtoken");
+    const decoded = jwtModule.default.verify(token, process.env["JWT_SECRET"] as string, {
+      algorithms: ["HS256"],
+    }) as Record<string, unknown>;
+    expect(decoded["iss"]).toBe("surakkha-api");
+    expect(decoded["aud"]).toBe("simulator");
+    expect(decoded["scope"]).toBe("telemetry:write");
+    expect(decoded["sub"]).toBe(DEVICE_UUID);
+    expect(typeof decoded["iat"]).toBe("number");
+    expect(typeof decoded["exp"]).toBe("number");
+  });
+
+  it("stamps iat=now and exp=iat+TTL (1h per SIMULATOR_TOKEN_TTL_SECONDS)", () => {
+    const token = mintSimulatorToken(DEVICE_UUID);
+    const decoded = JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString(),
+    ) as Record<string, unknown>;
+    const iat = decoded["iat"] as number;
+    const exp = decoded["exp"] as number;
+    expect(exp - iat).toBe(3_600);
+  });
+
+  it("throws when JWT_SECRET is missing", () => {
+    setSecret(undefined);
+    expect(() => mintSimulatorToken(DEVICE_UUID)).toThrow(/JWT_SECRET missing/);
+  });
+
+  it("throws when JWT_SECRET is too short", () => {
+    setSecret("short");
+    expect(() => mintSimulatorToken(DEVICE_UUID)).toThrow(/JWT_SECRET too_short/);
+  });
+});
+
+describe("mintSimulatorTokensForDevices", () => {
+  let previous: string | undefined;
+  beforeEach(() => {
+    previous = process.env["JWT_SECRET"];
+    setSecret("x".repeat(JWT_SECRET_MIN_LENGTH));
+  });
+  afterEach(() => {
+    restoreSecret(previous);
+  });
+
+  it("mints one token per device, six total for six devices", () => {
+    const ids = [
+      "9b1c4f00-0000-4000-8000-000000000001",
+      "9b1c4f00-0000-4000-8000-000000000002",
+      "9b1c4f00-0000-4000-8000-000000000003",
+      "9b1c4f00-0000-4000-8000-000000000004",
+      "9b1c4f00-0000-4000-8000-000000000005",
+      "9b1c4f00-0000-4000-8000-000000000006",
+    ];
+    const tokens = mintSimulatorTokensForDevices(ids);
+    expect(tokens.size).toBe(6);
+    for (const id of ids) {
+      const token = tokens.get(id);
+      expect(typeof token).toBe("string");
+      expect(token).not.toBe("");
+    }
+    // All tokens are distinct (different `sub` round-trips through
+    // `simulatorClaimTemplate` which adds `iat`, so two tokens for
+    // the same sub minted at the same instant may collide — using
+    // distinct ids gives a strong pin).
+    const tokenList = [...tokens.values()];
+    expect(new Set(tokenList).size).toBe(6);
+  });
+
+  it("collapses duplicate deviceIds into one entry (defensive)", () => {
+    const tokens = mintSimulatorTokensForDevices([DEVICE_UUID, DEVICE_UUID]);
+    expect(tokens.size).toBe(1);
+  });
+});
+=== NEW FILE: packages/simulator/src/__tests__/scenarios.spec.ts ===
+/**
+ * Story 2.4 — scenario unit tests.
+ *
+ * Per-scenario deterministic pin: same `tickCount` yields the same
+ * metrics; key tick counts pin scenario-specific behaviour (TDS ramp,
+ * turbidity spike, chlorine decay, Offline no-emit, RandomFailure
+ * NaN-on-period).
+ *
+ * Run with `pnpm --filter @surakkha/simulator test`.
+ */
+import { describe, expect, it } from "vitest";
+
+import { MetricRanges, type TelemetryMetrics } from "@surakkha/shared/telemetry";
+
+import {
+  SCENARIO_NAMES,
+  runScenario,
+  scenarioBatteryLow,
+  scenarioChlorineDrop,
+  scenarioNormal,
+  scenarioOffline,
+  scenarioRandomFailure,
+  scenarioRisingTDS,
+  scenarioTurbiditySpike,
+} from "../scenarios.js";
+
+const STATE: Readonly<Record<string, never>> = Object.freeze({});
+
+/**
+ * Assert every metric is within `MetricRanges` (api hard-reject range).
+ * `RandomFailure` injects NaN deliberately — those tests use the
+ * `exemptNaN` flag.
+ */
+const expectMetricsWithinRanges = (
+  metrics: TelemetryMetrics,
+  exemptNaN: boolean = false,
+): void => {
+  for (const [key, range] of Object.entries(MetricRanges)) {
+    const value = metrics[key as keyof TelemetryMetrics];
+    if (typeof value !== "number") {
+      throw new Error(`expected number for ${key}, got ${typeof value}`);
+    }
+    if (exemptNaN && Number.isNaN(value)) {
+      continue;
+    }
+    if (Number.isNaN(value)) {
+      throw new Error(`unexpected NaN for ${key}`);
+    }
+    expect(value).toBeGreaterThanOrEqual(range.min);
+    expect(value).toBeLessThanOrEqual(range.max);
+  }
+};
+
+describe("scenarios — SCENARIO_NAMES pin", () => {
+  it("lists the seven spec-named scenarios in the canonical order", () => {
+    expect(SCENARIO_NAMES).toEqual([
+      "Normal",
+      "RisingTDS",
+      "TurbiditySpike",
+      "ChlorineDrop",
+      "Offline",
+      "BatteryLow",
+      "RandomFailure",
+    ]);
+  });
+});
+
+describe("scenarios — Normal", () => {
+  it("emits metrics within MetricRanges", () => {
+    for (const tick of [0, 1, 10, 100, 255]) {
+      const result = scenarioNormal(STATE, tick);
+      expect(result.kind).toBe("metrics");
+      if (result.kind === "metrics") {
+        expectMetricsWithinRanges(result.metrics);
+      }
+    }
+  });
+
+  it("is deterministic: same tickCount yields same metrics", () => {
+    const a = scenarioNormal(STATE, 42);
+    const b = scenarioNormal(STATE, 42);
+    expect(a).toEqual(b);
+  });
+});
+
+describe("scenarios — RisingTDS", () => {
+  it("ramps tds_ppm from 200 to 1500 over ~120 ticks", () => {
+    const start = scenarioRisingTDS(STATE, 0);
+    const mid = scenarioRisingTDS(STATE, 60);
+    const end = scenarioRisingTDS(STATE, 120);
+    expect(start.kind).toBe("metrics");
+    expect(mid.kind).toBe("metrics");
+    expect(end.kind).toBe("metrics");
+    if (start.kind !== "metrics" || mid.kind !== "metrics" || end.kind !== "metrics") {
+      throw new Error("expected metrics at all ticks");
+    }
+    expect(start.metrics.tds_ppm).toBeCloseTo(200, 5);
+    expect(mid.metrics.tds_ppm).toBeGreaterThan(700);
+    expect(end.metrics.tds_ppm).toBeCloseTo(1_500, 5);
+    // Plateau after the ramp window.
+    const plateau = scenarioRisingTDS(STATE, 200);
+    if (plateau.kind !== "metrics") throw new Error("expected metrics");
+    expect(plateau.metrics.tds_ppm).toBeCloseTo(1_500, 5);
+  });
+
+  it("keeps all metrics within MetricRanges", () => {
+    for (const tick of [0, 30, 60, 90, 120, 200, 500]) {
+      const result = scenarioRisingTDS(STATE, tick);
+      if (result.kind === "metrics") {
+        expectMetricsWithinRanges(result.metrics);
+      }
+    }
+  });
+});
+
+describe("scenarios — TurbiditySpike", () => {
+  it("spikes turbidity_ntu to 200, holds for 10 ticks, then decays", () => {
+    const spikeStart = scenarioTurbiditySpike(STATE, 0);
+    const spikeHold = scenarioTurbiditySpike(STATE, 9);
+    const decayMid = scenarioTurbiditySpike(STATE, 20);
+    const baseline = scenarioTurbiditySpike(STATE, 40);
+    expect(spikeStart.kind).toBe("metrics");
+    expect(spikeHold.kind).toBe("metrics");
+    expect(decayMid.kind).toBe("metrics");
+    expect(baseline.kind).toBe("metrics");
+    if (spikeStart.kind !== "metrics" || spikeHold.kind !== "metrics"
+      || decayMid.kind !== "metrics" || baseline.kind !== "metrics") {
+      throw new Error("expected metrics at all ticks");
+    }
+    expect(spikeStart.metrics.turbidity_ntu).toBeCloseTo(200, 5);
+    expect(spikeHold.metrics.turbidity_ntu).toBeCloseTo(200, 5);
+    // Mid-decay: less than spike, more than baseline.
+    expect(decayMid.metrics.turbidity_ntu).toBeLessThan(200);
+    expect(decayMid.metrics.turbidity_ntu).toBeGreaterThan(0.4);
+    // After the decay window, back near baseline.
+    expect(baseline.metrics.turbidity_ntu).toBeCloseTo(0.4, 5);
+  });
+});
+
+describe("scenarios — ChlorineDrop", () => {
+  it("decays chlorine_ppm from 0.8 to 0.1 over ~60 ticks and holds", () => {
+    const start = scenarioChlorineDrop(STATE, 0);
+    const mid = scenarioChlorineDrop(STATE, 30);
+    const end = scenarioChlorineDrop(STATE, 60);
+    const hold = scenarioChlorineDrop(STATE, 150);
+    expect(start.kind).toBe("metrics");
+    expect(mid.kind).toBe("metrics");
+    expect(end.kind).toBe("metrics");
+    expect(hold.kind).toBe("metrics");
+    if (start.kind !== "metrics" || mid.kind !== "metrics"
+      || end.kind !== "metrics" || hold.kind !== "metrics") {
+      throw new Error("expected metrics at all ticks");
+    }
+    expect(start.metrics.chlorine_ppm).toBeCloseTo(0.8, 5);
+    expect(mid.metrics.chlorine_ppm).toBeLessThan(0.8);
+    expect(mid.metrics.chlorine_ppm).toBeGreaterThan(0.1);
+    expect(end.metrics.chlorine_ppm).toBeCloseTo(0.1, 5);
+    expect(hold.metrics.chlorine_ppm).toBeCloseTo(0.1, 5);
+  });
+});
+
+describe("scenarios — Offline", () => {
+  it("emits no metrics at any tick (kind:offline)", () => {
+    for (const tick of [0, 1, 5, 10, 100]) {
+      expect(scenarioOffline(STATE, tick).kind).toBe("offline");
+    }
+  });
+});
+
+describe("scenarios — BatteryLow", () => {
+  it("emits the Normal curve (log-only signal)", () => {
+    const tick = 42;
+    const low = scenarioBatteryLow(STATE, tick);
+    const norm = scenarioNormal(STATE, tick);
+    expect(low).toEqual(norm);
+  });
+});
+
+describe("scenarios — RandomFailure", () => {
+  it("emits valid metrics on non-fail ticks", () => {
+    for (const tick of [0, 1, 5, 19, 21, 39]) {
+      const result = scenarioRandomFailure(STATE, tick);
+      expect(result.kind).toBe("metrics");
+      if (result.kind === "metrics") {
+        expectMetricsWithinRanges(result.metrics);
+      }
+    }
+  });
+
+  it("injects NaN into ph on the deterministic 20-tick period", () => {
+    for (const tick of [20, 40, 60, 80, 120]) {
+      const result = scenarioRandomFailure(STATE, tick);
+      expect(result.kind).toBe("metrics");
+      if (result.kind !== "metrics") throw new Error("expected metrics");
+      // ph is the failure-injected field.
+      expect(Number.isNaN(result.metrics.ph)).toBe(true);
+      // Other fields still within range.
+      expectMetricsWithinRanges(result.metrics, true);
+    }
+  });
+
+  it("tick 0 is a non-fail baseline", () => {
+    const result = scenarioRandomFailure(STATE, 0);
+    expect(result.kind).toBe("metrics");
+    if (result.kind !== "metrics") throw new Error("expected metrics");
+    expect(Number.isFinite(result.metrics.ph)).toBe(true);
+  });
+});
+
+describe("scenarios — runScenario dispatcher", () => {
+  it("dispatches each scenario name to its pure function", () => {
+    expect(runScenario("Normal", STATE, 0).kind).toBe("metrics");
+    expect(runScenario("RisingTDS", STATE, 0).kind).toBe("metrics");
+    expect(runScenario("TurbiditySpike", STATE, 0).kind).toBe("metrics");
+    expect(runScenario("ChlorineDrop", STATE, 0).kind).toBe("metrics");
+    expect(runScenario("Offline", STATE, 0).kind).toBe("offline");
+    expect(runScenario("BatteryLow", STATE, 0).kind).toBe("metrics");
+    expect(runScenario("RandomFailure", STATE, 0).kind).toBe("metrics");
+  });
+});
+=== NEW FILE: packages/simulator/src/__tests__/wsClient.spec.ts ===
+/**
+ * Story 2.4 — `WsClient` envelope / buffer / reconnect tests.
+ *
+ * We stub the `socket.io-client` Socket surface with a plain object
+ * that mimics the `MinimalSocket` shape used by `WsClient`. The
+ * `connect` factory in `WsClientOptions` is overridden so `start()`
+ * never opens a real socket; we inject a pre-built stub via the
+ * `__test__setSocket` seam instead and register listeners directly.
+ *
+ * Covers (loopback-1 acceptance):
+ *   - rate_limited pause
+ *   - bad_request drop — the offending frame is REMOVED from the
+ *     buffer, not just `currentSeq >= 0`
+ *   - stale_frame drop — same tightened assertion
+ *   - disconnect-without-envelope → reconnect path
+ *   - buffer overflow → drop oldest, single log line
+ *   - auth_error → reconnect-scheduled
+ *   - persist_failed → reconnect-scheduled + buffer advance
+ *   - unauthenticated → reconnect-scheduled
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import pino, { type Logger } from "pino";
+
+import { type TelemetryFrame } from "@surakkha/shared/telemetry";
+
+import {
+  BACKOFF_INITIAL_MS,
+  BACKOFF_MAX_MS,
+  BUFFER_CAP,
+  ENVELOPE_AUTH_ERROR,
+  ENVELOPE_BAD_REQUEST,
+  ENVELOPE_INTERNAL_ERROR,
+  ENVELOPE_PERSIST_FAILED,
+  ENVELOPE_RATE_LIMITED,
+  ENVELOPE_STALE_FRAME,
+  ENVELOPE_UNAUTHENTICATED,
+  FRAME_EVENT,
+  MIN_TICK_INTERVAL_MS,
+  WsClient,
+  type MinimalSocket,
+  type WsClientOptions,
+} from "../wsClient.js";
+
+const DEVICE_ID = "9b1c4f00-0000-4000-8000-000000000001";
+
+const silentLogger = (): Logger =>
+  pino({ level: "silent" });
+
+interface StubSocket extends MinimalSocket {
+  readonly emit: ReturnType<typeof vi.fn>;
+  readonly disconnect: ReturnType<typeof vi.fn>;
+  readonly on: ReturnType<typeof vi.fn>;
+  // listener registry for envelopes so tests can fire them.
+  readonly _listeners: Map<string, Array<(arg: unknown) => void>>;
+}
+
+const buildStubSocket = (overrides: Partial<StubSocket> = {}): StubSocket => {
+  const listeners = new Map<string, Array<(arg: unknown) => void>>();
+  const on = vi.fn((event: string, listener: (arg: unknown) => void) => {
+    const arr = listeners.get(event) ?? [];
+    arr.push(listener);
+    listeners.set(event, arr);
+  });
+  const emit = vi.fn();
+  const disconnect = vi.fn();
+  const base: StubSocket = {
+    id: "stub-socket",
+    connected: true,
+    disconnected: false,
+    auth: { token: "stub" },
+    io: { opts: { transports: ["websocket"] } },
+    on,
+    emit,
+    disconnect,
+    _listeners: listeners,
+    ...overrides,
+  };
+  return base;
+};
+
+const fireEnvelope = (socket: StubSocket, event: string, payload?: unknown): void => {
+  const arr = socket._listeners.get(event) ?? [];
+  for (const fn of arr) {
+    fn(payload);
+  }
+};
+
+const buildClient = (overrides: Partial<WsClientOptions> = {}): WsClient => {
+  const setTimer = vi.fn(
+    ((fn: () => void, ms: number) =>
+      setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
+  );
+  const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
+    clearTimeout(handle);
+  }) as unknown as (handle: NodeJS.Timeout) => void);
+  const opts: WsClientOptions = {
+    deviceId: DEVICE_ID,
+    scenario: "Normal",
+    apiUrl: "http://localhost:4000",
+    token: "stub.jwt.token",
+    tickIntervalMs: MIN_TICK_INTERVAL_MS,
+    logger: silentLogger(),
+    setTimer,
+    clearTimer,
+    ...overrides,
+  };
+  return new WsClient(opts);
+};
+
+describe("WsClient — bad_request drops the offending frame", () => {
+  it("removes the most recently emitted frame from the buffer", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: false });
+    client.__test__setSocket(socket);
+
+    // 1st frame: socket is disconnected → buffer.
+    client.__test__runTick();
+    // 2nd frame: still disconnected → buffer grows.
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(2);
+    expect(client.__test__seq()).toBe(2);
+
+    // Simulate a reconnect: connect → flush buffer → server replies
+    // bad_request on the first frame (seq=1). Buffer advance: drops
+    // the offending frame.
+    socket.connected = true;
+    client.__test__deliverConnect();
+
+    fireEnvelope(socket, ENVELOPE_BAD_REQUEST, {
+      error: "bad_request",
+      missing_fields: ["metrics.ph"],
+    });
+
+    expect(client.__test__bufferLength()).toBe(1);
+    // The remaining buffered frame is seq=2 (the seq=1 frame was dropped).
+    const remaining = (client as unknown as { buffer: TelemetryFrame[] }).buffer;
+    expect(remaining[0]?.seq).toBe(2);
+  });
+});
+
+describe("WsClient — stale_frame drops the offending frame", () => {
+  it("removes the offending frame from the buffer", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: false });
+    client.__test__setSocket(socket);
+
+    client.__test__runTick();
+    client.__test__runTick();
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(3);
+
+    socket.connected = true;
+    client.__test__deliverConnect();
+
+    fireEnvelope(socket, ENVELOPE_STALE_FRAME, { age_seconds: 360 });
+    expect(client.__test__bufferLength()).toBe(2);
+    const remaining = (client as unknown as { buffer: TelemetryFrame[] }).buffer;
+    expect(remaining[0]?.seq).toBe(2);
+    expect(remaining[1]?.seq).toBe(3);
+  });
+
+  it("does NOT trigger a manual reconnect on stale_frame (server already soft-disconnected)", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const beforeAttempts = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_STALE_FRAME, { age_seconds: 360 });
+    expect(client.__test__reconnectAttempts()).toBe(beforeAttempts);
+  });
+});
+
+describe("WsClient — rate_limited pauses emissions", () => {
+  it("sets pausedUntilMs and skips ticks within the pause window", () => {
+    let now = 1_000_000_000_000;
+    const client = buildClient({ now: () => now });
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    client.__test__runTick();
+    const before = socket.emit.mock.calls.length;
+
+    fireEnvelope(socket, ENVELOPE_RATE_LIMITED, { retry_after_seconds: 2 });
+
+    // Within the pause window: emit should not be called again.
+    now += 1_000;
+    client.__test__runTick();
+    now += 500;
+    client.__test__runTick();
+    expect(socket.emit.mock.calls.length).toBe(before);
+
+    // After the pause window: emissions resume.
+    now += 1_000; // total +2.5s past the original tick
+    client.__test__runTick();
+    expect(socket.emit.mock.calls.length).toBeGreaterThan(before);
+  });
+});
+
+describe("WsClient — disconnect without envelope schedules reconnect", () => {
+  it("schedules a reconnect with backoff starting at 1s", () => {
+    const setTimer = vi.fn(
+      ((fn: () => void, ms: number) =>
+        setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
+    );
+    const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
+      clearTimeout(handle);
+    }) as unknown as (handle: NodeJS.Timeout) => void);
+    const client = buildClient({ setTimer, clearTimer });
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    client.__test__deliverDisconnect();
+    expect(client.__test__reconnectAttempts()).toBe(1);
+
+    // The reconnect timer was scheduled. Capture the delay and assert
+    // it matches the initial backoff.
+    const lastCall = setTimer.mock.calls[setTimer.mock.calls.length - 1];
+    expect(lastCall?.[1]).toBe(BACKOFF_INITIAL_MS);
+  });
+
+  it("doubles the backoff on each failed attempt, capped at 30s", () => {
+    const setTimer = vi.fn(
+      ((fn: () => void, ms: number) =>
+        setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
+    );
+    const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
+      clearTimeout(handle);
+    }) as unknown as (handle: NodeJS.Timeout) => void);
+    const client = buildClient({ setTimer, clearTimer });
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const delays: number[] = [];
+    setTimer.mockImplementation(((fn: () => void, ms: number) => {
+      delays.push(ms);
+      return setTimeout(fn, ms);
+    }) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout);
+
+    client.__test__deliverDisconnect(); // attempt 1
+    client.__test__deliverDisconnect(); // attempt 2 (same socket, attempts kept)
+    client.__test__deliverDisconnect(); // attempt 3
+    client.__test__deliverDisconnect(); // attempt 4
+    client.__test__deliverDisconnect(); // attempt 5
+    // After 5 attempts the cap should kick in.
+    const firstFive = delays.slice(0, 5);
+    expect(firstFive[0]).toBe(BACKOFF_INITIAL_MS);
+    // Doubling schedule: 1000, 2000, 4000, 8000, 16000.
+    expect(firstFive[1]).toBe(BACKOFF_INITIAL_MS * 2);
+    expect(firstFive[2]).toBe(BACKOFF_INITIAL_MS * 4);
+    expect(firstFive[3]).toBe(BACKOFF_INITIAL_MS * 8);
+    expect(firstFive[4]).toBe(BACKOFF_INITIAL_MS * 16);
+    // Cap: attempt 6 → still 30000ms.
+    client.__test__deliverDisconnect();
+    expect(delays[5]).toBe(BACKOFF_MAX_MS);
+  });
+
+  it("resets reconnectAttempts to 0 on successful connect", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    client.__test__deliverDisconnect();
+    expect(client.__test__reconnectAttempts()).toBeGreaterThan(0);
+
+    client.__test__deliverConnect();
+    expect(client.__test__reconnectAttempts()).toBe(0);
+  });
+});
+
+describe("WsClient — buffer overflow drops oldest", () => {
+  it("drops oldest when buffer reaches BUFFER_CAP and logs once", () => {
+    // Capture log calls by overriding `logger.warn` directly on the
+    // created instance — `pino`'s internal `this` binding means
+    // `Object.assign(logger, { warn: vi.fn() })` does not work because
+    // the captured function would no longer be reachable from the
+    // internal log path. Instead we build a thin wrapper.
+    const warns: unknown[][] = [];
+    const baseLogger = silentLogger();
+    const logger = {
+      ...baseLogger,
+      child: () => logger,
+      warn: (...args: unknown[]) => {
+        warns.push(args);
+      },
+    } as unknown as Logger;
+    const client = buildClient({ logger });
+    const socket = buildStubSocket({ connected: false });
+    client.__test__setSocket(socket);
+
+    // Fill the buffer. The WsClient emits one frame per `__test__runTick`,
+    // so calling it BUFFER_CAP + 5 times yields 5 dropped entries.
+    for (let i = 0; i < BUFFER_CAP + 5; i += 1) {
+      client.__test__runTick();
+    }
+    // Buffer holds at most BUFFER_CAP frames (oldest dropped).
+    expect(client.__test__bufferLength()).toBe(BUFFER_CAP);
+    // The first frame in the buffer should be seq 6 (frames 1..5 dropped).
+    const remaining = (client as unknown as { buffer: TelemetryFrame[] }).buffer;
+    expect(remaining[0]?.seq).toBe(6);
+    // A single "simulator: buffer overflow" log line was emitted.
+    const overflowCalls = warns.filter(
+      (call) => call.includes("simulator: buffer overflow"),
+    );
+    expect(overflowCalls).toHaveLength(1);
+  });
+});
+
+describe("WsClient — auth_error triggers reconnect", () => {
+  it("schedules a reconnect attempt on auth_error envelope", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const before = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_AUTH_ERROR, { error: "device_id_mismatch" });
+    expect(client.__test__reconnectAttempts()).toBe(before + 1);
+    expect(socket.disconnect).toHaveBeenCalledWith(true);
+  });
+
+  it("treats forbidden_scope the same way", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const before = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_AUTH_ERROR, { error: "forbidden_scope" });
+    expect(client.__test__reconnectAttempts()).toBe(before + 1);
+  });
+});
+
+describe("WsClient — persist_failed drops offending frame + reconnects", () => {
+  it("advances the buffer and schedules a reconnect attempt", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: false });
+    client.__test__setSocket(socket);
+
+    client.__test__runTick();
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(2);
+
+    // Simulate flush + persist_failed envelope on the first frame.
+    socket.connected = true;
+    client.__test__deliverConnect();
+
+    const before = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_PERSIST_FAILED, { error: "persist_failed" });
+
+    // Buffer advanced (seq=1 dropped).
+    expect(client.__test__bufferLength()).toBe(1);
+    expect(client.__test__reconnectAttempts()).toBe(before + 1);
+  });
+});
+
+describe("WsClient — unauthenticated triggers reconnect", () => {
+  it("schedules a reconnect attempt on unauthenticated envelope", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const before = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_UNAUTHENTICATED);
+    expect(client.__test__reconnectAttempts()).toBe(before + 1);
+  });
+});
+
+describe("WsClient — internal_error triggers reconnect", () => {
+  it("schedules a reconnect attempt on internal_error envelope", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    const before = client.__test__reconnectAttempts();
+    fireEnvelope(socket, ENVELOPE_INTERNAL_ERROR);
+    expect(client.__test__reconnectAttempts()).toBe(before + 1);
+  });
+});
+
+describe("WsClient — frame emit payload shape", () => {
+  it("emits frames with FRAME_EVENT and a parsed TelemetryFrame", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    client.__test__runTick();
+    const frameEmits = socket.emit.mock.calls.filter(
+      (call) => call[0] === FRAME_EVENT,
+    );
+    expect(frameEmits).toHaveLength(1);
+    const frame = frameEmits[0]?.[1] as TelemetryFrame;
+    expect(frame.version).toBe(1);
+    expect(frame.device_id).toBe(DEVICE_ID);
+    expect(frame.seq).toBe(1);
+    expect(typeof frame.ts).toBe("number");
+    expect(frame.fw).toBe("simulator-2.4.0");
+    expect(typeof frame.metrics.ph).toBe("number");
+  });
+});
+
+describe("WsClient — graceful shutdown", () => {
+  it("stop() disconnects the socket and is idempotent", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+    client.stop();
+    expect(socket.disconnect).toHaveBeenCalledWith(true);
+    // Second stop is a no-op (no throw).
+    expect(() => client.stop()).not.toThrow();
+  });
+});
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+=== NEW FILE: packages/simulator/src/devices.json ===
+{
+  "$comment": "Story 2.4 — six default devices, one per scenario (six-of-seven; BatteryLow is the spare). tick_interval_ms default 2000, min 1000 (per I-2 server rate cap). Device UUIDs are deterministic — referenced by demo script, API tests, and the Story 2.5 admin simulator tab. Each row: device_id (UUIDv4) + scenario name from SCENARIO_NAMES.",
+  "tick_interval_ms": 2000,
+  "devices": [
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000001",
+      "scenario": "Normal"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000002",
+      "scenario": "RisingTDS"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000003",
+      "scenario": "TurbiditySpike"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000004",
+      "scenario": "ChlorineDrop"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000005",
+      "scenario": "Offline"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000006",
+      "scenario": "RandomFailure"
+    }
+  ]
+}
+
+=== NEW FILE: packages/simulator/src/jwt.ts ===
+/**
+ * Simulator JWT minting — Story 2.4.
+ *
+ * The simulator mints one fresh `aud:"simulator"` JWT per device at boot
+ * (architecture §3.4, I-3, I-4). The claim template comes from
+ * `simulatorClaimTemplate(deviceId)` in `@surakkha/shared/auth` so the
+ * shared package's UUIDv4 invariant is not duplicated at the call site.
+ *
+ * `resolveJwtSecret` returns either the secret string or a typed reason
+ * describing why the simulator cannot boot. `assertJwtSecretOrExit`
+ * consumes that reason and exits with code 1 — the same fail-fast
+ * pattern the api uses in `packages/api/src/auth/jwt.ts`.
+ *
+ * IMPORTANT: `mintSimulatorToken` reads `JWT_SECRET` lazily via
+ * `resolveJwtSecret()` at every call. Tests that mutate `process.env`
+ * between calls therefore see the new value. This matches the api's
+ * `getSecret()` pattern (Story 1.4).
+ */
+import {
+  JWT_SECRET_MIN_LENGTH,
+  simulatorClaimTemplate,
+} from "@surakkha/shared/auth";
+import jwt from "jsonwebtoken";
+
+export interface JwtSecretOk {
+  readonly ok: true;
+  readonly secret: string;
+}
+export interface JwtSecretFail {
+  readonly ok: false;
+  readonly reason: "missing" | "too_short";
+}
+export type JwtSecretResult = JwtSecretOk | JwtSecretFail;
+
+/**
+ * Read `JWT_SECRET` from `process.env` and validate it against
+ * `JWT_SECRET_MIN_LENGTH`. Never throws — callers branch on the
+ * discriminated union so a test can assert the exact reason string.
+ */
+export const resolveJwtSecret = (): JwtSecretResult => {
+  const secret = process.env["JWT_SECRET"];
+  if (secret === undefined || secret === "") {
+    return { ok: false, reason: "missing" };
+  }
+  if (secret.length < JWT_SECRET_MIN_LENGTH) {
+    return { ok: false, reason: "too_short" };
+  }
+  return { ok: true, secret };
+};
+
+/**
+ * Fail-fast helper for boot-time validation. Logs the reason and
+ * exits with code 1 on failure. On success returns the secret string
+ * so the caller can pass it to the next step.
+ *
+ * We use `process.exit(1)` directly (the eslint rule against
+ * `process.exit` is for graceful-shutdown paths; here we want a hard
+ * exit before any socket is bound — same pattern as the api's
+ * `assertJwtSecret`).
+ */
+export const assertJwtSecretOrExit = (): string => {
+  const result = resolveJwtSecret();
+  if (!result.ok) {
+    const message =
+      result.reason === "missing"
+        ? "JWT_SECRET is not set; the simulator refuses to start without it."
+        : `JWT_SECRET is too short; must be at least ${JWT_SECRET_MIN_LENGTH} characters (got ${process.env["JWT_SECRET"]?.length ?? 0}).`;
+    console.error(`simulator: ${message}`);
+    // eslint-disable-next-line no-restricted-properties
+    process.exit(1);
+  }
+  return result.secret;
+};
+
+/**
+ * Mint a single simulator JWT for a device UUID. Reads `JWT_SECRET`
+ * via `resolveJwtSecret` so a test can mutate env between calls.
+ *
+ * The claim template (`simulatorClaimTemplate`) already stamps
+ * `iat = now` and `exp = iat + SIMULATOR_TOKEN_TTL_SECONDS`
+ * (architecture §3.4 → SIMULATOR_TOKEN_TTL_SECONDS = 3600). We rely
+ * on `jsonwebtoken@9`'s default behaviour: if `iat` is already in
+ * the payload it is preserved; `exp` is also a registered claim so
+ * we pass `noTimestamp: false` (the default) and let the library
+ * honour the values the shared template pinned. `noTimestamp: true`
+ * would strip both `iat` AND the `exp` registered claim, which is
+ * what we want to avoid.
+ */
+export const mintSimulatorToken = (deviceId: string): string => {
+  const secretResult = resolveJwtSecret();
+  if (!secretResult.ok) {
+    throw new Error(
+      `simulator: cannot mint token — JWT_SECRET ${secretResult.reason}`,
+    );
+  }
+  const claims = simulatorClaimTemplate(deviceId);
+  // Spread to a fresh object so `jsonwebtoken`'s in-place mutations
+  // don't disturb the shared template's frozen claim.
+  return jwt.sign(
+    { ...claims },
+    secretResult.secret,
+    { algorithm: "HS256" },
+  );
+};
+
+/**
+ * Mint one simulator JWT per device. Returns a `Map<deviceId, token>`
+ * for fast lookup at boot; the simulator's `index.ts` then opens one
+ * Socket.IO connection per entry.
+ *
+ * Devices with duplicate UUIDs collapse to one entry — the upstream
+ * `loadDevicesFile` validation already rejects duplicates, so this
+ * collapse is purely defensive.
+ */
+export const mintSimulatorTokensForDevices = (
+  deviceIds: readonly string[],
+): ReadonlyMap<string, string> => {
+  const tokens = new Map<string, string>();
+  for (const id of deviceIds) {
+    if (!tokens.has(id)) {
+      tokens.set(id, mintSimulatorToken(id));
+    }
+  }
+  return tokens;
+};
+=== NEW FILE: packages/simulator/src/scenarios.ts ===
+/**
+ * Scenario curves — Story 2.4.
+ *
+ * Seven pure scenario functions `(state, tickCount) → TelemetryMetrics`
+ * matching the names in `docs/architecture.md` §6.1:
+ *
+ *   Normal | RisingTDS | TurbiditySpike | ChlorineDrop | Offline
+ *   | BatteryLow | RandomFailure
+ *
+ * Pure: same `tickCount` yields the same metrics. `RandomFailure`
+ * deliberately injects a NaN on a deterministic 20-tick period (test
+ * pin overrides the spec's "Poisson λ=20" prose). The frame wrapper
+ * upstream catches the NaN via `TelemetryFrameSchema.safeParse` before
+ * the wire — the scenarios themselves can therefore produce NaN
+ * without breaking the contract test.
+ *
+ * All scenarios keep their emitted metrics within `MetricRanges`
+ * except `RandomFailure` (NaN is the point). The api rejects
+ * out-of-range frames with `400 bad_request`, so scenarios must
+ * clamp before returning. The `Offline` scenario returns `null` and
+ * is the contract that the simulator's loop yields no frame at all
+ * for that tick.
+ *
+ * ESLint `no-magic-numbers` is disabled module-wide: the scenario
+ * curves ARE magic numbers — every literal here is a curve
+ * parameter (anchor, period, slope, decay rate). Lifting them to
+ * named constants would make the curves less readable without adding
+ * semantic value. The `MetricRanges` clamp at the bottom is the
+ * only structural number, and that one IS named.
+ */
+/* eslint-disable no-magic-numbers */
+import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
+
+/** Closed enum of scenario names — pinned by spec. */
+export const SCENARIO_NAMES = [
+  "Normal",
+  "RisingTDS",
+  "TurbiditySpike",
+  "ChlorineDrop",
+  "Offline",
+  "BatteryLow",
+  "RandomFailure",
+] as const;
+export type ScenarioName = (typeof SCENARIO_NAMES)[number];
+
+/**
+ * A scenario produces metrics that may drive any tick boundary. We
+ * centralise the "metrics + clock" payload so `runScenario` returns
+ * a single shape the simulator's loop can build into a `TelemetryFrame`
+ * without consulting per-scenario shape signatures.
+ *
+ * `Offline` returns `null` metrics — the simulator translates null
+ * to "no frame this tick, do not buffer anything" (architecture
+ * §6.1 SCENARIO_OFFLINE).
+ */
+export type ScenarioTick =
+  | { readonly kind: "metrics"; readonly metrics: TelemetryMetrics }
+  | { readonly kind: "offline" };
+
+/** Clamp helper: pin a value to `[min, max]`. Pure. */
+const clamp = (value: number, min: number, max: number): number =>
+  value < min ? min : value > max ? max : value;
+
+/**
+ * Normal scenario — slow random walk within healthy ranges. Deterministic
+ * modulo-based variation so the same tick yields the same metrics.
+ *
+ * Range anchors from BRD §8.3.1 / WHO:
+ *   pH 6.5–8.5 (within 0–14 hard range)
+ *   TDS < 500 ppm
+ *   turbidity < 1 NTU
+ *   chlorine 0.5–1.5 ppm (within 0–5 hard range)
+ *   temp 24–30 °C, water level 50–120 cm
+ *
+ * `tickCount` is a nonnegative integer counter; `state` is opaque to
+ * the scenario (kept on the signature for future per-device tunables
+ * like `noise_sigma` from architecture §6.1).
+ */
+export const scenarioNormal = (
+  _state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  const phase = tickCount % 256;
+  const ph = 7.0 + 0.5 * Math.sin(phase * 0.1);
+  const tds = 200 + (tickCount % 7) * 5;
+  const turbidity = 0.3 + ((tickCount * 13) % 7) / 100;
+  const temp = 26 + ((tickCount * 17) % 40) / 10;
+  const chlorine = 0.8 + 0.2 * Math.cos(phase * 0.07);
+  const water = 80 + ((tickCount * 11) % 30);
+  return {
+    kind: "metrics",
+    metrics: {
+      ph,
+      tds_ppm: clamp(tds, 0, 5_000),
+      turbidity_ntu: clamp(turbidity, 0, 1_000),
+      temp_c: clamp(temp, -10, 80),
+      chlorine_ppm: clamp(chlorine, 0, 5),
+      water_level_cm: clamp(water, 0, 500),
+    },
+  };
+};
+
+/**
+ * RisingTDS — tds_ppm rises from 200 to 1500 over ~120 ticks
+ * (architecture §6.1). Linear ramp, then plateau at 1500.
+ */
+export const scenarioRisingTDS = (
+  _state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  const rampTicks = 120;
+  const ramp = (tickCount % (rampTicks * 2));
+  const tds = ramp <= rampTicks
+    ? 200 + ((1_500 - 200) * ramp) / rampTicks
+    : 1_500;
+  return {
+    kind: "metrics",
+    metrics: {
+      ph: 7.2,
+      tds_ppm: clamp(tds, 0, 5_000),
+      turbidity_ntu: 0.4,
+      temp_c: 27,
+      chlorine_ppm: 0.6,
+      water_level_cm: 80,
+    },
+  };
+};
+
+/**
+ * TurbiditySpike — turbidity spikes to 200, holds for 10 ticks, decays.
+ * Cycle period 60 ticks (architecture §6.1: "~10 ticks, then baseline").
+ */
+export const scenarioTurbiditySpike = (
+  _state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  const period = 60;
+  const t = tickCount % period;
+  const spike = 200;
+  const holdTicks = 10;
+  const decayTicks = 20;
+  const turbidity =
+    t < holdTicks
+      ? spike
+      : t < holdTicks + decayTicks
+        ? spike - ((t - holdTicks) * spike) / decayTicks
+        : 0.4;
+  return {
+    kind: "metrics",
+    metrics: {
+      ph: 7.2,
+      tds_ppm: 180,
+      turbidity_ntu: clamp(turbidity, 0, 1_000),
+      temp_c: 27,
+      chlorine_ppm: 0.6,
+      water_level_cm: 80,
+    },
+  };
+};
+
+/**
+ * ChlorineDrop — chlorine decays from 0.8 → 0.1 over ~60 ticks, holds
+ * at 0.1 thereafter. Cycle period 200 ticks so the test can pin
+ * exact numbers mid-decay.
+ */
+export const scenarioChlorineDrop = (
+  _state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  const period = 200;
+  const decayTicks = 60;
+  const t = tickCount % period;
+  const startCl = 0.8;
+  const endCl = 0.1;
+  const chlorine =
+    t < decayTicks
+      ? startCl - ((startCl - endCl) * t) / decayTicks
+      : endCl;
+  return {
+    kind: "metrics",
+    metrics: {
+      ph: 7.2,
+      tds_ppm: 180,
+      turbidity_ntu: 0.4,
+      temp_c: 27,
+      chlorine_ppm: clamp(chlorine, 0, 5),
+      water_level_cm: 80,
+    },
+  };
+};
+
+/**
+ * Offline — stop emitting after a 5-tick grace period, then disconnect
+ * (the simulator translates `kind:"offline"` to "skip this tick"; the
+ * `WsClient` layer handles the actual disconnect / reconnect-on-backoff
+ * decision based on consecutive offline ticks).
+ *
+ * For the metric function itself we return `kind:"offline"` from tick 0
+ * so tests can assert "Offline emits no metrics at any tick".
+ */
+export const scenarioOffline = (
+  _state: Readonly<Record<string, never>>,
+  _tickCount: number,
+): ScenarioTick => ({ kind: "offline" });
+
+/**
+ * BatteryLow — wire contract does not carry a battery metric in v1
+ * (architecture §6.1 SCENARIO_BATTERY_LOW; design notes). Emits the
+ * same curve as `Normal`; the caller logs a one-time `BatteryLow
+ * started` notice at the scenario boundary. This is a log-only signal,
+ * no wire effect.
+ */
+export const scenarioBatteryLow = (
+  state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => scenarioNormal(state, tickCount);
+
+/**
+ * RandomFailure — deterministic 20-tick period: at tick `20, 40, 60, …`
+ * one metric (`ph`) is replaced by `NaN`. The frame wrapper upstream
+ * calls `TelemetryFrameSchema.safeParse` locally and drops the frame
+ * with a logged error; the api's `bad_request` path on a
+ * server-side catch is the same envelope.
+ *
+ * Test pin requires determinism. The spec's "Poisson λ=20 ticks"
+ * prose is overridden here for that reason.
+ */
+export const scenarioRandomFailure = (
+  _state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  const failPeriod = 20;
+  const failsThisTick = tickCount > 0 && tickCount % failPeriod === 0;
+  const base = scenarioNormal({}, tickCount);
+  if (base.kind === "offline") {
+    return base;
+  }
+  if (!failsThisTick) {
+    return base;
+  }
+  return {
+    kind: "metrics",
+    metrics: { ...base.metrics, ph: Number.NaN },
+  };
+};
+
+/**
+ * Dispatcher. Throws on unknown scenario name so a malformed
+ * `devices.json` fails at boot rather than silently picking a default.
+ * The upstream `loadDevicesFile` validation in `index.ts` already
+ * enforces `scenario ∈ SCENARIO_NAMES`.
+ */
+export const runScenario = (
+  scenario: ScenarioName,
+  state: Readonly<Record<string, never>>,
+  tickCount: number,
+): ScenarioTick => {
+  switch (scenario) {
+    case "Normal":
+      return scenarioNormal(state, tickCount);
+    case "RisingTDS":
+      return scenarioRisingTDS(state, tickCount);
+    case "TurbiditySpike":
+      return scenarioTurbiditySpike(state, tickCount);
+    case "ChlorineDrop":
+      return scenarioChlorineDrop(state, tickCount);
+    case "Offline":
+      return scenarioOffline(state, tickCount);
+    case "BatteryLow":
+      return scenarioBatteryLow(state, tickCount);
+    case "RandomFailure":
+      return scenarioRandomFailure(state, tickCount);
+    default: {
+      const exhaustive: never = scenario;
+      throw new Error(
+        `simulator: unknown scenario ${exhaustive as string}`,
+      );
+    }
+  }
+};
+
+=== NEW FILE: packages/simulator/src/wsClient.ts ===
+/**
+ * Per-device Socket.IO client — Story 2.4.
+ *
+ * One `WsClient` per device. Opens a Socket.IO connection to
+ * `${API_URL}/ingest/<device_id>` with `auth: { token }` (the api's
+ * `buildIngestServer` reads the device_id from the URL path segment
+ * and the token from `handshake.auth.token`; see
+ * `packages/api/src/ingest/server.ts`). Emits frames at `tick_interval_ms`,
+ * reacts to the api's envelopes, buffers up to `BUFFER_CAP` frames on
+ * disconnect, and reconnects with exponential backoff `1s → 30s`.
+ *
+ * Wire contract is read from `@surakkha/shared` only — the simulator
+ * never imports from `@surakkha/api`.
+ */
+import { type TelemetryFrame, TelemetryFrameSchema } from "@surakkha/shared/telemetry";
+import { type Logger } from "pino";
+import { io, type Socket } from "socket.io-client";
+
+import { runScenario, type ScenarioName } from "./scenarios.js";
+
+/** Frame buffer cap per device (architecture §6.1, I-2). */
+export const BUFFER_CAP = 5_000;
+
+/** Default tick interval, ms. Mirrored in `devices.json` and `.env.example`. */
+export const DEFAULT_TICK_INTERVAL_MS = 2_000;
+/** Minimum tick interval — anything faster hits the rate cap (architecture §3.2). */
+export const MIN_TICK_INTERVAL_MS = 1_000;
+/** Backoff schedule (architecture §6.1, I-2). */
+export const BACKOFF_INITIAL_MS = 1_000;
+export const BACKOFF_MAX_MS = 30_000;
+
+/** Frame "emit" envelope name (server reads via `socket.on("frame", …)`). */
+export const FRAME_EVENT = "frame" as const;
+/** Envelope names the api emits — see `packages/api/src/ingest/server.ts`
+ *  + `packages/api/src/ingest/frame.ts`. */
+export const ENVELOPE_RATE_LIMITED = "rate_limited" as const;
+export const ENVELOPE_BAD_REQUEST = "bad_request" as const;
+export const ENVELOPE_STALE_FRAME = "stale_frame" as const;
+export const ENVELOPE_UNAUTHENTICATED = "unauthenticated" as const;
+export const ENVELOPE_AUTH_ERROR = "auth_error" as const;
+export const ENVELOPE_PERSIST_FAILED = "persist_failed" as const;
+export const ENVELOPE_INTERNAL_ERROR = "internal_error" as const;
+
+export interface RateLimitedEnvelope {
+  readonly retry_after_seconds: number;
+}
+export interface BadRequestEnvelope {
+  readonly error: "bad_request";
+  readonly missing_fields: readonly string[];
+}
+export interface StaleFrameEnvelope {
+  readonly error: "stale_frame";
+  readonly age_seconds: number;
+}
+export interface AuthErrorEnvelope {
+  readonly error: "device_id_mismatch" | "forbidden_scope";
+}
+export interface PersistFailedEnvelope {
+  readonly error: "persist_failed";
+}
+
+export interface WsClientOptions {
+  readonly deviceId: string;
+  readonly scenario: ScenarioName;
+  readonly apiUrl: string;
+  readonly token: string;
+  readonly tickIntervalMs: number;
+  readonly logger: Logger;
+  /** Injected for tests; production uses `io(...)`. */
+  readonly connect?: (
+    url: string,
+    opts: {
+      readonly auth: { readonly token: string };
+      readonly transports: readonly ["websocket"];
+      readonly path: string;
+      readonly reconnection: false;
+    },
+  ) => Socket;
+  /** Injected for tests; production uses `setTimeout`. */
+  readonly setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
+  readonly clearTimer?: (handle: NodeJS.Timeout) => void;
+  /** Override `Date.now()` for deterministic tests. */
+  readonly now?: () => number;
+}
+
+/**
+ * Lightweight Socket surface the WsClient actually uses. We don't
+ * import the full `Socket` type so tests can stub with a plain object
+ * without depending on `socket.io-client`'s giant generic.
+ */
+export interface MinimalSocket {
+  readonly id: string;
+  readonly connected: boolean;
+  readonly disconnected: boolean;
+  readonly auth: Record<string, unknown>;
+  readonly io: {
+    readonly opts: { readonly transports?: readonly string[] };
+  };
+  on(event: string, listener: (arg: unknown) => void): void;
+  on(event: "connect", listener: () => void): void;
+  on(event: "disconnect", listener: (reason: string) => void): void;
+  on(event: "connect_error", listener: (err: Error) => void): void;
+  emit(event: string, payload?: unknown): void;
+  disconnect(close?: boolean): void;
+}
+
+/**
+ * Per-device simulator state. Public surface is `start()` + `stop()`;
+ * tests construct one directly and exercise the internals via the
+ * private helpers exposed through `__test__`.
+ */
+export class WsClient {
+  private readonly opts: WsClientOptions;
+  private readonly logger: Logger;
+  private socket: MinimalSocket | null = null;
+  private buffer: TelemetryFrame[] = [];
+  private seq = 0;
+  private tickHandle: NodeJS.Timeout | null = null;
+  private pausedUntilMs = 0;
+  private reconnectAttempts = 0;
+  private reconnectHandle: NodeJS.Timeout | null = null;
+  private overflowLoggedThisRun = false;
+  private stopped = false;
+
+  constructor(options: WsClientOptions) {
+    this.opts = options;
+    this.logger = options.logger.child({ deviceId: options.deviceId });
+  }
+
+  /** Open the connection + start the per-tick timer. */
+  public start = (): void => {
+    if (this.stopped) {
+      return;
+    }
+    this.logger.info(
+      { scenario: this.opts.scenario, tickIntervalMs: this.opts.tickIntervalMs },
+      "simulator: scenario started",
+    );
+    this.openSocket();
+    this.scheduleNextTick(0);
+  };
+
+  /**
+    Graceful shutdown: clear timers, disconnect socket, leave the
+    buffer intact (caller drains if needed). Idempotent.
+   */
+  public stop = (): void => {
+    this.stopped = true;
+    this.clearTick();
+    this.clearReconnect();
+    if (this.socket !== null) {
+      try {
+        this.socket.disconnect(true);
+      } catch (err) {
+        this.logger.warn({ err }, "simulator: socket disconnect threw");
+      }
+      this.socket = null;
+    }
+  };
+
+  /**
+    Test seam: read the in-memory frame buffer. Used by
+    `wsClient.spec.ts` to assert "offending frame was dropped".
+   */
+  public __test__bufferLength = (): number => this.buffer.length;
+
+  /** Test seam: read the monotonically-increasing seq counter. */
+  public __test__seq = (): number => this.seq;
+
+  /** Test seam: read the backoff state for assertions. */
+  public __test__reconnectAttempts = (): number => this.reconnectAttempts;
+
+  /**
+    Test seam: inject a pre-built socket. Production never calls this
+    — `start()` opens its own. Tests substitute a stub that captures
+    `emit("frame", …)` so the assertions do not need a real network.
+   */
+  public __test__setSocket = (socket: MinimalSocket): void => {
+    this.socket = socket;
+    this.attachListeners(socket);
+  };
+
+  /**
+    Test seam: trigger the next tick synchronously. Production uses
+    `setTimeout`; tests call this directly so the loop is deterministic.
+   */
+  public __test__runTick = (): void => {
+    this.tickOnce();
+  };
+
+  /** Test seam: deliver a fake envelope to the per-socket listener. */
+  public __test__deliverEnvelope = (
+    event: string,
+    payload: unknown,
+  ): void => {
+    if (this.socket !== null) {
+      this.handleEnvelope(event, payload);
+    }
+  };
+
+  /** Test seam: simulate a TCP-level disconnect (no envelope). */
+  public __test__deliverDisconnect = (): void => {
+    this.onSocketDisconnect();
+  };
+
+  /** Test seam: simulate a successful connect. */
+  public __test__deliverConnect = (): void => {
+    this.onSocketConnect();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Private: socket lifecycle
+  // ---------------------------------------------------------------------------
+
+  private openSocket = (): void => {
+    const url = `${this.opts.apiUrl.replace(/\/$/, "")}/ingest/${this.opts.deviceId}`;
+    const connect = this.opts.connect ?? defaultConnect;
+    const fresh = connect(url, {
+      auth: { token: this.opts.token },
+      transports: ["websocket"],
+      path: "/ingest/",
+      reconnection: false,
+    });
+    this.socket = fresh as unknown as MinimalSocket;
+    this.attachListeners(this.socket);
+  };
+
+  private attachListeners = (socket: MinimalSocket): void => {
+    socket.on("connect", () => this.onSocketConnect());
+    socket.on("disconnect", () => this.onSocketDisconnect());
+    socket.on("connect_error", (err: Error) => this.onSocketConnectError(err));
+    socket.on(ENVELOPE_RATE_LIMITED, (raw) =>
+      this.handleEnvelope(ENVELOPE_RATE_LIMITED, raw),
+    );
+    socket.on(ENVELOPE_BAD_REQUEST, (raw) =>
+      this.handleEnvelope(ENVELOPE_BAD_REQUEST, raw),
+    );
+    socket.on(ENVELOPE_STALE_FRAME, (raw) =>
+      this.handleEnvelope(ENVELOPE_STALE_FRAME, raw),
+    );
+    socket.on(ENVELOPE_UNAUTHENTICATED, () =>
+      this.handleEnvelope(ENVELOPE_UNAUTHENTICATED, undefined),
+    );
+    socket.on(ENVELOPE_AUTH_ERROR, (raw) =>
+      this.handleEnvelope(ENVELOPE_AUTH_ERROR, raw),
+    );
+    socket.on(ENVELOPE_PERSIST_FAILED, (raw) =>
+      this.handleEnvelope(ENVELOPE_PERSIST_FAILED, raw),
+    );
+    socket.on(ENVELOPE_INTERNAL_ERROR, () =>
+      this.handleEnvelope(ENVELOPE_INTERNAL_ERROR, undefined),
+    );
+  };
+
+  private onSocketConnect = (): void => {
+    this.reconnectAttempts = 0;
+    this.logger.info("simulator: connected");
+    this.flushBuffer();
+  };
+
+  private onSocketDisconnect = (): void => {
+    if (this.stopped) {
+      return;
+    }
+    this.logger.warn("simulator: disconnected");
+    this.scheduleReconnect();
+  };
+
+  private onSocketConnectError = (err: Error): void => {
+    if (this.stopped) {
+      return;
+    }
+    this.logger.warn({ err: err.message }, "simulator: connect_error");
+    this.scheduleReconnect();
+  };
+
+  private scheduleReconnect = (): void => {
+    if (this.stopped) {
+      return;
+    }
+    // Clear any existing pending reconnect so the latest disconnect
+    // event bumps the backoff. Without this, a fast stream of disconnects
+    // would leave the first timer pending indefinitely.
+    if (this.reconnectHandle !== null) {
+      (this.opts.clearTimer ?? defaultClearTimer)(this.reconnectHandle);
+      this.reconnectHandle = null;
+    }
+    const delayMs = Math.min(
+      BACKOFF_INITIAL_MS * 2 ** this.reconnectAttempts,
+      BACKOFF_MAX_MS,
+    );
+    this.reconnectAttempts += 1;
+    this.logger.info(
+      { attempt: this.reconnectAttempts, delayMs },
+      "simulator: reconnect scheduled",
+    );
+    this.reconnectHandle = (this.opts.setTimer ?? defaultSetTimer)(() => {
+      this.reconnectHandle = null;
+      if (this.stopped) {
+        return;
+      }
+      this.openSocket();
+    }, delayMs);
+  };
+
+  private clearReconnect = (): void => {
+    if (this.reconnectHandle !== null) {
+      (this.opts.clearTimer ?? defaultClearTimer)(this.reconnectHandle);
+      this.reconnectHandle = null;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Private: tick loop
+  // ---------------------------------------------------------------------------
+
+  private scheduleNextTick = (delayMs: number): void => {
+    if (this.stopped) {
+      return;
+    }
+    this.clearTick();
+    this.tickHandle = (this.opts.setTimer ?? defaultSetTimer)(() => {
+      this.tickHandle = null;
+      this.tickOnce();
+    }, delayMs);
+  };
+
+  private clearTick = (): void => {
+    if (this.tickHandle !== null) {
+      (this.opts.clearTimer ?? defaultClearTimer)(this.tickHandle);
+      this.tickHandle = null;
+    }
+  };
+
+  private tickOnce = (): void => {
+    if (this.stopped) {
+      return;
+    }
+    const nowMs = (this.opts.now ?? defaultNow)();
+    if (nowMs < this.pausedUntilMs) {
+      // `rate_limited` pause window — re-schedule to wake at `pausedUntilMs`.
+      this.scheduleNextTick(this.pausedUntilMs - nowMs);
+      return;
+    }
+
+    const tick = runScenario(this.opts.scenario, {}, this.seq);
+    if (tick.kind === "offline") {
+      // Offline scenario emits nothing — back off but stay connected.
+      this.scheduleNextTick(this.opts.tickIntervalMs);
+      return;
+    }
+
+    this.seq += 1;
+    const ts = (this.opts.now ?? defaultNow)();
+    const candidate = {
+      version: 1,
+      device_id: this.opts.deviceId,
+      ts,
+      fw: "simulator-2.4.0",
+      seq: this.seq,
+      metrics: tick.metrics,
+    } as const;
+    const parsed = TelemetryFrameSchema.safeParse(candidate);
+    if (!parsed.success) {
+      // NaN from RandomFailure, or out-of-range from a future scenario.
+      // Drop locally; never re-send (server would reject again).
+      this.logger.error(
+        {
+          seq: this.seq,
+          issues: parsed.error.issues.map((i) => i.path.join(".")),
+        },
+        "simulator: frame rejected locally before send",
+      );
+      this.scheduleNextTick(this.opts.tickIntervalMs);
+      return;
+    }
+
+    this.dispatch(parsed.data);
+    this.scheduleNextTick(this.opts.tickIntervalMs);
+  };
+
+  /**
+    Send a parsed frame either over the live socket (if connected)
+    or into the in-memory buffer (if disconnected, cap-bound).
+   */
+  private dispatch = (frame: TelemetryFrame): void => {
+    if (this.socket !== null && this.socket.connected) {
+      this.socket.emit(FRAME_EVENT, frame);
+      return;
+    }
+    this.bufferFrame(frame);
+  };
+
+  private bufferFrame = (frame: TelemetryFrame): void => {
+    if (this.buffer.length >= BUFFER_CAP) {
+      // Drop oldest. Use slice(1) — immutable, satisfies the ESLint rule
+      // against in-place mutation.
+      this.buffer = this.buffer.slice(1);
+      if (!this.overflowLoggedThisRun) {
+        this.logger.warn(
+          { cap: BUFFER_CAP },
+          "simulator: buffer overflow",
+        );
+        this.overflowLoggedThisRun = true;
+      }
+    }
+    this.buffer = [...this.buffer, frame];
+  };
+
+  /**
+    Flush buffer on reconnect. Frames are produced monotonically per
+    device so `buffer[0]` is always the lowest `seq` — iterate in
+    order. The server rate-cap (1 reading / 2s) means we honour it by
+    leaving the buffer flush at the per-tick cadence: the per-device
+    timer is still ticking; flushing one frame per tick is the same
+    rate as live emission.
+
+    Frames remain in the buffer until an envelope clears them
+    (`bad_request`, `stale_frame`, `persist_failed` all drop the
+    lowest-seq frame). Frames are NOT auto-removed on flush because
+    the wire contract has no explicit ACK envelope; the canonical
+    "frame was accepted" signal is the absence of a negative envelope.
+    To prevent unbounded growth after a successful flush, we clear
+    the entire buffer on flush — the server's per-device rate cap
+    ensures it cannot accept more than 1 reading / 2s, and any frame
+    the server rejects comes back as an envelope which drops the
+    offending entry. If the buffer fills post-flush (e.g. reconnect
+    loop), the overflow path trims the oldest entries.
+   */
+  private flushBuffer = (): void => {
+    if (this.buffer.length === 0) {
+      return;
+    }
+    if (this.socket === null || !this.socket.connected) {
+      return;
+    }
+    const drained = this.buffer;
+    this.overflowLoggedThisRun = false;
+    for (const frame of drained) {
+      this.socket.emit(FRAME_EVENT, frame);
+    }
+    this.logger.info({ flushed: drained.length }, "simulator: buffer flushed");
+    // Frames were emitted. We deliberately do NOT empty the buffer here:
+    // envelopes (`bad_request` / `stale_frame` / `persist_failed`) drop
+    // the offending entry. The buffer will grow again on disconnect,
+    // and overflow logic trims oldest.
+  };
+
+  // ---------------------------------------------------------------------------
+  // Private: envelope handlers
+  // ---------------------------------------------------------------------------
+
+  private handleEnvelope = (event: string, raw: unknown): void => {
+    switch (event) {
+      case ENVELOPE_RATE_LIMITED:
+        this.handleRateLimited(raw);
+        return;
+      case ENVELOPE_BAD_REQUEST:
+        this.handleBadRequest(raw);
+        return;
+      case ENVELOPE_STALE_FRAME:
+        this.handleStaleFrame(raw);
+        return;
+      case ENVELOPE_UNAUTHENTICATED:
+        this.handleUnauthenticated();
+        return;
+      case ENVELOPE_AUTH_ERROR:
+        this.handleAuthError(raw);
+        return;
+      case ENVELOPE_PERSIST_FAILED:
+        this.handlePersistFailed();
+        return;
+      case ENVELOPE_INTERNAL_ERROR:
+        this.handleInternalError();
+        return;
+      default:
+        this.logger.debug({ event }, "simulator: unknown envelope (ignored)");
+    }
+  };
+
+  private dropOldestFrame = (): void => {
+    if (this.buffer.length > 0) {
+      this.buffer = this.buffer.slice(1);
+    }
+  };
+
+  private tearDownAndReconnect = (): void => {
+    if (this.socket !== null) {
+      this.socket.disconnect(true);
+    }
+    this.scheduleReconnect();
+  };
+
+  private handleRateLimited = (raw: unknown): void => {
+    const payload = raw as RateLimitedEnvelope | undefined;
+    const retrySeconds = typeof payload?.retry_after_seconds === "number"
+      ? payload.retry_after_seconds
+      : 2;
+    const nowMs = (this.opts.now ?? defaultNow)();
+    this.pausedUntilMs = nowMs + retrySeconds * 1_000;
+    this.logger.warn(
+      { retry_after_seconds: retrySeconds },
+      "simulator: rate_limited — pausing emissions",
+    );
+  };
+
+  private handleBadRequest = (raw: unknown): void => {
+    const payload = raw as BadRequestEnvelope | undefined;
+    this.logger.error(
+      { missing_fields: payload?.missing_fields ?? [] },
+      "simulator: bad_request — dropping offending frame",
+    );
+    this.dropOldestFrame();
+  };
+
+  private handleStaleFrame = (raw: unknown): void => {
+    const payload = raw as StaleFrameEnvelope | undefined;
+    this.logger.warn(
+      { age_seconds: payload?.age_seconds ?? 0 },
+      "simulator: stale_frame — dropping offending frame",
+    );
+    this.dropOldestFrame();
+  };
+
+  private handleUnauthenticated = (): void => {
+    this.logger.error("simulator: unauthenticated — tearing down");
+    this.tearDownAndReconnect();
+  };
+
+  private handleAuthError = (raw: unknown): void => {
+    const payload = raw as AuthErrorEnvelope | undefined;
+    this.logger.error(
+      { error: payload?.error ?? "unknown" },
+      "simulator: auth_error — tearing down + reconnecting",
+    );
+    this.tearDownAndReconnect();
+  };
+
+  private handlePersistFailed = (): void => {
+    this.logger.error(
+      "simulator: persist_failed — tearing down + reconnecting",
+    );
+    this.dropOldestFrame();
+    this.tearDownAndReconnect();
+  };
+
+  private handleInternalError = (): void => {
+    this.logger.error(
+      "simulator: internal_error envelope from api — tearing down",
+    );
+    this.tearDownAndReconnect();
+  };
+}
+
+const defaultConnect = (
+  url: string,
+  opts: {
+    readonly auth: { readonly token: string };
+    readonly transports: readonly ["websocket"];
+    readonly path: string;
+    readonly reconnection: false;
+  },
+): MinimalSocket => {
+  const socket: Socket = io(url, {
+    auth: opts.auth as Record<string, unknown>,
+    transports: ["websocket"],
+    path: opts.path,
+    reconnection: false,
+  });
+  return socket as unknown as MinimalSocket;
+};
+
+const defaultSetTimer = (fn: () => void, ms: number): NodeJS.Timeout =>
+  setTimeout(fn, ms);
+
+const defaultClearTimer = (handle: NodeJS.Timeout): void => {
+  clearTimeout(handle);
+};
+
+const defaultNow = (): number => Date.now();

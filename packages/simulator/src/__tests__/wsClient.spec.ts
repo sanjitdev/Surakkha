@@ -434,6 +434,84 @@ describe("WsClient — graceful shutdown", () => {
   });
 });
 
+describe("WsClient — Story 2.5 runtime scenario swap", () => {
+  it("setScenario swaps the active scenario on the next tick (Normal → RisingTDS)", () => {
+    const client = buildClient({ scenario: "Normal" });
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    // Run one Normal tick first to confirm the baseline.
+    client.__test__runTick();
+    const normalFrame = socket.emit.mock.calls
+      .filter((call) => call[0] === FRAME_EVENT)
+      .map((call) => call[1] as TelemetryFrame)
+      .pop();
+    expect(normalFrame?.metrics.tds_ppm).toBeLessThan(500);
+
+    // Swap to RisingTDS and run another tick. The new frame must
+    // show RisingTDS-shaped metrics (tds_ppm ≥ 200, climbing).
+    client.setScenario("RisingTDS");
+    const beforeCount = socket.emit.mock.calls.length;
+    client.__test__runTick();
+    const newFrames = socket.emit.mock.calls
+      .slice(beforeCount)
+      .filter((call) => call[0] === FRAME_EVENT)
+      .map((call) => call[1] as TelemetryFrame);
+    expect(newFrames).toHaveLength(1);
+    const risingFrame = newFrames[0];
+    // RisingTDS holds tds_ppm ≥ 200 and clamps at 1500. Seq is
+    // monotonic (carries across the swap).
+    expect(risingFrame?.metrics.tds_ppm).toBeGreaterThanOrEqual(200);
+    expect(risingFrame?.seq).toBe((normalFrame?.seq ?? 0) + 1);
+    // Test seam reflects the swap.
+    expect(client.__test__scenario()).toBe("RisingTDS");
+  });
+
+  it("setScenario throws on unknown scenario name (defense-in-depth)", () => {
+    const client = buildClient();
+    expect(() =>
+      client.setScenario("NotAScenario" as unknown as ReturnType<typeof client.__test__scenario>),
+    ).toThrow();
+  });
+});
+
+describe("WsClient — Story 2.5 pause short-circuit", () => {
+  it("setPaused(true) short-circuits tickOnce — no socket.emit is called", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    // Run one baseline tick to populate the emit count.
+    client.__test__runTick();
+    const beforeCount = socket.emit.mock.calls.length;
+
+    // Pause and tick again.
+    client.setPaused(true);
+    client.__test__runTick();
+    // No additional emits while paused.
+    expect(socket.emit.mock.calls.length).toBe(beforeCount);
+    expect(client.__test__paused()).toBe(true);
+  });
+
+  it("setPaused(false) after pause — emissions resume", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    client.__test__runTick();
+    const beforeCount = socket.emit.mock.calls.length;
+
+    client.setPaused(true);
+    client.__test__runTick();
+    expect(socket.emit.mock.calls.length).toBe(beforeCount);
+
+    client.setPaused(false);
+    client.__test__runTick();
+    expect(socket.emit.mock.calls.length).toBeGreaterThan(beforeCount);
+    expect(client.__test__paused()).toBe(false);
+  });
+});
+
 beforeEach(() => {
   vi.useFakeTimers();
 });

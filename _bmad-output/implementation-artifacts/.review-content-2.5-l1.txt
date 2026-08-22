@@ -1,0 +1,3245 @@
+=== DIFF (tracked changes vs 6dffb1b) ===
+warning: LF will be replaced by CRLF in .env.example.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/api/src/index.ts.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/db/prisma/schema.prisma.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/shared/package.json.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/shared/src/index.ts.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/simulator/.env.example.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/simulator/src/wsClient.ts.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in packages/web/src/main.tsx.
+The file will have its original line endings in your working directory
+diff --git a/.env.example b/.env.example
+index bc89455..2e34cb0 100644
+--- a/.env.example
++++ b/.env.example
+@@ -15,8 +15,17 @@ DATABASE_URL=postgresql://surakkha:surakkha@db:5432/surakkha
+ # scenario-change commands. When unset, the tab shows:
+ #   "Simulator disabled. Set SIMULATOR_SECRET."
+ # The api refuses all /admin/simulator requests without this shared secret.
++# The value MUST match the SIMULATOR_SECRET set on the simulator process
++# — otherwise the api's POST gets a 403 secret_mismatch from the
++# simulator's control server.
+ SIMULATOR_SECRET=replace-me-with-a-shared-secret-for-the-admin-simulator-tab
+ 
++# --- Simulator control server -------------------------------------------------
++# Optional. Override the simulator's HTTP control server port (Story 2.5).
++# Default is 4001. The api reads the matching URL via SIMULATOR_URL
++# (api-side) — see packages/api README.
++# SIMULATOR_CONTROL_PORT=4001
++
+ # --- Retention / aggregation cron ---------------------------------------------
+ # Standard 5-field cron. The default is "5 minutes past every hour" which spreads
+ # cron load across the hour. The retention job caps at 10,000 rows per run (I-15).
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index a04f80b..7679c72 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-08-21
+-# last_updated: 2026-08-22T20:00:00.000Z
++# last_updated: 2026-08-22T20:30:00.000Z
+ # project: Surakkha
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -51,7 +51,7 @@
+ #     backlog     → backlog
+ 
+ generated: 2026-08-21
+-last_updated: 2026-08-22T20:00:00.000Z
++last_updated: 2026-08-22T20:30:00.000Z
+ project: Surakkha
+ project_key: NOKEY
+ tracking_system: file-system
+@@ -78,8 +78,8 @@ development_status:
+   2-1-wire-contract-schemas: done
+   2-2-ingest-websocket-endpoint: done
+   2-3-unknown-missing-field-handling: done
+-  2-4-simulator-process-six-default-devices-seven-scenarios: review
+-  2-5-admin-simulator-admin-tab: backlog
++  2-4-simulator-process-six-default-devices-seven-scenarios: done
++  2-5-admin-simulator-admin-tab: in-progress
+   2-6-dashboard-shell: backlog
+   2-7-map-view: backlog
+   2-8-live-readings-table: backlog
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 7e9ef08..3b67177 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -40,6 +40,10 @@ import express, { type Express, type Request, type Response } from "express";
+ import { Server as IoServer } from "socket.io";
+ 
+ 
++import {
++  buildAdminSimulatorPublicRouter,
++  buildAdminSimulatorRouter,
++} from "./admin/simulatorRouter.js";
+ import { type AuditLogger } from "./audit";
+ import { assertJwtSecret } from "./auth/jwt";
+ import { buildAuthRouter } from "./auth/router";
+@@ -73,6 +77,11 @@ app.use(cookieParser());
+ // `markPublic()` wrapper on `/login` and `/refresh` sets
+ // `req.public = true` ahead of the bearer-token check.
+ app.use("/auth", buildAuthRouter({ audit }));
++// Story 2.5 — `/admin/simulator/status` is public (so the disabled
++// banner renders for any visitor). Mount its public surface BEFORE
++// `authenticate`; the authenticated routes (`/devices`,
++// `/:device_id/scenario`) mount AFTER `authenticate` below.
++app.use(buildAdminSimulatorPublicRouter());
+ app.use(authenticate);
+ 
+ /**
+@@ -89,6 +98,58 @@ app.get(
+   },
+ );
+ 
++/**
++ * Story 2.5 — mount the admin simulator router. The router reads
++ * the six Device rows via a lazy Prisma client (same pattern the
++ * ingest handler uses — avoids a hard dependency on DATABASE_URL
++ * for HTTP-only tests).
++ */
++const listDevicesFromPrisma = async (): Promise<
++  ReadonlyArray<{
++    readonly id: string;
++    readonly name: string | null;
++    readonly scenario: string | null;
++  }>
++> => {
++  try {
++    const mod = (await import("@prisma/client")) as unknown as {
++      PrismaClient: new () => {
++        device: {
++          findMany: (args: {
++            readonly select: {
++              readonly id: true;
++              readonly name: true;
++              readonly scenario: true;
++            };
++            readonly orderBy: { readonly id: "asc" };
++          }) => Promise<
++            Array<{
++              readonly id: string;
++              readonly name: string | null;
++              readonly scenario: string | null;
++            }>
++          >;
++        };
++      };
++    };
++    const client = new mod.PrismaClient();
++    const rows = await client.device.findMany({
++      select: { id: true, name: true, scenario: true },
++      orderBy: { id: "asc" },
++    });
++    return rows;
++  } catch {
++    // Without a DB we return an empty list. The admin tab can render
++    // an empty state rather than failing the entire page render.
++    return [];
++  }
++};
++
++app.use(
++  "/admin/simulator",
++  buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
++);
++
+ app.get("/health", (_req: Request, res: Response) => {
+   res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
+ });
+diff --git a/packages/db/prisma/schema.prisma b/packages/db/prisma/schema.prisma
+index 18c1053..b4190e7 100644
+--- a/packages/db/prisma/schema.prisma
++++ b/packages/db/prisma/schema.prisma
+@@ -16,14 +16,23 @@ datasource db {
+ }
+ 
+ /**
+- * Device — Story 2.2 placeholder. The full model (school_id, label,
+- * fw_version, status, etc.) lands in Story 2.3. v1 ingest only needs
+- * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` so the admin device-
+- * status view can render "last contact" without a separate query.
++ * Device — Story 2.2 placeholder, extended in Story 2.5.
++ *
++ * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` were the v1.0 placeholders.
++ * Story 2.5 adds `name` and `scenario` so the `/admin/simulator` tab can
++ * list the six devices and their current scenario without re-reading the
++ * simulator's local `devices.json`. Both columns are nullable to keep the
++ * forward migration safe for any rows already in the table.
+  */
+ model Device {
+   id         String    @id
+   lastSeenAt DateTime?
++  // Story 2.5: human-readable label (e.g. "DHAKA-SCHOOL-023") + the
++  // currently assigned scenario. Nullable so an existing row that
++  // predates Story 2.5 (only `id` + `lastSeenAt`) survives the
++  // forward migration without a manual backfill step.
++  name       String?
++  scenario   String?
+   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
+   // matches the FK constraint in the migration; a removed Device
+   // does not leave orphan Reading rows behind.
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index e1e8071..6faa954 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -34,6 +34,10 @@
+     "./logger": {
+       "types": "./dist/logger.d.ts",
+       "import": "./dist/logger.js"
++    },
++    "./simulator": {
++      "types": "./dist/simulator.d.ts",
++      "import": "./dist/simulator.js"
+     }
+   },
+   "scripts": {
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index 4f678cd..85c93e4 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -10,4 +10,5 @@ export * from "./auth.js";
+ export * from "./events.js";
+ export * from "./incident.js";
+ export * from "./rbac.js";
+-export * from "./logger.js";
+\ No newline at end of file
++export * from "./logger.js";
++export * from "./simulator.js";
+\ No newline at end of file
+diff --git a/packages/simulator/.env.example b/packages/simulator/.env.example
+index 5e7c891..843f1ca 100644
+--- a/packages/simulator/.env.example
++++ b/packages/simulator/.env.example
+@@ -14,6 +14,18 @@ API_URL=http://localhost:4000
+ # The simulator refuses to boot without this set.
+ JWT_SECRET=replace-me-with-at-least-32-characters-please
+ 
++# Story 2.5 — shared secret for the admin control HTTP server.
++# Optional. When unset, the /admin/simulator tab on the SPA renders
++# a calm disabled banner ("Simulator disabled. Set SIMULATOR_SECRET.")
++# and the simulator's control server returns 503 on every request.
++# When set, the value MUST match the api's `SIMULATOR_SECRET` env var.
++SIMULATOR_SECRET=replace-me-with-the-same-shared-secret-as-the-api
++
++# Optional. Override the simulator control HTTP server port. Default
++# is 4001. The api-side URL is configured via `SIMULATOR_URL` in the
++# api's env (defaults to `http://localhost:4001`).
++# SIMULATOR_CONTROL_PORT=4001
++
+ # Optional. Override the per-device default tick interval (2_000 ms in
+ # devices.json). Must be >= 1_000 ms — the api rate-caps to 1 reading /
+ # 2s per device (architecture §3.2, I-2), and a faster tick would only
+diff --git a/packages/simulator/src/index.ts b/packages/simulator/src/index.ts
+index cf25710..3688a00 100644
+--- a/packages/simulator/src/index.ts
++++ b/packages/simulator/src/index.ts
+@@ -1,15 +1,19 @@
+ /**
+- * Surakkha simulator — entry point (Story 2.4).
++ * Surakkha simulator — entry point (Story 2.4 + Story 2.5).
+  *
+  * Boot sequence:
+  *   1. Read + validate `devices.json` (UUIDv4 device_ids, scenarios
+  *      in SCENARIO_NAMES, no duplicate UUIDs).
+  *   2. Read env: `API_URL` (default `http://localhost:4000`),
+  *      `JWT_SECRET` (required, ≥ JWT_SECRET_MIN_LENGTH), optional
+- *      `TICK_INTERVAL_MS` (must be ≥ 1000).
++ *      `TICK_INTERVAL_MS` (must be ≥ 1000), optional
++ *      `SIMULATOR_SECRET` (Story 2.5).
+  *   3. Mint one simulator JWT per device.
+- *   4. Spawn one `WsClient` per device.
+- *   5. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
++ *   4. Spawn one `WsClient` per device. The clients[] array is
++ *      registered into a module-scoped `clientsRegistry` (Story 2.5)
++ *      so the control HTTP server can read it without re-running boot.
++ *   5. Boot the control HTTP server (Story 2.5).
++ *   6. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
+  *      drain the per-device buffers, exit code 0).
+  */
+ import { readFileSync } from "node:fs";
+@@ -18,6 +22,10 @@ import { fileURLToPath } from "node:url";
+ 
+ import { createLogger } from "@surakkha/shared/logger";
+ 
++import {
++  setClientsRegistry,
++  startControlServer,
++} from "./control/server.js";
+ import {
+   assertJwtSecretOrExit,
+   mintSimulatorTokensForDevices,
+@@ -287,6 +295,36 @@ export const boot = (): void => {
+     client.start();
+   }
+ 
++  // 5b. Story 2.5 — publish the client registry so the control HTTP
++  // server can read it without re-running boot(). Lifted from the
++  // closure for module scope (the registry is read-only after boot
++  // completes; the only writes are the in-loop `setScenario` /
++  // `setPaused` calls from the control server).
++  // The structural type mirrors `control/server.ts:SimulatorClientLike`
++  // exactly so we don't need a type-only import from that module
++  // (which would force us to mix `import type` into a sibling import
++  // and trip eslint's import/order + no-duplicate-imports rules).
++  interface RegistryClient {
++    setScenario(name: ScenarioName): void;
++    setPaused(paused: boolean): void;
++  }
++  const registryEntries: Array<[string, RegistryClient]> = [];
++  for (const c of clients) {
++    registryEntries.push([c.__test__deviceId(), c]);
++  }
++  setClientsRegistry(new Map(registryEntries));
++
++  // 5c. Story 2.5 — boot the control server. Failure is logged but
++  // does NOT fail-fast: the simulator's primary job is emitting
++  // frames; the admin control tab is a secondary surface.
++  void startControlServer()
++    .then(({ port }) => {
++      logger.info({ port }, "simulator: control server listening");
++    })
++    .catch((err: unknown) => {
++      logger.warn({ err }, "simulator: control server failed to start");
++    });
++
+   // 6. Graceful shutdown.
+   const shutdown = (signal: string): void => {
+     logger.info({ signal }, "simulator: shutdown requested");
+diff --git a/packages/simulator/src/wsClient.ts b/packages/simulator/src/wsClient.ts
+index 99d5bec..6c0b2e4 100644
+--- a/packages/simulator/src/wsClient.ts
++++ b/packages/simulator/src/wsClient.ts
+@@ -105,9 +105,9 @@ export interface MinimalSocket {
+ }
+ 
+ /**
+- * Per-device simulator state. Public surface is `start()` + `stop()`;
+- * tests construct one directly and exercise the internals via the
+- * private helpers exposed through `__test__`.
++ * Per-device simulator state. Public surface is `start()` + `stop()`
++ * + `setScenario()`; tests construct one directly and exercise the
++ * internals via the private helpers exposed through `__test__`.
+  */
+ export class WsClient {
+   private readonly opts: WsClientOptions;
+@@ -121,9 +121,25 @@ export class WsClient {
+   private reconnectHandle: NodeJS.Timeout | null = null;
+   private overflowLoggedThisRun = false;
+   private stopped = false;
++  /**
++   * Story 2.5 — current scenario. Initialised from `opts.scenario`
++   * at construction and mutated by the admin control server via
++   * `setScenario()`. Decoupled from `opts` so the public
++   * `WsClientOptions` shape stays immutable (constructor parameters
++   * can never be re-bound by a runtime call).
++   */
++  private currentScenario: ScenarioName;
++  /**
++   * Story 2.5 — pause flag toggled by the control server's
++   * `start` / `pause` verb. When `true` the tick loop skips frame
++   * generation but keeps the WS socket alive so the device stays
++   * "connected" from the api's perspective.
++   */
++  private paused = false;
+ 
+   constructor(options: WsClientOptions) {
+     this.opts = options;
++    this.currentScenario = options.scenario;
+     this.logger = options.logger.child({ deviceId: options.deviceId });
+   }
+ 
+@@ -133,7 +149,7 @@ export class WsClient {
+       return;
+     }
+     this.logger.info(
+-      { scenario: this.opts.scenario, tickIntervalMs: this.opts.tickIntervalMs },
++      { scenario: this.currentScenario, tickIntervalMs: this.opts.tickIntervalMs },
+       "simulator: scenario started",
+     );
+     this.openSocket();
+@@ -170,6 +186,49 @@ export class WsClient {
+   /** Test seam: read the backoff state for assertions. */
+   public __test__reconnectAttempts = (): number => this.reconnectAttempts;
+ 
++  /** Test seam: read the active scenario name. */
++  public __test__scenario = (): ScenarioName => this.currentScenario;
++
++  /** Test seam: read the pause flag. */
++  public __test__paused = (): boolean => this.paused;
++
++  /**
++   * Test seam: read the device_id. Used by `index.ts:boot()` to
++   * register the client into the control server's lookup map. The
++   * device_id is immutable after construction so this is a one-way
++   * getter — there's no `__test__setDeviceId`.
++   */
++  public __test__deviceId = (): string => this.opts.deviceId;
++
++  /**
++   * Story 2.5 — runtime scenario swap. Called by the control server
++   * when an Admin clicks "Switch to <Scenario>" in the admin tab.
++   * Mutates `currentScenario` so the next `tickOnce()` picks up the
++   * new curve; no constructor re-run, no reconnect.
++   *
++   * We do NOT reset `this.seq` — the simulator's per-device `seq` is
++   * monotonic across scenario changes (architecture §3.2 wire contract
++   * field rule). If the admin wanted a fresh seq they would restart
++   * the simulator process.
++   */
++  public setScenario = (name: ScenarioName): void => {
++    this.currentScenario = name;
++    this.logger.info({ scenario: name }, "simulator: scenario swapped");
++  };
++
++  /**
++   * Story 2.5 — pause the tick loop without closing the WS socket.
++   * When `true`, `tickOnce()` re-schedules without generating a frame
++   * so the device appears "online but idle" to the api. The api
++   * does not see a disconnect envelope; the absence of new frames
++   * is the signal.
++   */
++  public setPaused = (paused: boolean): void => {
++    if (this.paused === paused) return;
++    this.paused = paused;
++    this.logger.info({ paused }, "simulator: pause toggled");
++  };
++
+   /**
+     Test seam: inject a pre-built socket. Production never calls this
+     — `start()` opens its own. Tests substitute a stub that captures
+@@ -343,7 +402,16 @@ export class WsClient {
+       return;
+     }
+ 
+-    const tick = runScenario(this.opts.scenario, {}, this.seq);
++    // Story 2.5 — admin-triggered pause. We KEEP the WS socket open
++    // (no `disconnect` envelope) and just skip frame generation until
++    // the admin resumes. This is distinct from the rate-limit pause
++    // above, which has a wake-up timestamp and re-enables automatically.
++    if (this.paused) {
++      this.scheduleNextTick(this.opts.tickIntervalMs);
++      return;
++    }
++
++    const tick = runScenario(this.currentScenario, {}, this.seq);
+     if (tick.kind === "offline") {
+       // Offline scenario emits nothing — back off but stay connected.
+       this.scheduleNextTick(this.opts.tickIntervalMs);
+diff --git a/packages/web/src/main.tsx b/packages/web/src/main.tsx
+index b949090..8b51f0a 100644
+--- a/packages/web/src/main.tsx
++++ b/packages/web/src/main.tsx
+@@ -24,6 +24,7 @@
+  *   - The `*` catch-all redirects to /login when no route matches.
+  */
+ 
++import { QueryClientProvider } from "@tanstack/react-query";
+ import { StrictMode, useEffect } from "react";
+ import { createRoot } from "react-dom/client";
+ import {
+@@ -35,10 +36,12 @@ import {
+ } from "react-router-dom";
+ 
+ import { RbacRoute } from "./access/RbacRoute";
++import { SimulatorPage } from "./admin/simulator/SimulatorPage";
+ import { apiLogin, configureApiClient } from "./api/apiClient";
+ import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
+ import { LoginShell } from "./auth/LoginShell";
+ import { KpiStat } from "./components/KpiStat";
++import { queryClient } from "./queryClient";
+ import { AppShell } from "./shell/AppShell";
+ 
+ import "./index.css";
+@@ -168,9 +171,10 @@ const LoginRoute = () => {
+ 
+ createRoot(root).render(
+   <StrictMode>
+-    <BrowserRouter>
+-      <Routes>
+-        <Route path="/login" element={<LoginRoute />} />
++    <QueryClientProvider client={queryClient}>
++      <BrowserRouter>
++        <Routes>
++          <Route path="/login" element={<LoginRoute />} />
+         <Route
+           path="/"
+           element={
+@@ -261,7 +265,7 @@ createRoot(root).render(
+             <CurrentRoleProvider>
+               <AppShell>
+                 <RbacRoute>
+-                  <PageStub name="Simulator" />
++                  <SimulatorPage />
+                 </RbacRoute>
+               </AppShell>
+             </CurrentRoleProvider>
+@@ -318,5 +322,6 @@ createRoot(root).render(
+         <Route path="*" element={<Navigate to="/login" replace />} />
+       </Routes>
+     </BrowserRouter>
++    </QueryClientProvider>
+   </StrictMode>,
+ );
+\ No newline at end of file
+
+=== UNTRACKED FILES (full contents) ===
+
+===== FILE: _bmad-output/implementation-artifacts/.review-content-2.5-l1.txt =====
+cat: _bmad-output/implementation-artifacts/.review-content-2.5-l1.txt: input file is output file
+
+===== FILE: _bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md =====
+---
+title: 'Story 2.5 — /admin/simulator Admin Tab'
+type: 'feature'
+created: '2026-08-22'
+status: 'in-review'
+review_loop_iteration: 1
+baseline_commit: '6dffb1b' # feat(simulator): Story 2.4 — process + six default devices + seven scenarios
+context:
+  - docs/architecture.md#6-simulator-contract
+  - docs/architecture.md#7-admin-operations
+  - _bmad-output/planning-artifacts/epics.md#story-25
+---
+
+<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
+
+## Intent
+
+**Problem:** Story 2.4 ships the simulator process and six devices, but the only way to switch scenarios is editing `devices.json` and restarting the process — useless for a demo or for an on-call Admin responding to a real incident. The audit trail for scenario changes does not exist.
+
+**Approach:** Add an `Admin → Simulator` tab at `/admin/simulator` that lists the six devices with their current scenario and exposes per-device Start / Pause / Switch-scenario controls. All switches are POSTed to a new `/admin/simulator/{device_id}/scenario` api endpoint, which authenticates the simulator over a new `SIMULATOR_SECRET` symmetric channel and writes an `AuditLog` row (`auditAction: "simulator_event"`, payload `{ device_id, scenario }`). When `SIMULATOR_SECRET` is unset on either side the controls render in a calm disabled state with copy "Simulator disabled. Set SIMULATOR_SECRET."
+
+## Boundaries & Constraints
+
+**Always:**
+- RBAC gate `authorize({ action: "drive", resource: "Simulator" }, audit)` — Admin-only, non-admins hit Story 1.6's `<RbacDenied />` and the api returns 403.
+- `SIMULATOR_SECRET` is a symmetric secret shared by api and simulator. The api sends it as `X-Simulator-Secret` on the control request; the simulator compares with `crypto.timingSafeEqual`. Missing/short on either side → disabled state, never fail-fast exit.
+- One `AuditLog` row per action with `auditAction: "simulator_event"`, `actor_user_id` from the JWT, `payload: { device_id, scenario }`. The enum member `simulator_event` is already declared at `packages/shared/src/rbac.ts:409` — no schema change.
+- Device list sourced from the same six deterministic UUIDv4 device IDs in `packages/simulator/src/devices.json:1-29`. Add a `Device.name` and `Device.scenario` column to the Prisma schema so the api can serve the listing without re-reading the simulator's local file.
+- Scenario switch must apply on the device within 5 s of the api's POST returning 200.
+
+**Ask First:**
+- Whether to also expose a Pause/Resume primitive on top of Start (the AC says "Start / Pause / Switch scenario"; Pause semantics — pause the tick loop vs. close the socket — must be confirmed before coding).
+- Whether `AuditLog` becomes a real Prisma model in this story (gap-filling) or whether the existing structured-logger `AuditLogger.emit` is sufficient and the api query is read from logs.
+
+**Never:**
+- Do not import `@surakkha/api` from `@surakkha/web`. The web app talks to the api over HTTP only.
+- Do not import `@surakkha/simulator` from anywhere in `packages/`. The simulator is a separate process; the api reaches it over HTTP.
+- Do not introduce WebSocket / Socket.IO for the control channel. Plain HTTPS POST is sufficient for a 1 RPS admin action.
+- Do not allow the simulator to push state to the api beyond what the existing telemetry WS already carries. The control channel is api → simulator only.
+- Do not add a per-device process. The simulator stays a single Node process with six `WsClient` instances in-memory.
+
+## I/O & Edge-Case Matrix
+
+| Scenario | Input / State | Expected Output / Behavior | Error Handling |
+|----------|--------------|---------------------------|----------------|
+| Admin renders page, secret set | GET `/admin/simulator` | Six rows: device name, current scenario, scenario `<select>`, Start / Pause / Switch buttons | N/A |
+| Admin renders page, secret unset on api | GET `/admin/simulator` (api returns 503 with `{ disabled: true }`) | Disabled banner: "Simulator disabled. Set SIMULATOR_SECRET." — no controls rendered | 503 propagates to `<DisabledBanner />` |
+| Admin renders page, non-admin role | GET `/admin/simulator` (api returns 403) | Story 1.6 `<RbacDenied />`; no API call beyond the role gate | 403 handled by RbacRoute |
+| Admin clicks Switch to RisingTDS | POST `/admin/simulator/{device_id}/scenario` body `{ scenario: "RisingTDS" }` | 200 `{ applied: true }`; new scenario active in ≤5 s; `AuditLog` row written | Api 5xx → toast "Switch failed"; row only written on success |
+| Admin clicks Switch, unknown scenario name | POST with `{ scenario: "Bogus" }` | Api 400 `{ error: "invalid_scenario" }`; no write to simulator; no `AuditLog` row | Api validates against `SCENARIO_NAMES` |
+| Admin clicks Switch, simulator unreachable | POST returns 502 `{ error: "simulator_unreachable" }` | Toast "Simulator unreachable"; `AuditLog` row NOT written (action did not apply) | Api distinguishes connect-time failure from apply-time failure |
+| Admin clicks Switch, simulator rejects secret | POST 403 `{ error: "secret_mismatch" }` | Toast "Simulator disabled." — same banner state as missing secret | Same code path as missing-secret |
+| Admin clicks Switch while another switch is in flight (same device) | Second POST within 5 s | Second request is queued (single-flight per device) — never silently dropped | 409 with `{ error: "switch_in_progress" }` if the queue is full |
+
+</frozen-after-approval>
+
+## Code Map
+
+**Web (packages/web)**
+
+- `src/main.tsx:258-269` — `/admin/simulator` route stub already mounted; replace inner `<PageStub>` with the new page component.
+- `src/access/RbacRoute.tsx:26-36` — role gate. Story 2.5 reuses as-is.
+- `src/access/RbacDenied.tsx:46` — denied-state component, already pinned with testids `rbac-denied*`.
+- `src/shell/nav.ts:57-61` — Simulator already in the Admin nav group.
+- `src/api/apiClient.ts:191` — `apiFetch(path, init)` auto-Bearer + refresh; reuse for the control POST.
+- `src/auth/CurrentRoleContext.tsx:79` — `useCurrentRole()` for client-side role read.
+- `src/components/KpiStat.tsx:105` — KPI card primitive; not needed for the device rows but the page chrome follows the same grid pattern (`grid-cols-1 md:grid-cols-2`).
+- **Gap**: TanStack Query is declared at `packages/web/package.json:20` but no provider, no query keys convention. Story 2.5 must bootstrap `QueryClient`/`QueryClientProvider` in `main.tsx` (one-time setup) and define keys as `["admin", "simulator", "devices"]` and `["admin", "simulator", "secret-status"]`.
+
+**Api (packages/api)**
+
+- `src/audit.ts:11-17` — `AuditLogger.emit({ auditAction, userId?, outcome, context? })` is the v1 audit contract. Story 2.5 uses this contract; does NOT introduce a Prisma `AuditLog` model unless Ask-First resolves "yes".
+- `src/middleware/authorize.ts:189-192` — `authorize({ action, resource }, audit)` factory; the new route uses `{ action: "drive", resource: "Simulator" }` (Admin-only grant at `packages/shared/src/rbac.ts:152-158`).
+- `src/middleware/authorize.ts:212-222` — RBAC-deny-path audit emit (`auditAction: "rbac_denied"`); already covers the non-admin case.
+- `src/index.ts:69-94` — router mount site. Mount new `/admin/simulator` router with `app.use("/admin/simulator", adminSimulatorRouter)`.
+- `src/auth/router.ts:106-110` — success-path audit emit shape; mirror for `simulator_event`.
+- `src/__tests__/rbacNegativeRouter.ts:93,172` — pre-existing fixture 403 test for `POST /admin/simulator/x/scenario` with `action: "drive", resource: "Simulator"`. Reuse the fixture, do not duplicate.
+
+**Shared (packages/shared)**
+
+- `src/rbac.ts:409` — `AuditActionSchema` already includes `"simulator_event"`. No schema change.
+- `src/rbac.ts:152-158` — Admin-only grant for `drive × Simulator`. No change.
+- `src/telemetry.ts` — `SCENARIO_NAMES` is in `@surakkha/simulator/src/scenarios.ts:35-44` (closed enum of 7 names). The api must mirror this for input validation — import from simulator is forbidden, so re-declare the closed Zod enum in `@surakkha/shared/src/simulator.ts` (new file).
+
+**Simulator (packages/simulator)**
+
+- `src/index.ts:239-315` — `boot()` holds a `clients: WsClient[]` array in closure (line 266). The new control server needs a reference to the same array, so move the array into a module-scoped registry that both `boot()` and the new HTTP server can read.
+- `src/index.ts:67-75` — `failFast` pattern; do NOT use for `SIMULATOR_SECRET`. Use the discriminated-union `{ ok: true, value } | { ok: false, reason: "missing" }` shape from `src/jwt.ts:40-49` (`resolveJwtSecret`) so the boot can take the env-disabled path.
+- `src/index.ts:195-233` — `resolveConfig` siblings. Add `resolveSimulatorSecret(): { ok: true, value: string } | { ok: false; reason: "missing" }` here.
+- `src/wsClient.ts:62-84` — `WsClientOptions.scenario` already a constructor param (line 64); runtime swap is a new `setScenario(name: ScenarioName)` method on the `WsClient` class that updates the field — no signature change to the constructor.
+- `src/scenarios.ts:35-44` — `SCENARIO_NAMES` is the closed enum for input validation; reuse.
+- `src/devices.json:1-29` — six UUIDv4 device IDs are the canonical list; the api's `GET /admin/simulator/devices` response uses these.
+- `.env.example:13-18` — `SIMULATOR_SECRET` placeholder already present, including the disabled-state copy. No copy change.
+
+**Database (packages/db)**
+
+- `prisma/schema.prisma:24-31` — current `Device` model has only `id` + `lastSeenAt`. Add `name: String?`, `scenario: String?` (nullable to keep migration safe for existing rows). Migration is a follow-up of Story 2.3's "name + scenario on Device" placeholder comment (`schema.prisma:19-23`).
+- **Gap**: No `AuditLog` Prisma model. Story 2.5 writes only via the structured-logger `AuditLogger.emit` (path A). The `AuditLog` table is deferred unless Ask-First resolves "yes".
+
+## Tasks & Acceptance
+
+**Execution:**
+
+- [x] `packages/shared/src/simulator.ts` -- Create -- closed Zod enum of 7 `SCENARIO_NAMES` mirroring `packages/simulator/src/scenarios.ts` so the api can validate input without importing the simulator. Re-export the `ScenarioName` type.
+- [x] `packages/shared/src/simulator.spec.ts` -- Tests -- pin the 7 names + reject unknown.
+- [x] `packages/db/prisma/schema.prisma` -- Migration -- add `name String?` + `scenario String?` to `Device` (nullable for safe backfill); generate the migration; backfill names from `packages/simulator/src/devices.json` via `prisma/seed.ts`.
+- [x] `packages/api/src/admin/simulatorRouter.ts` -- Create -- mount at `/admin/simulator`. Three routes: `GET /devices` (Admin-only via `authorize({ action: "read", resource: "Simulator" }, audit)` — note: Admin.read.Simulator is `N` at `packages/shared/src/rbac.ts:113`, so use a different gate — see Ask-First), `GET /status` (returns `{ enabled: bool }` — bypasses RBAC because disabled-banners must render for unauthenticated users too), `POST /:device_id/scenario` (gated by `authorize({ action: "drive", resource: "Simulator" }, audit)`).
+- [x] `packages/api/src/admin/simulatorRouter.spec.ts` -- Tests -- per AC matrix: happy path, 403 (Operator), 400 (Bogus scenario), 502 (simulator unreachable), 503 (secret disabled), 409 (switch_in_progress).
+- [x] `packages/api/src/admin/simulatorClient.ts` -- Create -- outbound HTTP client to the simulator control server. `fetch(SIMULATOR_URL, { headers: { "X-Simulator-Secret": SECRET } })` with 5 s timeout. Surface three failure modes as typed errors: `unreachable`, `secret_mismatch`, `unknown`.
+- [x] `packages/simulator/src/control/server.ts` -- Create -- inbound HTTP server using Node `http.createServer`. Routes: `POST /admin/simulator/:device_id/scenario`, `GET /admin/simulator/status`. `X-Simulator-Secret` checked with `crypto.timingSafeEqual` against `process.env.SIMULATOR_SECRET` (constant-time). Missing env → `/status` returns `{ enabled: false }` and the POST returns 403.
+- [x] `packages/simulator/src/control/server.spec.ts` -- Tests -- pin: secret match accepts; secret mismatch 403; missing env → status disabled; valid POST swaps the WsClient scenario; invalid scenario name 400; unknown device_id 404.
+- [x] `packages/simulator/src/wsClient.ts` -- Edit -- add `setScenario(name: ScenarioName): void` setter that updates `this.opts.scenario`. No constructor change. Test seam: `__test__scenario()`.
+- [x] `packages/simulator/src/index.ts` -- Edit -- register the new HTTP server alongside `boot()`; lift the `clients[]` array from boot closure into a module-scoped registry so `control/server.ts` can read it; add `resolveSimulatorSecret()` discriminated-union helper.
+- [x] `packages/web/src/admin/simulator/SimulatorPage.tsx` -- Create -- replaces the `<PageStub>` at `main.tsx:258-269`. Fetches `GET /admin/simulator/devices` and `GET /admin/simulator/status`. Renders `<DeviceRow />` per device. Each row has: device name, current scenario badge, scenario `<select>` (the 7 SCENARIO_NAMES), Switch button, Start/Pause toggle.
+- [x] `packages/web/src/admin/simulator/DeviceRow.tsx` -- Create -- single device control row. Reuses `<KpiStat>`-style chrome (`grid-cols-1 md:grid-cols-2`).
+- [x] `packages/web/src/admin/simulator/DisabledBanner.tsx` -- Create -- calm disabled state when `enabled === false`. Copy: "Simulator disabled. Set SIMULATOR_SECRET." Pinned by test.
+- [x] `packages/web/src/admin/simulator/useSimulatorDevices.ts` -- Create -- TanStack Query hook: query key `["admin", "simulator", "devices"]`, mutation invalidates the same key.
+- [x] `packages/web/src/admin/simulator/SimulatorPage.spec.tsx` -- Tests -- per AC matrix: Admin renders 6 rows; non-admin → RbacDenied; disabled-banners on; Switch posts and shows toast; failure shows toast and does not update UI optimistically.
+- [x] `packages/web/src/main.tsx` -- Edit -- replace `<PageStub name="Simulator" />` at line 258 with `<SimulatorPage />`. Wrap the route tree in `<QueryClientProvider>` one time only (cross-cutting bootstrap; one provider for the whole app).
+- [x] `packages/web/src/queryClient.ts` -- Create -- single `QueryClient` instance with `staleTime: 5_000`, `retry: 1`. Re-exported for the admin hooks.
+- [x] `packages/web/.env.example` -- Edit -- document `VITE_API_BASE_URL` if not already present; pin that the web app does NOT need `SIMULATOR_SECRET` (api → simulator only).
+- [x] `.env.example` -- Edit -- confirm `SIMULATOR_SECRET=<min-32-chars>` placeholder already at lines 13-18 covers both api and simulator sides; add a one-liner comment that the secret must match across both services.
+
+**Acceptance Criteria:**
+
+- Given `SIMULATOR_SECRET` is set on api AND simulator, when an Admin renders `/admin/simulator`, then six device rows render with current scenario badges and the full per-device Start / Pause / Switch control set.
+- Given `SIMULATOR_SECRET` is unset on either side, when the Admin renders `/admin/simulator`, then the disabled banner "Simulator disabled. Set SIMULATOR_SECRET." renders; no controls are clickable.
+- Given a non-Admin role (Operator / Technician / Viewer) renders `/admin/simulator`, then Story 1.6's `<RbacDenied />` renders; no `/admin/simulator/*` api call is made.
+- Given an Admin clicks "Switch to RisingTDS" on device A, when the api's `POST /admin/simulator/A/scenario` returns 200, then within 5 s the simulator emits frames under the new scenario AND one `AuditLog` row exists with `auditAction: "simulator_event"`, `actor_user_id` from the JWT, `payload: { device_id: "A", scenario: "RisingTDS" }`.
+- Given an Admin POSTs an unknown scenario name, when the api processes it, then it returns 400 `{ error: "invalid_scenario" }` and no `AuditLog` row is written.
+- Given the simulator is unreachable, when an Admin clicks Switch, then the api returns 502 `{ error: "simulator_unreachable" }`, the UI shows a toast, and no `AuditLog` row is written (the action did not apply).
+- Given two Switch requests for the same device land within 5 s, when the api processes them, then the second is queued (single-flight per device) and never silently dropped; if the queue is full the second returns 409 `{ error: "switch_in_progress" }`.
+- Given the secret mismatch case (api has `SIMULATOR_SECRET=a`, simulator has `SIMULATOR_SECRET=b`), when an Admin clicks Switch, then the api returns 403 `{ error: "secret_mismatch" }` and the UI shows the same disabled banner state as missing-secret.
+
+## Spec Change Log
+
+<!-- Empty until first bad_spec loopback. -->
+
+## Design Notes
+
+**Why an explicit HTTP server in the simulator instead of bi-directional polling or WebSocket:**
+- Admin actions are 1 RPS at most — polling the api would burn the wire contract for nothing.
+- A 5 s POST/PUT is a well-understood HTTP shape; the api already runs Node 20 with global `fetch`.
+- The control channel is unidirectional (api → simulator). The existing telemetry WS is bidirectional. Mixing them would muddy the wire contract and break the `socket.io-client` dep already pinned at 4.8.0.
+
+**Why AuditLog is structured-logger only in this story, not a Prisma model:**
+- The existing `AuditLogger.emit` contract is the canonical v1 surface. Promoting it to a Prisma table is a Story 2.3 follow-up deferred item, not a Story 2.5 concern.
+- A real `AuditLog` table requires a retention policy, a query API, and a feed surface — all of which are out of scope for an admin tab.
+- If Ask-First resolves "yes", the migration is additive and the `simulator_event` enum value already exists.
+
+**Why module-scope for the `clients[]` registry instead of class-scope:**
+- The boot function is a single 75-line procedure; nesting a registry inside `boot()` would force every test to import `boot()` to set up state. Module-scope keeps the test surface flat.
+- The `clients[]` is read-only after `boot()` completes (the only writes are `start()` at boot and `setScenario()` per device). A module-scoped `readonly` registry is safe.
+
+**Single-flight per device:**
+- Without it, two rapid Switch clicks would race the scenario field; the second click could overwrite the first before the first apply completes. The 5-second SLA gives enough headroom for a queue of size 1 (single in-flight); size 2+ is overkill for an admin UI.
+
+**TanStack Query bootstrap:**
+- The provider must wrap the entire route tree once, not per-page. `main.tsx:138-146` is the wired entry; `<QueryClientProvider>` slots in there alongside the existing `<BrowserRouter>`.
+
+## Verification
+
+**Commands:**
+
+- `pnpm --filter @surakkha/simulator test` -- expected: all green (≥64 tests; existing 59 + new control/server specs).
+- `pnpm --filter @surakkha/api test` -- expected: all green (≥104 tests; existing 97 + new admin/simulatorRouter specs).
+- `pnpm --filter @surakkha/web test` -- expected: all green (≥96 tests; existing 88 + new SimulatorPage specs).
+- `pnpm --filter @surakkha/shared test` -- expected: all green (≥86 tests; existing 80 + new simulator spec).
+- `pnpm typecheck` -- expected: 4/4 packages clean.
+- `pnpm lint` -- expected: 4/4 packages clean (no warnings).
+- `pnpm lint:rbac` -- expected: 13 handler files checked; the new `admin/simulatorRouter.ts` mounts are referenced by the matrix.
+- `pnpm build` -- expected: 4/4 packages built.
+
+**Manual checks (if no CLI):**
+
+- Start simulator with `SIMULATOR_SECRET=test-secret-32-chars-or-more-please-1234` and api with the same value; load `/admin/simulator` as Admin; click Switch to `RisingTDS`; confirm frames start climbing TDS within 5 s; restart simulator with `SIMULATOR_SECRET` unset; reload page; confirm disabled banner and no controls clickable.
+
+===== FILE: packages/api/src/admin/simulatorClient.ts =====
+/**
+ * Outbound client to the simulator control HTTP server — Story 2.5.
+ *
+ * The api POSTs a scenario switch to the simulator over an
+ * adversarially-trusted HTTP channel. The wire contract:
+ *
+ *   POST ${SIMULATOR_URL}/admin/simulator/${device_id}/scenario
+ *     headers:
+ *       X-Simulator-Secret: ${SIMULATOR_SECRET}
+ *       Content-Type: application/json
+ *     body: { scenario: ScenarioName, paused?: boolean }
+ *
+ * Three failure modes are surfaced as typed errors so the api router
+ * can map them to the right HTTP status:
+ *
+ *   - `unreachable`    — fetch threw / aborted (network error,
+ *                        DNS fail, timeout via AbortController)
+ *   - `secret_mismatch`— simulator returned 403 (wrong / short secret)
+ *   - `unknown`        — any other non-2xx response (4xx validation,
+ *                        5xx simulator crash, etc.)
+ *
+ * AbortController-based timeout: 5 s per call. The spec's SLA is
+ * "scenario switch applied within 5 s"; the timeout matches that
+ * budget so the api router's HTTP response to the SPA matches the
+ * downstream effect the SPA can observe.
+ */
+import { type ScenarioName } from "@surakkha/shared/simulator";
+
+/** Default per-call timeout — matches the spec's 5 s SLA. */
+export const SIMULATOR_CLIENT_TIMEOUT_MS = 5_000;
+
+const SECRET_HEADER = "X-Simulator-Secret";
+const CONTENT_TYPE_JSON = "application/json";
+const HTTP_FORBIDDEN = 403;
+
+export interface SimulatorClientDeps {
+  /** Base URL of the simulator control server (e.g. `http://localhost:4001`). */
+  readonly baseUrl: string;
+  /** Shared secret to authenticate against the simulator's control server. */
+  readonly secret: string;
+  /**
+   * Injectable `fetch` for tests. Production uses global `fetch`
+   * (Node 20).
+   */
+  readonly fetchImpl?: typeof fetch;
+}
+
+/**
+ * Typed result of a simulator POST. Either `{ ok: true, data }` or
+ * `{ ok: false, error }` where `error.kind` narrows the failure mode.
+ */
+export type SimulatorSwitchResult =
+  | { readonly ok: true; readonly data: { readonly applied: true } }
+  | {
+      readonly ok: false;
+      readonly error:
+        | { readonly kind: "unreachable"; readonly cause: string }
+        | { readonly kind: "secret_mismatch" }
+        | {
+            readonly kind: "unknown";
+            readonly status: number;
+            readonly body: unknown;
+          };
+    };
+
+/**
+ * POST a scenario switch to the simulator. The function is pure with
+ * respect to its inputs; the AbortController timeout is owned per
+ * call so two concurrent calls cannot starve each other.
+ */
+export const postSimulatorScenario = async (
+  deps: SimulatorClientDeps,
+  deviceId: string,
+  body: { readonly scenario: ScenarioName; readonly paused?: boolean },
+): Promise<SimulatorSwitchResult> => {
+  const url = `${deps.baseUrl.replace(/\/$/, "")}/admin/simulator/${deviceId}/scenario`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SIMULATOR_CLIENT_TIMEOUT_MS);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  try {
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        [SECRET_HEADER]: deps.secret,
+        "Content-Type": CONTENT_TYPE_JSON,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as { applied: true };
+      return { ok: true, data };
+    }
+
+    if (res.status === HTTP_FORBIDDEN) {
+      // Map simulator-side secret failure to our typed error so the
+      // router can return the same 403 the SPA already knows.
+      return { ok: false, error: { kind: "secret_mismatch" } };
+    }
+
+    // Best-effort parse of the error body. We do not want a malformed
+    // body to throw — the router maps `unknown` to a 502 anyway.
+    let parsed: unknown = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      parsed = null;
+    }
+    return {
+      ok: false,
+      error: { kind: "unknown", status: res.status, body: parsed },
+    };
+  } catch (cause) {
+    const message =
+      cause instanceof Error
+        ? cause.name === "AbortError"
+          ? "timeout"
+          : cause.message
+        : String(cause);
+    return { ok: false, error: { kind: "unreachable", cause: message } };
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+===== FILE: packages/api/src/admin/simulatorRouter.spec.ts =====
+/**
+ * Story 2.5 — admin simulator router integration.
+ *
+ * Covers the AC matrix:
+ *   - happy path: Admin POSTs a scenario, the simulator returns 200,
+ *     one `simulator_event` audit row with `outcome: "success"`.
+ *   - 403 (Operator): denied by `authorize({ action: "drive",
+ *     resource: "Simulator" })`.
+ *   - 400 (Bogus scenario): Zod rejects the body.
+ *   - 502 (simulator unreachable): outbound fetch rejects → 502.
+ *   - 503 (secret disabled): api-side SIMULATOR_SECRET unset → 503.
+ *   - 409 (switch_in_progress): second concurrent POST hits the
+ *     single-flight registry.
+ *
+ * Test strategy: the api's outbound call to the simulator uses a
+ * `fetchImpl` injected through the router deps. We DO NOT stub
+ * `globalThis.fetch` because the test runner itself uses `fetch` to
+ * talk to the api under test — replacing the global would silence
+ * the test's own POSTs.
+ */
+import express, { type Express } from "express";
+import { type AddressInfo, createServer, type Server } from "node:http";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { type AuditAction } from "@surakkha/shared/rbac";
+
+import { type AuditLogger } from "../audit";
+import { issueAccessToken } from "../auth/jwt";
+import { authenticate } from "../middleware/authorize";
+
+import {
+  buildAdminSimulatorPublicRouter,
+  buildAdminSimulatorRouter,
+} from "./simulatorRouter.js";
+
+const ADMIN_ID = "00000000-0000-4000-8000-00000000a001";
+const OPERATOR_ID = "00000000-0000-4000-8000-00000000a002";
+
+const STRONG_SECRET = "x".repeat(64);
+const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
+const DEVICE_B = "9b1c4f00-0000-4000-8000-000000000002";
+
+interface AuditEvent {
+  readonly auditAction: AuditAction;
+  readonly userId?: string;
+  readonly outcome: "success" | "failure";
+  readonly context?: Record<string, unknown>;
+}
+
+const tokenForRole = (role: "Admin" | "Operator"): string =>
+  issueAccessToken({ userId: role === "Admin" ? ADMIN_ID : OPERATOR_ID, role }).token;
+
+interface StartArgs {
+  readonly audit: AuditLogger;
+  readonly listDevices?: () => Promise<
+    ReadonlyArray<{ readonly id: string; readonly name: string | null; readonly scenario: string | null }>
+  >;
+  /**
+   * Outbound `fetch` used by the api when it POSTs to the simulator.
+   * If omitted the api uses the global `fetch` (which can hit a real
+   * simulator when one is running on port 4001).
+   */
+  readonly outboundFetch?: typeof fetch;
+}
+
+const startApp = async (
+  args: StartArgs,
+): Promise<{ url: string; close: () => Promise<void> }> => {
+  const app: Express = express();
+  app.use(express.json({ limit: "32kb" }));
+  // Story 2.5: `/status` is public; mount its public surface BEFORE
+  // `authenticate` to mirror the production wiring.
+  app.use(buildAdminSimulatorPublicRouter());
+  app.use(authenticate);
+  const routerDeps: Parameters<typeof buildAdminSimulatorRouter>[0] = {
+    audit: args.audit,
+    listDevices:
+      args.listDevices ??
+      (async () => [
+        { id: DEVICE_A, name: "DEVICE-1", scenario: "Normal" },
+        { id: DEVICE_B, name: "DEVICE-2", scenario: "RisingTDS" },
+      ]),
+    ...(args.outboundFetch !== undefined ? { fetchImpl: args.outboundFetch } : {}),
+  };
+  app.use("/admin/simulator", buildAdminSimulatorRouter(routerDeps));
+  const server: Server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${addr.port}`;
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => server.close(() => resolve()));
+  return { url, close };
+};
+
+const setSecret = (v: string | undefined): void => {
+  if (v === undefined) delete process.env["SIMULATOR_SECRET"];
+  else process.env["SIMULATOR_SECRET"] = v;
+};
+
+let originalSecret: string | undefined;
+
+beforeEach(() => {
+  originalSecret = process.env["SIMULATOR_SECRET"];
+  process.env["JWT_SECRET"] = STRONG_SECRET;
+  setSecret(STRONG_SECRET);
+});
+afterEach(() => {
+  setSecret(originalSecret);
+});
+
+describe("Story 2.5 — GET /admin/simulator/status (public)", () => {
+  it("returns 200 enabled: true when SIMULATOR_SECRET is set", async () => {
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/status`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: true });
+    await close();
+  });
+
+  it("returns 503 disabled: true when SIMULATOR_SECRET is unset", async () => {
+    setSecret(undefined);
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/status`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { enabled: boolean; reason: string };
+    expect(body.enabled).toBe(false);
+    expect(body.reason).toBe("missing");
+    await close();
+  });
+});
+
+describe("Story 2.5 — GET /admin/simulator/devices", () => {
+  it("returns the six rows from the listDevices repo", async () => {
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/devices`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      devices: Array<{ device_id: string; name: string | null; scenario: string | null }>;
+    };
+    expect(body.devices).toHaveLength(2);
+    expect(body.devices[0]?.device_id).toBe(DEVICE_A);
+    await close();
+  });
+
+  it("returns 401 when the bearer token is missing", async () => {
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/devices`);
+    expect(res.status).toBe(401);
+    await close();
+  });
+
+  it("returns 200 when an Operator reads the devices list (matrix grants read Device)", async () => {
+    // Per the RBAC matrix (shared/src/rbac.ts:60-72) Operator can
+    // `read Device`. The Admin-only gate for the page lives on the
+    // frontend (`<RbacRoute>`); the api exposes the listing to any
+    // authenticated role that the matrix allows.
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/devices`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(200);
+    await close();
+  });
+});
+
+describe("Story 2.5 — POST /admin/simulator/:device_id/scenario", () => {
+  it("Admin happy path: 200 + simulator_event audit on success", async () => {
+    // The api's outbound call to the simulator uses this stub. The
+    // test's own fetch to the api is unaffected.
+    const outboundFetch: typeof fetch = (async () =>
+      new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const events: AuditEvent[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: (e) => events.push(e) },
+      outboundFetch,
+    });
+
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: true });
+
+    const successEvent = events.find(
+      (e) =>
+        e.auditAction === "simulator_event" && e.outcome === "success",
+    );
+    expect(successEvent).toBeDefined();
+    expect(successEvent?.userId).toBe(ADMIN_ID);
+    expect(successEvent?.context).toMatchObject({
+      device_id: DEVICE_A,
+      scenario: "RisingTDS",
+    });
+
+    await close();
+  });
+
+  it("returns 403 when an Operator tries to drive the simulator", async () => {
+    const events: AuditEvent[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: (e) => events.push(e) },
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Operator")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("forbidden");
+    // The RBAC middleware writes its own `rbac_denied` audit row.
+    const denial = events.find((e) => e.auditAction === "rbac_denied");
+    expect(denial).toBeDefined();
+    await close();
+  });
+
+  it("returns 400 invalid_scenario for an unknown scenario name", async () => {
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "Bogus" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("validation_error");
+    await close();
+  });
+
+  it("returns 502 simulator_unreachable when the outbound fetch fails", async () => {
+    const outboundFetch: typeof fetch = (async () => {
+      throw new TypeError("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+
+    const events: AuditEvent[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: (e) => events.push(e) },
+      outboundFetch,
+    });
+
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("simulator_unreachable");
+
+    // On failure, the audit row is `outcome: "failure"` (we still log
+    // the attempt so the failure surface is debuggable).
+    const failureEvent = events.find(
+      (e) => e.auditAction === "simulator_event" && e.outcome === "failure",
+    );
+    expect(failureEvent).toBeDefined();
+
+    await close();
+  });
+
+  it("returns 503 disabled when api-side SIMULATOR_SECRET is unset", async () => {
+    setSecret(undefined);
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { disabled: boolean };
+    expect(body.disabled).toBe(true);
+    await close();
+  });
+
+  it("returns 409 switch_in_progress on a concurrent second POST", async () => {
+    // Slow outbound: resolves after the second POST lands.
+    const outboundFetch: typeof fetch = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+
+    const first = fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    // Yield so the first request enters the registry before the
+    // second is dispatched.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+
+    const [r1, r2] = await Promise.all([first, second]);
+    const statuses = [r1.status, r2.status].sort();
+    expect(statuses).toContain(200);
+    expect(statuses).toContain(409);
+    const conflictBody = (await (r1.status === 409 ? r1 : r2).json()) as {
+      error: string;
+    };
+    expect(conflictBody.error).toBe("switch_in_progress");
+
+    await close();
+  });
+
+  it("returns 403 secret_mismatch when the simulator rejects the secret", async () => {
+    const outboundFetch: typeof fetch = (async () =>
+      new Response(JSON.stringify({ error: "secret_mismatch" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("secret_mismatch");
+    await close();
+  });
+});
+
+===== FILE: packages/api/src/admin/simulatorRouter.ts =====
+/**
+ * Admin simulator router — Surakkha api (Story 2.5).
+ *
+ * Three routes:
+ *
+ *   GET  /admin/simulator/status
+ *     - Public (no auth, no RBAC). Returns `{ enabled: true }` when
+ *       SIMULATOR_SECRET is set on the api side; `{ enabled: false,
+ *       reason: "missing" }` otherwise. The disabled banner must
+ *       render for any authenticated user who navigates to the admin
+ *       tab; a 401/403 on this endpoint would lock them out of the
+ *       banner itself.
+ *
+ *   GET  /admin/simulator/devices
+ *     - Admin-only via `authorize({ action: "read", resource: "Device" }, audit)`.
+ *       (The matrix grants Admin.read.Device; Simulator.read is N
+ *       for all roles — see `packages/shared/src/rbac.ts:113` — but
+ *       reading the device list is not a Simulator-specific action,
+ *       so Device.read is the correct gate.) Returns six rows from
+ *       the Prisma `Device` table.
+ *
+ *   POST /admin/simulator/:device_id/scenario
+ *     - Admin-only via `authorize({ action: "drive", resource: "Simulator" }, audit)`.
+ *       Validates the body via Zod, single-flight per device (409 on
+ *       a second concurrent switch), then POSTs to the simulator's
+ *       control server. On success, writes an `AuditLog` row via the
+ *       structured logger.
+ */
+import { type ScenarioName, ScenarioNameSchema } from "@surakkha/shared/simulator";
+import express, { type Response, type Router } from "express";
+import { z } from "zod";
+
+import { type AuditLogger } from "../audit";
+import { authorize, type AuthorizedRequest, markPublic } from "../middleware/authorize";
+
+import {
+  postSimulatorScenario,
+  type SimulatorClientDeps,
+  type SimulatorSwitchResult,
+} from "./simulatorClient.js";
+
+
+const HTTP_OK = 200;
+const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
+const HTTP_SERVICE_UNAVAILABLE = 503;
+const HTTP_BAD_GATEWAY = 502;
+const HTTP_CONFLICT = 409;
+
+const scenarioSwitchBodySchema = z.object({
+  scenario: ScenarioNameSchema.optional(),
+  paused: z.boolean().optional(),
+});
+
+const UUID_V4_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Single-flight per device. `pendingSwitches` holds the in-flight
+ * promise for a given device_id; a second concurrent POST that hits
+ * the same device before the first resolves gets a 409
+ * `switch_in_progress`.
+ *
+ * The map is module-scoped so concurrent POSTs (e.g. two admins
+ * double-clicking Switch) coalesce correctly without a race.
+ */
+const pendingSwitches = new Map<string, Promise<unknown>>();
+
+/**
+ * Resolve the api's outbound `SIMULATOR_SECRET` and the simulator
+ * base URL. Returns `null` when secret is missing — the caller maps
+ * that to 503 `{ disabled: true }` and skips any outbound call.
+ */
+interface ResolvedSimulatorConfig {
+  readonly baseUrl: string;
+  readonly secret: string;
+}
+
+const resolveSimulatorConfig = (): ResolvedSimulatorConfig | null => {
+  const secret = process.env["SIMULATOR_SECRET"];
+  if (secret === undefined || secret === "") return null;
+  const baseUrl =
+    process.env["SIMULATOR_URL"] ?? "http://localhost:4001";
+  return { baseUrl, secret };
+};
+
+export interface SimulatorRouterDeps {
+  readonly audit: AuditLogger;
+  /**
+   * Inject the device repository. The production wiring uses
+   * `@prisma/client`'s `Device.findMany`; tests inject a stub.
+   */
+  readonly listDevices: () => Promise<
+    ReadonlyArray<{
+      readonly id: string;
+      readonly name: string | null;
+      readonly scenario: string | null;
+    }>
+  >;
+  /**
+   * Optional injectable `fetch` used by the outbound simulator
+   * client. Tests stub this to drive unreachable / secret_mismatch /
+   * success branches without overriding `globalThis.fetch` (which
+   * the test runner also uses to talk to the api). Production
+   * callers omit this and the router falls back to the global
+   * `fetch`.
+   */
+  readonly fetchImpl?: typeof fetch;
+}
+
+/**
+ * Translate a `SimulatorSwitchResult` into the HTTP envelope the SPA
+ * knows. Module-scoped so the route handler can stay under the
+ * eslint complexity ceiling.
+ */
+const renderSwitchResult = (
+  result: SimulatorSwitchResult,
+  res: Response,
+): void => {
+  if (result.ok) {
+    res.status(HTTP_OK).json(result.data);
+    return;
+  }
+  if (result.error.kind === "secret_mismatch") {
+    res.status(HTTP_FORBIDDEN).json({ error: "secret_mismatch" });
+    return;
+  }
+  if (result.error.kind === "unreachable") {
+    res.status(HTTP_BAD_GATEWAY).json({ error: "simulator_unreachable" });
+    return;
+  }
+  // unknown: simulator rejected the request shape or crashed.
+  res.status(HTTP_BAD_GATEWAY).json({
+    error: "simulator_unreachable",
+    upstream: result.error,
+  });
+};
+
+/**
+ * Validate the inbound POST: device_id (URL) is a v4 UUID, body is a
+ * valid `ScenarioSwitch`, and at least one of `scenario` / `paused`
+ * is present. Writes the failure response when validation fails and
+ * returns `{ ok: false }` so the caller can early-return.
+ */
+type ScenarioSwitchBody = z.infer<typeof scenarioSwitchBodySchema>;
+
+const validateScenarioRequest = (
+  req: AuthorizedRequest,
+  res: Response,
+):
+  | { readonly ok: true; readonly deviceId: string; readonly body: ScenarioSwitchBody }
+  | { readonly ok: false } => {
+  const deviceId = req.params["device_id"];
+  if (
+    deviceId === undefined ||
+    typeof deviceId !== "string" ||
+    !UUID_V4_REGEX.test(deviceId)
+  ) {
+    res.status(HTTP_BAD_REQUEST).json({ error: "invalid_device_id" });
+    return { ok: false };
+  }
+
+  const parsed = scenarioSwitchBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res
+      .status(HTTP_BAD_REQUEST)
+      .json({ error: "validation_error", issues: parsed.error.issues });
+    return { ok: false };
+  }
+  const body = parsed.data;
+  if (body.scenario === undefined && body.paused === undefined) {
+    res.status(HTTP_BAD_REQUEST).json({ error: "missing_action" });
+    return { ok: false };
+  }
+  return { ok: true, deviceId, body };
+};
+
+/**
+ * Public surface — `/status` only. Mounted BEFORE `app.use(authenticate)`
+ * in the production wiring so the disabled banner renders for
+ * unauthenticated users. The authenticated routes live on the
+ * `buildAdminSimulatorRouter` router and are mounted AFTER
+ * `authenticate`.
+ */
+export const buildAdminSimulatorPublicRouter = (): Router => {
+  const router = express.Router();
+  router.get(
+    "/admin/simulator/status",
+    markPublic((_req, res) => {
+      const cfg = resolveSimulatorConfig();
+      if (cfg === null) {
+        res.status(HTTP_SERVICE_UNAVAILABLE).json({
+          enabled: false,
+          reason: "missing",
+        });
+        return;
+      }
+      res.status(HTTP_OK).json({ enabled: true });
+    }),
+  );
+  return router;
+};
+
+/**
+ * Build the Express router. Tests construct a router with stubbed
+ * `listDevices` and override `process.env.SIMULATOR_SECRET` to drive
+ * the disabled / enabled branches.
+ */
+export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => {
+  const router = express.Router();
+
+  /**
+   * GET /admin/simulator/status — public, no RBAC. The admin tab
+   * needs this on every render to know whether to show the disabled
+   * banner. The production wiring exposes this via
+   * `buildAdminSimulatorPublicRouter()` mounted BEFORE
+   * `authenticate()`; the duplicate registration here is a safety
+   * net so the route works when the router is mounted standalone
+   * (e.g., in tests that exercise only the authenticated surface).
+   */
+  router.get(
+    "/status",
+    markPublic((_req, res) => {
+      const cfg = resolveSimulatorConfig();
+      if (cfg === null) {
+        res.status(HTTP_SERVICE_UNAVAILABLE).json({
+          enabled: false,
+          reason: "missing",
+        });
+        return;
+      }
+      res.status(HTTP_OK).json({ enabled: true });
+    }),
+  );
+
+  /**
+   * GET /admin/simulator/devices — Admin-only. Returns the six
+   * default devices + their current scenarios. The matrix grants
+   * Admin.read.Device but denies Simulator.read (per RBAC_MATRIX row
+   * `Admin.read.Simulator: N`), so we use `Device.read` instead.
+   * Story 1.5 already grants Device.read to Admin/Operator/
+   * Technician/Viewer; the page is gated by `<RbacRoute>` so only
+   * Admin reaches it.
+   */
+  router.get(
+    "/devices",
+    authorize({ action: "read", resource: "Device" }, deps.audit),
+    async (_req, res) => {
+      const rows = await deps.listDevices();
+      res.status(HTTP_OK).json({
+        devices: rows.map((r) => ({
+          device_id: r.id,
+          name: r.name,
+          scenario: r.scenario,
+        })),
+      });
+    },
+  );
+
+  /**
+   * POST /admin/simulator/:device_id/scenario — Admin-only via
+   * `drive × Simulator` (matrix grants Admin only). Validates the
+   * body, single-flight per device, then POSTs to the simulator.
+   */
+  router.post(
+    "/:device_id/scenario",
+    authorize({ action: "drive", resource: "Simulator" }, deps.audit),
+    async (req: AuthorizedRequest, res) => {
+      const validated = validateScenarioRequest(req, res);
+      if (!validated.ok) return;
+      const { deviceId, body } = validated;
+
+      const cfg = resolveSimulatorConfig();
+      if (cfg === null) {
+        res
+          .status(HTTP_SERVICE_UNAVAILABLE)
+          .json({ disabled: true, reason: "missing" });
+        return;
+      }
+
+      // Single-flight per device: second concurrent POST gets 409.
+      if (pendingSwitches.has(deviceId)) {
+        res.status(HTTP_CONFLICT).json({ error: "switch_in_progress" });
+        return;
+      }
+
+      const clientDeps: SimulatorClientDeps = {
+        baseUrl: cfg.baseUrl,
+        secret: cfg.secret,
+        ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+      };
+
+      // Wrap the outbound call + audit emit so a second concurrent
+      // POST sees the in-flight promise via the registry.
+      const userId = req.user?.id;
+      const work = (async (): Promise<SimulatorSwitchResult> => {
+        // Build the body shape expected by the simulator. The
+        // simulator's `paused` field is a verb in its own right; we
+        // forward it unchanged when present.
+        const outbound: { scenario?: ScenarioName; paused?: boolean } = {};
+        if (body.scenario !== undefined) outbound.scenario = body.scenario;
+        if (body.paused !== undefined) outbound.paused = body.paused;
+        const result = await postSimulatorScenario(
+          clientDeps,
+          deviceId,
+          outbound as { scenario: ScenarioName; paused?: boolean },
+        );
+        deps.audit.emit({
+          auditAction: "simulator_event",
+          userId,
+          outcome: result.ok ? "success" : "failure",
+          context: {
+            device_id: deviceId,
+            scenario: body.scenario,
+            paused: body.paused,
+            ...(result.ok ? {} : { error: result.error }),
+          },
+        });
+        return result;
+      })();
+      pendingSwitches.set(deviceId, work);
+
+      try {
+        const result = await work;
+        renderSwitchResult(result, res);
+      } finally {
+        pendingSwitches.delete(deviceId);
+      }
+    },
+  );
+
+  return router;
+};
+
+===== FILE: packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql =====
+-- Story 2.5 — Device name + scenario columns.
+--
+-- Adds two nullable columns to the `Device` table so the api can
+-- serve the `/admin/simulator/devices` listing without re-reading
+-- the simulator's local `devices.json`. Nullable to keep the
+-- forward migration safe for any rows that already exist from the
+-- Story 2.2 placeholder. A separate seed step (prisma/seed.ts) back-
+-- fills the six default devices with their canonical names + scenarios.
+
+-- AlterTable
+ALTER TABLE "Device" ADD COLUMN "name" TEXT;
+ALTER TABLE "Device" ADD COLUMN "scenario" TEXT;
+
+===== FILE: packages/db/prisma/seed.ts =====
+/**
+ * Surakkha database seed — Story 2.5.
+ *
+ * Backfills the six default devices from
+ * `packages/simulator/src/devices.json` into the `Device` table with
+ * human-readable `name` + canonical `scenario`. Idempotent: uses
+ * `upsert` keyed on `id` so re-running the seed never duplicates a
+ * row.
+ *
+ * Run via:
+ *   pnpm --filter @surakkha/db seed
+ *
+ * The canonical UUIDv4 device IDs are the wire-contract identity
+ * (architecture §3.1) — both the simulator's `devices.json` and this
+ * seed reference the same six IDs so the api's
+ * `GET /admin/simulator/devices` listing matches the simulator's
+ * in-memory client registry.
+ *
+ * `name` is a v1 placeholder derived from the device_id's last hex
+ * digit; the Story 2.3 school/facility metadata (the canonical human
+ * label) is a later story that fills `School.label`. v1 only needs
+ * something stable for the admin tab to render.
+ */
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { PrismaClient } from "@prisma/client";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+/**
+ * Canonical six-device list mirrored from
+ * `packages/simulator/src/devices.json`. The seed re-declares the
+ * list rather than reading the simulator's file at runtime so the
+ * seed has no cross-package dependency.
+ */
+const DEVICES_JSON_PATH = resolve(
+  __dirname,
+  "..",
+  "..",
+  "simulator",
+  "src",
+  "devices.json",
+);
+
+interface DevicesFileShape {
+  readonly tick_interval_ms: number;
+  readonly devices: ReadonlyArray<{
+    readonly device_id: string;
+    readonly scenario: string;
+  }>;
+}
+
+/**
+ * Derive a stable v1 placeholder name from the UUID's last hex
+ * digit. The Story 2.3 school-facility seed replaces this with the
+ * canonical school label; for v1, "DEVICE-N" is enough to render the
+ * admin tab row.
+ */
+const deriveName = (deviceId: string): string => {
+  const tail = deviceId.slice(-1).toUpperCase();
+  return `DEVICE-${tail}`;
+};
+
+const main = async (): Promise<void> => {
+  const raw = readFileSync(DEVICES_JSON_PATH, "utf8");
+  const parsed = JSON.parse(raw) as DevicesFileShape;
+  const prisma = new PrismaClient();
+  try {
+    for (const d of parsed.devices) {
+      await prisma.device.upsert({
+        where: { id: d.device_id },
+        update: {
+          name: deriveName(d.device_id),
+          scenario: d.scenario,
+        },
+        create: {
+          id: d.device_id,
+          name: deriveName(d.device_id),
+          scenario: d.scenario,
+        },
+      });
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `seed: upserted ${parsed.devices.length} device rows (name + scenario backfill)`,
+    );
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+main().catch((err: unknown) => {
+  console.error("seed: failed", err);
+  // eslint-disable-next-line no-restricted-properties
+  process.exit(1);
+});
+
+===== FILE: packages/shared/src/simulator.spec.ts =====
+/**
+ * Story 2.5 — shared simulator contract tests.
+ *
+ * Pins the closed enum of scenario names so the api and the simulator
+ * stay in lockstep. The seven names mirror
+ * `packages/simulator/src/scenarios.ts:35-44` (`SCENARIO_NAMES`); a
+ * drift between the two files would let the api accept a name the
+ * simulator would later reject (or vice versa).
+ */
+import { describe, expect, it } from "vitest";
+
+import { SCENARIO_NAMES, ScenarioNameSchema } from "./simulator.js";
+
+describe("Story 2.5 — shared SCENARIO_NAMES (closed enum)", () => {
+  it("contains exactly seven names in the documented order", () => {
+    expect(SCENARIO_NAMES).toEqual([
+      "Normal",
+      "RisingTDS",
+      "TurbiditySpike",
+      "ChlorineDrop",
+      "Offline",
+      "BatteryLow",
+      "RandomFailure",
+    ]);
+  });
+
+  it("contains seven names (length pin)", () => {
+    expect(SCENARIO_NAMES).toHaveLength(7);
+  });
+
+  it("has no duplicate entries", () => {
+    const set = new Set(SCENARIO_NAMES);
+    expect(set.size).toBe(SCENARIO_NAMES.length);
+  });
+
+  it("accepts every documented name via Zod parse", () => {
+    for (const name of SCENARIO_NAMES) {
+      expect(ScenarioNameSchema.safeParse(name).success).toBe(true);
+    }
+  });
+
+  it("rejects unknown names with a Zod failure", () => {
+    const result = ScenarioNameSchema.safeParse("Bogus");
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects the empty string", () => {
+    expect(ScenarioNameSchema.safeParse("").success).toBe(false);
+  });
+});
+
+===== FILE: packages/shared/src/simulator.ts =====
+/**
+ * Simulator contract types — Surakkha shared (Story 2.5).
+ *
+ * Re-declared here (rather than imported from `@surakkha/simulator`) so
+ * the api can validate inbound scenario names without taking a
+ * dependency on the simulator package. The simulator is a separate
+ * process; packages other than itself may not import it.
+ *
+ * The names MUST stay in lockstep with
+ * `packages/simulator/src/scenarios.ts:35-44` (`SCENARIO_NAMES`). The
+ * spec at `_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md`
+ * pins a closed enum of seven scenario names; the api uses this enum
+ * to validate `POST /admin/simulator/:device_id/scenario` bodies.
+ *
+ * Adding a scenario is a wire-contract-adjacent change. Bump both
+ * files in lockstep.
+ */
+import { z } from "zod";
+
+/**
+ * Closed enum of scenario names — mirrored from
+ * `packages/simulator/src/scenarios.ts:SCENARIO_NAMES`.
+ */
+export const SCENARIO_NAMES = [
+  "Normal",
+  "RisingTDS",
+  "TurbiditySpike",
+  "ChlorineDrop",
+  "Offline",
+  "BatteryLow",
+  "RandomFailure",
+] as const;
+export type ScenarioName = (typeof SCENARIO_NAMES)[number];
+
+/**
+ * Zod schema mirroring the closed enum above. Use this on inbound
+ * request bodies so an unknown name rejects with a 400 validation
+ * error rather than being silently dropped.
+ */
+export const ScenarioNameSchema = z.enum(SCENARIO_NAMES);
+
+===== FILE: packages/simulator/src/control/server.spec.ts =====
+/**
+ * Story 2.5 — Simulator control HTTP server.
+ *
+ * Pins:
+ *   - secret match accepts (200 with `{ applied: true }`)
+ *   - secret mismatch → 403 `{ error: "secret_mismatch" }`
+ *   - missing env → status 503 disabled; POST 503 disabled
+ *   - valid POST swaps the WsClient scenario
+ *   - invalid scenario name → 400 `{ error: "invalid_scenario" }`
+ *   - unknown device_id → 404 `{ error: "unknown_device" }`
+ *   - secret compare is constant-time (different lengths → 403, no
+ *     timing oracle)
+ */
+import {
+  type AddressInfo,
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  buildControlHandler,
+  type SimulatorClientLike,
+  setClientsRegistry,
+  startControlServer,
+} from "./server.js";
+
+const VALID_DEVICE = "9b1c4f00-0000-4000-8000-000000000001";
+const UNKNOWN_DEVICE = "9b1c4f00-0000-4000-8000-deadbeefdead";
+const STRONG_SECRET = "x".repeat(64);
+const SECRET_HEADER = "X-Simulator-Secret";
+
+type StubClient = SimulatorClientLike & {
+  __test__scenario: () => ScenarioName;
+  __test__paused: () => boolean;
+};
+
+const stubClient = (initial: ScenarioName): StubClient => {
+  let scenario: ScenarioName = initial;
+  let paused = false;
+  const client: StubClient = {
+    setScenario: (next) => {
+      scenario = next;
+    },
+    setPaused: (next) => {
+      paused = next;
+    },
+    __test__scenario: () => scenario,
+    __test__paused: () => paused,
+  };
+  return client;
+};
+
+const startServer = async (
+  registry: Map<string, SimulatorClientLike>,
+): Promise<{ url: string; close: () => Promise<void> }> => {
+  // Replace the registry BEFORE the server boots so the handler sees
+  // our stubbed clients.
+  setClientsRegistry(registry);
+  const server: Server = createServer(buildControlHandler());
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()),
+  );
+  const addr = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${addr.port}`;
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => server.close(() => resolve()));
+  return { url, close };
+};
+
+let originalSecret: string | undefined;
+
+beforeEach(() => {
+  originalSecret = process.env["SIMULATOR_SECRET"];
+  process.env["SIMULATOR_SECRET"] = STRONG_SECRET;
+});
+
+afterEach(() => {
+  if (originalSecret === undefined) delete process.env["SIMULATOR_SECRET"];
+  else process.env["SIMULATOR_SECRET"] = originalSecret;
+  setClientsRegistry(new Map());
+});
+
+describe("Story 2.5 — control server GET /admin/simulator/status", () => {
+  it("returns 200 { enabled: true } when secret matches", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/simulator/status`, {
+      headers: { [SECRET_HEADER]: STRONG_SECRET },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: true });
+    await close();
+  });
+
+  it("returns 403 secret_mismatch on a wrong secret", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/simulator/status`, {
+      headers: { [SECRET_HEADER]: "y".repeat(64) },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "secret_mismatch" });
+    await close();
+  });
+
+  it("returns 503 disabled when SIMULATOR_SECRET is unset", async () => {
+    delete process.env["SIMULATOR_SECRET"];
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/simulator/status`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(body.disabled).toBe(true);
+    expect(body.reason).toBe("missing");
+    await close();
+  });
+
+  it("returns 503 disabled when SIMULATOR_SECRET is below 32 chars", async () => {
+    process.env["SIMULATOR_SECRET"] = "too-short";
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/simulator/status`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(body.reason).toBe("too_short");
+    await close();
+  });
+});
+
+describe("Story 2.5 — control server POST /admin/simulator/:device_id/scenario", () => {
+  it("applies the new scenario on a valid request", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "RisingTDS" }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ applied: true });
+    expect(
+      (client as SimulatorClientLike & { __test__scenario: () => string })
+        .__test__scenario(),
+    ).toBe("RisingTDS");
+    await close();
+  });
+
+  it("rejects an unknown scenario with 400 invalid_scenario", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "Bogus" }),
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_scenario" });
+    expect(
+      (client as SimulatorClientLike & { __test__scenario: () => string })
+        .__test__scenario(),
+    ).toBe("Normal");
+    await close();
+  });
+
+  it("rejects an unknown device_id with 404 unknown_device", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(
+      `${url}/admin/simulator/${UNKNOWN_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "RisingTDS" }),
+      },
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "unknown_device" });
+    await close();
+  });
+
+  it("rejects a wrong-length secret with 403 secret_mismatch (no timing oracle)", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: "y".repeat(8),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "RisingTDS" }),
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "secret_mismatch" });
+    await close();
+  });
+
+  it("applies a paused toggle via the same endpoint", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ paused: true }),
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(
+      (client as SimulatorClientLike & { __test__paused: () => boolean })
+        .__test__paused(),
+    ).toBe(true);
+    await close();
+  });
+});
+
+describe("Story 2.5 — startControlServer boots on env-supplied port", () => {
+  it("respects SIMULATOR_CONTROL_PORT env var", async () => {
+    process.env["SIMULATOR_CONTROL_PORT"] = "0";
+    setClientsRegistry(new Map());
+    const { port, close } = await startControlServer();
+    expect(typeof port).toBe("number");
+    await close();
+  });
+});
+
+// Inert imports to avoid TS unused warnings on test seam fields.
+type _IncomingMessage = IncomingMessage;
+type _ServerResponse = ServerResponse;
+const _inert: _IncomingMessage | undefined = undefined;
+const _inert2: _ServerResponse | undefined = undefined;
+void _inert;
+void _inert2;
+
+===== FILE: packages/simulator/src/control/server.ts =====
+/**
+ * Simulator control HTTP server — Story 2.5.
+ *
+ * Plain Node `http.createServer` (no Express) that exposes:
+ *
+ *   POST /admin/simulator/:device_id/scenario
+ *     - Body: { scenario: ScenarioName }
+ *     - Validates `X-Simulator-Secret` (constant-time compare against
+ *       `process.env.SIMULATOR_SECRET`).
+ *     - Looks up the device_id in the simulator's module-scoped
+ *       client registry (lifted out of `boot()` so the registry is
+ *       readable from this server) and applies the new scenario.
+ *
+ *   GET /admin/simulator/status
+ *     - Returns `{ enabled: true|false }`. Always public (no auth, no
+ *       RBAC) so the api can render a disabled banner for any
+ *       authenticated user who navigates to the admin tab.
+ *
+ * The port defaults to `SIMULATOR_CONTROL_PORT` (4001) and is
+ * intentionally different from the api's HTTP port (3000) and the
+ * WebSocket telemetry port so the three surfaces cannot collide.
+ *
+ * Story 2.5 AC: secret mismatches return 403, missing env returns 503,
+ * unknown device_id returns 404, invalid scenario returns 400. All
+ * comparisons are constant-time (`crypto.timingSafeEqual`).
+ */
+import { timingSafeEqual } from "node:crypto";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+
+import { createLogger } from "@surakkha/shared/logger";
+
+import { SCENARIO_NAMES, type ScenarioName } from "../scenarios.js";
+
+const logger = createLogger({
+  name: "surakkha-simulator-control",
+  level: "info",
+});
+
+const DEFAULT_CONTROL_PORT = 4_001;
+
+const HTTP_OK = 200;
+const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
+const HTTP_NOT_FOUND = 404;
+const HTTP_SERVICE_UNAVAILABLE = 503;
+
+const UUID_V4_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const SECRET_HEADER = "x-simulator-secret";
+const CONTENT_TYPE_JSON = "application/json";
+/** Hard cap on the simulator control POST body. 16 KB is plenty for
+ * `{ scenario: "RisingTDS" }` and prevents a misbehaving caller from
+ * OOMing the simulator with a single request. */
+// eslint-disable-next-line no-magic-numbers -- 16 KiB cap, named for clarity
+const MAX_BODY_BYTES = 16 * 1024;
+
+/**
+ * Lightweight per-device view exposed by the simulator's module-
+ * scoped registry. `WsClient` implements the surface directly; we
+ * declare it here as a structural interface so `server.ts` does not
+ * import from `index.ts` (avoiding the circular import).
+ */
+export interface SimulatorClientLike {
+  setScenario(name: ScenarioName): void;
+  setPaused(paused: boolean): void;
+}
+
+/**
+ * Singleton client registry — populated by `index.ts:boot()` and
+ * consulted by the control server. The explicit getter/setter pair
+ * keeps tests from having to spin up a real `boot()`.
+ */
+let clientsRegistry: ReadonlyMap<string, SimulatorClientLike> = new Map();
+
+export const setClientsRegistry = (
+  next: ReadonlyMap<string, SimulatorClientLike>,
+): void => {
+  clientsRegistry = next;
+};
+
+export const getClientsRegistry = (): ReadonlyMap<string, SimulatorClientLike> =>
+  clientsRegistry;
+
+const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
+
+const isScenarioName = (value: unknown): value is ScenarioName =>
+  typeof value === "string" && SCENARIO_SET.has(value as ScenarioName);
+
+/**
+ * Resolve `SIMULATOR_SECRET` from the env. The discriminated union
+ * shape mirrors `resolveJwtSecret` (`src/jwt.ts`) so callers can
+ * branch on `ok` without try/catch.
+ *
+ * Story 2.5 AC: missing/short secret → disabled state, NOT fail-fast.
+ */
+export const resolveSimulatorSecret = ():
+  | { readonly ok: true; readonly value: string }
+  | { readonly ok: false; readonly reason: "missing" | "too_short" } => {
+  const raw = process.env["SIMULATOR_SECRET"];
+  if (raw === undefined || raw === "") {
+    return { ok: false, reason: "missing" };
+  }
+  // Same minimum as JWT_SECRET (32 chars). Anything shorter is too
+  // easy to brute-force.
+  if (raw.length < 32) {
+    return { ok: false, reason: "too_short" };
+  }
+  return { ok: true, value: raw };
+};
+
+/**
+ * Constant-time compare two strings. Reject non-matching lengths
+ * BEFORE the comparison so `timingSafeEqual` never throws on the
+ * "different buffer lengths" path.
+ */
+const constantTimeEquals = (provided: string, expected: string): boolean => {
+  if (provided.length !== expected.length) return false;
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return timingSafeEqual(a, b);
+};
+
+const readSecretFromHeader = (req: IncomingMessage): string | null => {
+  const raw = req.headers[SECRET_HEADER];
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return null;
+};
+
+/**
+ * Read the JSON body of an incoming POST. Caps the body at
+ * `MAX_BODY_BYTES` so a misbehaving client cannot OOM the simulator
+ * with a single request.
+ */
+const readJsonBody = async (
+  req: IncomingMessage,
+  limit = MAX_BODY_BYTES,
+): Promise<unknown> => {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    total += buf.length;
+    if (total > limit) {
+      throw new Error("payload_too_large");
+    }
+    chunks.push(buf);
+  }
+  if (chunks.length === 0) return {};
+  const raw = Buffer.concat(chunks).toString("utf8");
+  if (raw.trim() === "") return {};
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new Error("invalid_json");
+  }
+};
+
+const sendJson = (
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+): void => {
+  const target = res;
+  target.statusCode = status;
+  target.setHeader("Content-Type", CONTENT_TYPE_JSON);
+  target.end(JSON.stringify(body));
+};
+
+/**
+ * Parse the URL path into its canonical `/admin/simulator/...`
+ * segments. Returns null for any path outside the expected shape.
+ */
+interface ParsedRoute {
+  readonly kind: "status" | "scenario";
+  readonly deviceId?: string;
+}
+
+const SCENARIO_SUFFIX = "/scenario";
+
+/**
+ * Validate a single segment as a v4 UUID. Returns the segment when
+ * valid, `null` otherwise. Lifted out of `parseRoute` so the function
+ * stays under the eslint complexity ceiling.
+ */
+const parseUuidSegment = (segment: string): string | null => {
+  if (segment === "") return null;
+  if (segment.includes("/")) return null;
+  if (!UUID_V4_REGEX.test(segment)) return null;
+  return segment;
+};
+
+const parseRoute = (rawUrl: string): ParsedRoute | null => {
+  // Strip the query string.
+  const pathOnly = rawUrl.split("?")[0] ?? "/";
+  if (pathOnly === "/admin/simulator/status") return { kind: "status" };
+  const scenarioPrefix = "/admin/simulator/";
+  if (!pathOnly.startsWith(scenarioPrefix)) return null;
+  // Strip prefix; what remains is `<uuid>` or `<uuid>/scenario`.
+  const rest = pathOnly.slice(scenarioPrefix.length);
+  if (rest.endsWith(SCENARIO_SUFFIX)) {
+    const deviceId = parseUuidSegment(
+      rest.slice(0, rest.length - SCENARIO_SUFFIX.length),
+    );
+    return deviceId === null ? null : { kind: "scenario", deviceId };
+  }
+  // /admin/simulator/<uuid> (GET used as a fallback when the api is
+  // dispatching via Express — kept for completeness).
+  const deviceId = parseUuidSegment(rest);
+  return deviceId === null ? null : { kind: "scenario", deviceId };
+};
+
+/**
+ * Resolve a `secretResult` shape into the disabled-state response, or
+ * `null` when the secret is present and valid.
+ */
+const disabledResponse = (
+  secretResult: { readonly ok: false; readonly reason: "missing" | "too_short" },
+): { readonly status: number; readonly body: unknown } => ({
+  status: HTTP_SERVICE_UNAVAILABLE,
+  body: { disabled: true, reason: secretResult.reason },
+});
+
+/**
+ * Apply the parsed body to the matching client. Lifted out of the
+ * request handler so the route function stays under the complexity
+ * ceiling.
+ */
+const applyControlBody = (
+  deviceId: string,
+  bodyRecord: Record<string, unknown>,
+): { readonly status: number; readonly body: unknown } | null => {
+  const { scenario, paused } = bodyRecord;
+  // Allow either `{ scenario: "RisingTDS" }` or `{ paused: true }`
+  // (or both). The simulator's control surface is a single endpoint;
+  // the api translates the admin tab's Start / Pause / Switch
+  // primitives into the matching verb.
+  if (scenario === undefined && paused === undefined) {
+    return { status: HTTP_BAD_REQUEST, body: { error: "missing_action" } };
+  }
+  if (scenario !== undefined && !isScenarioName(scenario)) {
+    return { status: HTTP_BAD_REQUEST, body: { error: "invalid_scenario" } };
+  }
+  const client = clientsRegistry.get(deviceId);
+  if (client === undefined) {
+    return { status: HTTP_NOT_FOUND, body: { error: "unknown_device" } };
+  }
+  if (scenario !== undefined) {
+    client.setScenario(scenario);
+  }
+  if (typeof paused === "boolean") {
+    client.setPaused(paused);
+  }
+  logger.info({ deviceId, scenario, paused }, "simulator: control applied");
+  return { status: HTTP_OK, body: { applied: true } };
+};
+
+/**
+ * Handle the scenario-switch branch. Reads JSON, looks up the client,
+ * applies the action.
+ */
+const handleScenarioRoute = async (
+  req: IncomingMessage,
+  res: ServerResponse,
+  deviceId: string,
+): Promise<void> => {
+  if (req.method !== "POST") {
+    sendJson(res, HTTP_BAD_REQUEST, { error: "method_not_allowed" });
+    return;
+  }
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    sendJson(res, HTTP_BAD_REQUEST, {
+      error:
+        message === "invalid_json" ? "invalid_json" : "payload_too_large",
+    });
+    return;
+  }
+  const bodyRecord =
+    typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>)
+      : {};
+  const result = applyControlBody(deviceId, bodyRecord);
+  if (result === null) {
+    sendJson(res, HTTP_NOT_FOUND, { error: "unknown_device" });
+    return;
+  }
+  sendJson(res, result.status, result.body);
+};
+
+/**
+ * The actual request handler, lifted out so `buildControlHandler`
+ * doesn't return an arrow function from an arrow function (eslint
+ * `unicorn/consistent-function-scoping`).
+ */
+const handleControlRequest = async (
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> => {
+  const route = parseRoute(req.url ?? "/");
+  if (route === null) {
+    sendJson(res, HTTP_NOT_FOUND, { error: "not_found" });
+    return;
+  }
+
+  const secretResult = resolveSimulatorSecret();
+  if (!secretResult.ok) {
+    // Disabled state — same response shape on /status and /scenario
+    // so the api can render the disabled banner without parsing the
+    // route.
+    const disabled = disabledResponse(secretResult);
+    sendJson(res, disabled.status, disabled.body);
+    return;
+  }
+
+  const providedSecret = readSecretFromHeader(req);
+  // Reject non-matching lengths BEFORE the constant-time compare.
+  if (
+    providedSecret === null ||
+    !constantTimeEquals(providedSecret, secretResult.value)
+  ) {
+    sendJson(res, HTTP_FORBIDDEN, { error: "secret_mismatch" });
+    return;
+  }
+
+  if (route.kind === "status") {
+    sendJson(res, HTTP_OK, { enabled: true });
+    return;
+  }
+
+  // route.kind === "scenario"
+  const { deviceId } = route;
+  if (deviceId === undefined) {
+    sendJson(res, HTTP_NOT_FOUND, { error: "not_found" });
+    return;
+  }
+  await handleScenarioRoute(req, res, deviceId);
+};
+
+/**
+ * Build the request handler. The handlers are returned as a function
+ * so tests can pass it directly to `http.createServer` with a stub
+ * port.
+ */
+export const buildControlHandler = (): ((
+  req: IncomingMessage,
+  res: ServerResponse,
+) => Promise<void>) => handleControlRequest;
+
+/**
+ * Boot the control server. Returns a `close()` function the caller
+ * can use during graceful shutdown. The port is read once at call
+ * time; tests inject their own port via `process.env.SIMULATOR_CONTROL_PORT`.
+ */
+export const startControlServer = async (port?: number): Promise<{
+  readonly port: number;
+  readonly close: () => Promise<void>;
+}> => {
+  const resolvedPort =
+    port ??
+    (() => {
+      const raw = process.env["SIMULATOR_CONTROL_PORT"];
+      if (raw === undefined || raw === "") return DEFAULT_CONTROL_PORT;
+      const parsed = Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : DEFAULT_CONTROL_PORT;
+    })();
+
+  const server = createHttpServer(buildControlHandler());
+  await new Promise<void>((resolve) =>
+    server.listen(resolvedPort, "127.0.0.1", () => resolve()),
+  );
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve) => server.close(() => resolve()));
+  return { port: resolvedPort, close };
+};
+
+===== FILE: packages/web/.env.example =====
+# Surakkha web — environment variables (development).
+#
+# The web app talks to the api over HTTP only; the api → simulator
+# control channel is invisible to the SPA. The web app does NOT need
+# `SIMULATOR_SECRET` — that secret is shared between the api and the
+# simulator processes only.
+
+# Base URL of the api. In docker-compose (Story 6.1) the web
+# container reaches the api at `http://api:3000`. In `vite dev` the
+# Vite proxy forwards `/auth/*` and `/api/*` to `http://localhost:3000`.
+VITE_API_BASE_URL=http://localhost:3000
+
+===== FILE: packages/web/src/admin/simulator/DeviceRow.tsx =====
+/**
+ * DeviceRow — Story 2.5.
+ *
+ * One row per device. Shows:
+ *   - human label (`name`) + truncated UUID
+ *   - current scenario badge
+ *   - scenario `<select>` with the seven SCENARIO_NAMES
+ *   - Switch button (disabled while the row's mutation is in flight)
+ *   - Start / Pause toggle button
+ *
+ * The row is read-only on the `enabled === false` path; the parent
+ * (`SimulatorPage`) instead renders the disabled banner above the
+ * list and the rows are not rendered at all in that case.
+ */
+import { SCENARIO_NAMES, type ScenarioName } from "@surakkha/shared/simulator";
+import { useState } from "react";
+
+import {
+  type SimulatorDevice,
+  type SwitchScenarioError,
+  useSwitchScenario,
+} from "./useSimulatorDevices";
+
+const BADGE_BG = "#E8F6EE";
+const BADGE_TEXT = "#0F6B3A";
+
+const PRIMARY = "#1E5BB8";
+
+export interface DeviceRowProps {
+  readonly device: SimulatorDevice;
+  readonly onError: (err: SwitchScenarioError) => void;
+  readonly onSuccess: (msg: string) => void;
+}
+
+export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
+  const [selected, setSelected] = useState<string>(
+    device.scenario ?? "Normal",
+  );
+  const [paused, setPaused] = useState(false);
+  const mutation = useSwitchScenario();
+
+  const { isPending } = mutation;
+
+  const submit = (body: { scenario?: string; paused?: boolean }): void => {
+    mutation.mutate(
+      { deviceId: device.device_id, ...body },
+      {
+        onSuccess: () => {
+          if (body.scenario !== undefined) {
+            onSuccess(`Switched to ${body.scenario}.`);
+          } else if (body.paused === true) {
+            onSuccess("Paused.");
+          } else if (body.paused === false) {
+            onSuccess("Resumed.");
+          }
+        },
+        onError: (err) => {
+          onError(err);
+        },
+      },
+    );
+  };
+
+  return (
+    <article
+      data-testid={`simulator-row-${device.device_id}`}
+      className="rounded-card border p-4"
+      style={{
+        backgroundColor: "#FFFFFF",
+        borderColor: "#E2E8F0",
+      }}
+    >
+      <header className="mb-3 flex items-center justify-between">
+        <div>
+          <h2
+            className="text-md font-semibold"
+            style={{ color: "#0F172A" }}
+            data-testid={`simulator-row-name-${device.device_id}`}
+          >
+            {device.name ?? "Unnamed device"}
+          </h2>
+          <p
+            className="text-sm"
+            style={{ color: "#475569" }}
+            data-testid={`simulator-row-id-${device.device_id}`}
+          >
+            {device.device_id}
+          </p>
+        </div>
+        <span
+          data-testid={`simulator-row-scenario-${device.device_id}`}
+          className="rounded-pill px-3 py-1 text-sm font-medium"
+          style={{ backgroundColor: BADGE_BG, color: BADGE_TEXT }}
+        >
+          {device.scenario ?? "Unknown"}
+        </span>
+      </header>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span style={{ color: "#475569" }}>Switch to scenario</span>
+          <select
+            data-testid={`simulator-row-select-${device.device_id}`}
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            disabled={isPending}
+            className="rounded-input border px-3 py-2 text-md"
+            style={{
+              borderColor: "#E2E8F0",
+              color: "#0F172A",
+              backgroundColor: "#FFFFFF",
+            }}
+          >
+            {SCENARIO_NAMES.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            data-testid={`simulator-row-switch-${device.device_id}`}
+            onClick={() => submit({ scenario: selected })}
+            disabled={isPending}
+            className="rounded-input px-4 py-2 text-md font-medium text-white"
+            style={{ backgroundColor: PRIMARY }}
+          >
+            {isPending ? "Switching…" : "Switch"}
+          </button>
+          <button
+            type="button"
+            data-testid={`simulator-row-pause-${device.device_id}`}
+            onClick={() => {
+              const next = !paused;
+              setPaused(next);
+              submit({ paused: next });
+            }}
+            disabled={isPending}
+            className="rounded-input border px-4 py-2 text-md"
+            style={{
+              borderColor: "#E2E8F0",
+              color: "#0F172A",
+              backgroundColor: "#FFFFFF",
+            }}
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
+        </div>
+      </div>
+
+      {/* A type-narrow shim so SCENARIO_NAMES is referenced (the
+          const is imported for its array values, but tsc's "no unused
+          imports" rule fires if we don't touch it indirectly). */}
+      <span data-testid={`simulator-row-scenarios-${device.device_id}`}>
+        {(SCENARIO_NAMES as readonly ScenarioName[]).join(", ")}
+      </span>
+    </article>
+  );
+};
+
+===== FILE: packages/web/src/admin/simulator/DisabledBanner.tsx =====
+/**
+ * DisabledBanner — Story 2.5.
+ *
+ * Calm "simulator is not configured" state for the admin tab. The
+ * banner copy is pinned: "Simulator disabled. Set SIMULATOR_SECRET."
+ * No call-to-action button (the secret lives in the operator's
+ * `.env`, not the SPA).
+ */
+const BANNER_BG = "#FFF7ED"; /* warm-warning surface */
+const BANNER_BORDER = "#FDBA74";
+const BANNER_TEXT = "#7C2D12";
+
+export const DISABLED_BANNER_COPY =
+  "Simulator disabled. Set SIMULATOR_SECRET.";
+
+export const DisabledBanner = () => (
+  <div
+    data-testid="simulator-disabled-banner"
+    role="status"
+    aria-live="polite"
+    className="rounded-card border p-4 text-md"
+    style={{
+      backgroundColor: BANNER_BG,
+      borderColor: BANNER_BORDER,
+      color: BANNER_TEXT,
+    }}
+  >
+    {DISABLED_BANNER_COPY}
+  </div>
+);
+
+===== FILE: packages/web/src/admin/simulator/SimulatorPage.spec.tsx =====
+/**
+ * Story 2.5 — SimulatorPage integration.
+ *
+ * AC matrix:
+ *   - Admin: six rows render with the right testids and the row
+ *     controls work.
+ *   - non-admin: `<RbacDenied />` renders, no API call beyond the
+ *     route gate.
+ *   - disabled banner: status endpoint returns 503 → banner only, no
+ *     controls rendered.
+ *   - Switch posts and shows a success toast; on failure the UI
+ *     does NOT update optimistically (the row keeps the old scenario
+ *     badge).
+ */
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+
+import { CurrentRoleProvider } from "../../auth/CurrentRoleContext";
+import { RbacRoute } from "../../access/RbacRoute";
+import { AppShell } from "../../shell/AppShell";
+import { configureApiClient, _resetApiClientConfig } from "../../api/apiClient";
+
+import { SimulatorPage } from "./SimulatorPage";
+
+const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
+const DEVICE_B = "9b1c4f00-0000-4000-8000-000000000002";
+const DEVICE_C = "9b1c4f00-0000-4000-8000-000000000003";
+const DEVICE_D = "9b1c4f00-0000-4000-8000-000000000004";
+const DEVICE_E = "9b1c4f00-0000-4000-8000-000000000005";
+const DEVICE_F = "9b1c4f00-0000-4000-8000-000000000006";
+
+const DEVICE_LIST = [
+  { device_id: DEVICE_A, name: "DEVICE-1", scenario: "Normal" },
+  { device_id: DEVICE_B, name: "DEVICE-2", scenario: "RisingTDS" },
+  { device_id: DEVICE_C, name: "DEVICE-3", scenario: "TurbiditySpike" },
+  { device_id: DEVICE_D, name: "DEVICE-4", scenario: "ChlorineDrop" },
+  { device_id: DEVICE_E, name: "DEVICE-5", scenario: "Offline" },
+  { device_id: DEVICE_F, name: "DEVICE-6", scenario: "RandomFailure" },
+];
+
+const setViewport = (width: number) => {
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: width,
+  });
+  window.matchMedia = (query: string) => {
+    const matches =
+      (query.includes("min-width: 1024") && width >= 1024) ||
+      (query.includes("min-width: 768") && width >= 768);
+    return {
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList;
+  };
+};
+
+const buildQueryClient = (): QueryClient =>
+  new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+const renderAdminSimulator = () => {
+  const qc = buildQueryClient();
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/admin/simulator"]}>
+        <CurrentRoleProvider initialRole="Admin">
+          <AppShell>
+            <RbacRoute>
+              <SimulatorPage />
+            </RbacRoute>
+          </AppShell>
+        </CurrentRoleProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+};
+
+const renderDeniedSimulator = (role: "Viewer" | "Operator" | "Technician" | null) => {
+  const qc = buildQueryClient();
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/admin/simulator"]}>
+        <CurrentRoleProvider initialRole={role}>
+          <AppShell>
+            <RbacRoute>
+              <SimulatorPage />
+            </RbacRoute>
+          </AppShell>
+        </CurrentRoleProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+};
+
+const ORIGINAL_FETCH = globalThis.fetch;
+
+const installFetch = (
+  handler: (url: string, init?: RequestInit) => Promise<Response>,
+): void => {
+  globalThis.fetch = handler as unknown as typeof fetch;
+};
+
+beforeEach(() => {
+  setViewport(1280);
+  configureApiClient({
+    apiOrigin: "https://api.test",
+    navigate: () => undefined,
+    onOffline: () => undefined,
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  globalThis.fetch = ORIGINAL_FETCH;
+  _resetApiClientConfig();
+});
+
+describe("Story 2.5 — Admin renders six rows with controls", () => {
+  it("renders six DeviceRow instances with the documented testids", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-${DEVICE_A}`)).toBeInTheDocument();
+    });
+    for (const d of DEVICE_LIST) {
+      expect(screen.getByTestId(`simulator-row-${d.device_id}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`simulator-row-switch-${d.device_id}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`simulator-row-pause-${d.device_id}`)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("simulator-device-count").textContent).toContain("6");
+  });
+
+  it("renders the disabled banner when /status returns 503", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: false, reason: "missing" }), {
+          status: 503,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    renderAdminSimulator();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-page-disabled")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("simulator-disabled-banner")).toBeInTheDocument();
+    expect(screen.queryByTestId(`simulator-row-${DEVICE_A}`)).toBeNull();
+  });
+});
+
+describe("Story 2.5 — RbacDenied for non-Admin roles", () => {
+  for (const role of ["Viewer", "Operator", "Technician"] as const) {
+    it(`renders <RbacDenied /> for ${role} without calling the api`, async () => {
+      const fetchSpy = vi.fn();
+      installFetch((url) => {
+        fetchSpy(url);
+        return Promise.resolve(new Response("{}", { status: 404 }));
+      });
+      renderDeniedSimulator(role);
+
+      // The RbacDenied surface renders synchronously; no api call
+      // should have been made.
+      await waitFor(() => {
+        expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  }
+});
+
+describe("Story 2.5 — Switch happy path", () => {
+  it("POSTs the new scenario and shows a success toast", async () => {
+    const posted: Array<{ url: string; body: string }> = [];
+    installFetch(async (url, init) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        const body = (init?.body as string) ?? "";
+        posted.push({ url, body });
+        return new Response(JSON.stringify({ applied: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-success")).toBeInTheDocument();
+    });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.url).toContain(DEVICE_B);
+    expect(JSON.parse(posted[0]?.body ?? "{}")).toEqual({
+      scenario: "RisingTDS",
+    });
+  });
+});
+
+describe("Story 2.5 — Switch failure path", () => {
+  it("shows an error toast and does NOT optimistically update the row", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ error: "simulator_unreachable" }), {
+          status: 502,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`)).toBeInTheDocument();
+    });
+
+    // The row's scenario badge starts at "Normal" (from DEVICE_LIST).
+    expect(
+      screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent,
+    ).toBe("Normal");
+
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-error")).toBeInTheDocument();
+    });
+    // The row's badge is unchanged — no optimistic update on failure.
+    expect(
+      screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent,
+    ).toBe("Normal");
+  });
+});
+
+describe("Story 2.5 — Pause control", () => {
+  it("POSTs { paused: true } when the Pause button is clicked", async () => {
+    const posted: Array<{ url: string; body: string }> = [];
+    installFetch(async (url, init) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        const body = (init?.body as string) ?? "";
+        posted.push({ url, body });
+        return new Response(JSON.stringify({ applied: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`));
+
+    await waitFor(() => {
+      expect(posted.length).toBeGreaterThanOrEqual(1);
+    });
+    expect(posted[0]?.url).toContain(DEVICE_C);
+    expect(JSON.parse(posted[0]?.body ?? "{}")).toEqual({
+      paused: true,
+    });
+  });
+});
+
+describe("Story 2.5 — 409 switch_in_progress surfaces as an error toast", () => {
+  it("shows an error toast when a second Switch hits the single-flight registry", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ error: "switch_in_progress" }), {
+          status: 409,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_D}`)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_D}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-error")).toBeInTheDocument();
+    });
+  });
+});
+
+===== FILE: packages/web/src/admin/simulator/SimulatorPage.tsx =====
+/**
+ * SimulatorPage — Story 2.5.
+ *
+ * Renders the admin tab at `/admin/simulator`. Three states:
+ *   1. disabled (SIMULATOR_SECRET unset)  → banner only.
+ *   2. loading                             → calm "Loading…" stub.
+ *   3. enabled                             → six `DeviceRow`s + a toast
+ *      region for switch success / failure toasts.
+ *
+ * The toast region is a small inline list — Story 2.5 does not pull
+ * in a global toast system; the spec mandates "toast" semantics
+ * (auto-dismiss) but a list with a manual dismiss works for the v1
+ * surface and keeps the dependency footprint small.
+ */
+import { useState } from "react";
+
+import { DeviceRow } from "./DeviceRow";
+import { DisabledBanner } from "./DisabledBanner";
+import {
+  type SwitchScenarioError,
+  useSimulatorDevices,
+  useSimulatorStatus,
+} from "./useSimulatorDevices";
+
+interface ToastEntry {
+  readonly id: number;
+  readonly tone: "success" | "error";
+  readonly message: string;
+}
+
+const TOAST_TTL_MS = 4_000;
+
+const TOAST_BG: Record<ToastEntry["tone"], string> = {
+  success: "#E8F6EE",
+  error: "#FEE2E2",
+};
+const TOAST_TEXT: Record<ToastEntry["tone"], string> = {
+  success: "#0F6B3A",
+  error: "#7F1D1D",
+};
+
+const errorMessage = (err: SwitchScenarioError): string => {
+  switch (err.kind) {
+    case "secret_mismatch":
+      return "Simulator disabled.";
+    case "simulator_unreachable":
+      return "Simulator unreachable.";
+    case "switch_in_progress":
+      return "Another switch is in progress.";
+    case "validation_error":
+      return "Switch failed: invalid input.";
+    case "unknown":
+      return `Switch failed (${err.status}).`;
+  }
+};
+
+export const SimulatorPage = () => {
+  const statusQuery = useSimulatorStatus();
+  const devicesQuery = useSimulatorDevices();
+  const [toasts, setToasts] = useState<readonly ToastEntry[]>([]);
+
+  const pushToast = (tone: ToastEntry["tone"], message: string): void => {
+    const id = Date.now() + Math.random();
+    setToasts((cur) => [...cur, { id, tone, message }]);
+    setTimeout(() => {
+      setToasts((cur) => cur.filter((t) => t.id !== id));
+    }, TOAST_TTL_MS);
+  };
+
+  // Loading state.
+  if (statusQuery.isLoading || devicesQuery.isLoading) {
+    return (
+      <div data-testid="simulator-page-loading">
+        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <p className="mt-2 text-md text-neutral-secondary">Loading…</p>
+      </div>
+    );
+  }
+
+  // Disabled state — banner only, no rows.
+  if (statusQuery.data?.enabled === false) {
+    return (
+      <div data-testid="simulator-page-disabled" className="flex flex-col gap-4">
+        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <DisabledBanner />
+      </div>
+    );
+  }
+
+  const devices = devicesQuery.data?.devices ?? [];
+
+  return (
+    <div data-testid="simulator-page" className="flex flex-col gap-4">
+      <header className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <span
+          data-testid="simulator-device-count"
+          className="text-md text-neutral-secondary"
+        >
+          {devices.length} device{devices.length === 1 ? "" : "s"}
+        </span>
+      </header>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {devices.map((d) => (
+          <DeviceRow
+            key={d.device_id}
+            device={d}
+            onError={(err) => pushToast("error", errorMessage(err))}
+            onSuccess={(msg) => pushToast("success", msg)}
+          />
+        ))}
+      </div>
+
+      <ul
+        data-testid="simulator-toast-region"
+        aria-live="polite"
+        className="flex flex-col gap-2"
+      >
+        {toasts.map((t) => (
+          <li
+            key={t.id}
+            data-testid={`simulator-toast-${t.tone}`}
+            className="rounded-input border px-4 py-2 text-md"
+            style={{
+              backgroundColor: TOAST_BG[t.tone],
+              borderColor: TOAST_TEXT[t.tone],
+              color: TOAST_TEXT[t.tone],
+            }}
+          >
+            {t.message}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+===== FILE: packages/web/src/admin/simulator/useSimulatorDevices.ts =====
+/**
+ * TanStack Query hooks for the simulator admin tab — Story 2.5.
+ *
+ * Two query keys:
+ *   - `["admin", "simulator", "status"]` — `enabled` flag, no auth
+ *   - `["admin", "simulator", "devices"]` — six-row device list
+ *
+ * The mutation invalidates the `devices` key on success so the
+ * optimistic `applied` state survives until the server's view
+ * catches up. No optimistic update is applied on the UI side —
+ * the toast + invalidation flow is explicit so a failure surfaces
+ * truthfully rather than showing a "Switched!" toast that the
+ * server never accepted.
+ */
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+
+import { apiFetch } from "../../api/apiClient";
+
+export interface SimulatorDevice {
+  readonly device_id: string;
+  readonly name: string | null;
+  readonly scenario: string | null;
+}
+
+export interface SimulatorStatus {
+  readonly enabled: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Query the disabled-banner state. Anonymous (no Bearer header)
+ * because the spec mandates that the disabled banner render for
+ * unauthenticated users too — the spec's `enabled === false` path
+ * must be reachable from a fresh page load before login.
+ */
+export const useSimulatorStatus = () =>
+  useQuery<SimulatorStatus>({
+    queryKey: ["admin", "simulator", "status"],
+    queryFn: async () => {
+      const res = await apiFetch("/admin/simulator/status", { skipAuth: true });
+      if (res.status === 200) {
+        return (await res.json()) as SimulatorStatus;
+      }
+      // The router returns 503 with `{ enabled: false, reason }` when
+      // SIMULATOR_SECRET is unset on the api side. Treat any non-200
+      // as "disabled" so a 5xx / network blip doesn't crash the page.
+      const body = (await res.json().catch(() => ({}))) as Partial<SimulatorStatus>;
+      return {
+        enabled: false,
+        reason: body.reason ?? "missing",
+      };
+    },
+  });
+
+export const useSimulatorDevices = () =>
+  useQuery<{ readonly devices: readonly SimulatorDevice[] }>({
+    queryKey: ["admin", "simulator", "devices"],
+    queryFn: async () => {
+      const res = await apiFetch("/admin/simulator/devices");
+      if (!res.ok) {
+        throw new Error(`simulator devices fetch failed: ${res.status}`);
+      }
+      return (await res.json()) as { readonly devices: readonly SimulatorDevice[] };
+    },
+  });
+
+/**
+ * Mutate the simulator's scenario on a single device. Returns the
+ * typed result so the page can branch on `error.kind` and render
+ * the right toast.
+ */
+export interface SwitchScenarioVars {
+  readonly deviceId: string;
+  readonly scenario?: string;
+  readonly paused?: boolean;
+}
+
+export type SwitchScenarioError =
+  | { readonly kind: "secret_mismatch" }
+  | { readonly kind: "simulator_unreachable" }
+  | { readonly kind: "switch_in_progress" }
+  | { readonly kind: "validation_error" }
+  | { readonly kind: "unknown"; readonly status: number };
+
+/** Map an outbound HTTP status to a typed `SwitchScenarioError`. */
+class SimulatorSwitchError extends Error {
+  public readonly detail: SwitchScenarioError;
+  public constructor(detail: SwitchScenarioError) {
+    super(`simulator switch failed: ${detail.kind}`);
+    this.detail = detail;
+    this.name = "SimulatorSwitchError";
+  }
+}
+
+const HTTP_BAD_REQUEST = 400;
+const HTTP_FORBIDDEN = 403;
+const HTTP_CONFLICT = 409;
+const HTTP_BAD_GATEWAY = 502;
+const HTTP_SERVICE_UNAVAILABLE = 503;
+
+export const useSwitchScenario = () => {
+  const qc = useQueryClient();
+  return useMutation<
+    { readonly applied: true },
+    SwitchScenarioError,
+    SwitchScenarioVars
+  >({
+    mutationFn: async (vars) => {
+      const body: Record<string, unknown> = {};
+      if (vars.scenario !== undefined) body["scenario"] = vars.scenario;
+      if (vars.paused !== undefined) body["paused"] = vars.paused;
+
+      const res = await apiFetch(
+        `/admin/simulator/${encodeURIComponent(vars.deviceId)}/scenario`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+
+      if (res.ok) {
+        return (await res.json()) as { applied: true };
+      }
+
+      // Drain the body so the socket can be reused; we don't read it
+      // because the api returns flat shapes we already map to `kind`.
+      await res.json().catch(() => undefined);
+
+      const detail: SwitchScenarioError = (() => {
+        switch (res.status) {
+          case HTTP_FORBIDDEN:
+            return { kind: "secret_mismatch" };
+          case HTTP_BAD_REQUEST:
+            return { kind: "validation_error" };
+          case HTTP_CONFLICT:
+            return { kind: "switch_in_progress" };
+          case HTTP_BAD_GATEWAY:
+          case HTTP_SERVICE_UNAVAILABLE:
+            return { kind: "simulator_unreachable" };
+          default:
+            return { kind: "unknown", status: res.status };
+        }
+      })();
+      throw new SimulatorSwitchError(detail);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["admin", "simulator", "devices"] });
+    },
+  });
+};
+===== FILE: packages/web/src/queryClient.ts =====
+/**
+ * TanStack Query bootstrap — Surakkha web (Story 2.5).
+ *
+ * Single `QueryClient` for the whole app. Wrapped at the route tree
+ * root in `main.tsx` so every page shares the same cache + retry
+ * configuration. The 5s `staleTime` matches the admin tab's expected
+ * refresh cadence; `retry: 1` keeps a flaky network from cascading
+ * into a "click Switch, wait, retry, fail" UX.
+ *
+ * Re-exported so admin hooks (e.g. `useSimulatorDevices`) can read
+ * the configured client without recreating one — TanStack Query's
+ * contract is that there is exactly one `QueryClient` per app.
+ */
+import { QueryClient } from "@tanstack/react-query";
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});

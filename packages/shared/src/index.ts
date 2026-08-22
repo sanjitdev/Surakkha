@@ -11,3 +11,4 @@ export * from "./events.js";
 export * from "./incident.js";
 export * from "./rbac.js";
 export * from "./logger.js";
+export * from "./simulator.js";
