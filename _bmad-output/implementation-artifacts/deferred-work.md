@@ -14,3 +14,8 @@
 ## Deferred from: code review of 2-1-wire-contract-schemas (2026-08-22)
 
 - *No outstanding deferrals.* The 2026-08-22 re-review resolved the original `frame.ts` placeholder deferral by amending spec AC5 to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as the canonical sources for the 10-step pipeline. Story 2.2 owns the ingest handler; AC5's literal text about a 31-line placeholder is deprecated.
+
+## Deferred from: code review of 2-3-unknown-missing-field-handling (2026-08-22)
+
+- **F-22** — Simulator import of new constants (`STALE_FRAME_THRESHOLD_MS`, `CLOCK_SKEW_DETECT_MS`, `classifyFlags`). The constants are exported from `@surakkha/shared/telemetry`; Story 2.4 (Simulator Process) will import them per spec constraint "the api and simulator import them so the simulator's pre-send ts validation stays in lockstep with the api". Owned by Story 2.4.
+- **F-D-1** — `flags` union / `rate_limited` producer. `stepSeqDropCheck` overwrites `state.flags` rather than unioning (`frame.ts:226`); `stepRateCheck` never stamps `["rate_limited"]` even though `ReadingFlagSchema` includes it. Decision-needed findings in the review — operator-triage policy that belongs to the rule-eval story (Epic 3). Owned by Epic 3 once Story 2.3 ships; the current behavior is acceptable per the closed-enum constraint as long as a future contributor adds the producer before shipping the rate-limit UI.

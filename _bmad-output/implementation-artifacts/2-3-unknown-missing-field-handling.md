@@ -2,7 +2,7 @@
 title: 'Story 2.3 — Unknown/Missing Field Handling'
 type: 'feature'
 created: '2026-08-22'
-status: 'in-progress'
+status: 'done'
 context:
   - docs/architecture.md#3.2-telemetry-frame
   - docs/architecture.md#3.6-websocket-event-contract-api-web
@@ -275,3 +275,38 @@ mistakenly stamping it on a successful row.
   amended: 5-minute window is the Story 2.3 default; documented in *Design Notes* "Why 5 minutes for `STALE_FRAME_THRESHOLD_MS`". If a later story needs explicit back-fill, it is a separate feature.
   known_bad_avoided: silently accepting multi-hour-old frames that corrupt the canonical timeline
   KEEP: 5-minute constant; classifier helper in shared
+
+## Review Findings
+
+Reviewers: blind-hunter, edge-case-hunter, verification-gap, acceptance-auditor.
+Review-mode: full (spec file present).
+Failed layers: none.
+
+### Decision Needed
+
+- [x] [Review][Defer] **Flag-union policy for late + skewed frames** — `stepSeqDropCheck` does `patch.flags = ["out_of_order"]` (direct assignment, `frame.ts:226`); `applyPatch` (`frame.ts:128-129`) treats `patch.flags !== undefined` as overwrite. A late frame whose `ts` is also skewed (`60s < |skew| < 5min`) silently loses the `clock_skew_detected` flag — neither the persisted row, broadcast, `onRuleEvaluation`, nor `onAuditAppend` see it. Spec ACs (lines 154-155) cover skew-without-reorder and reorder-without-skew separately; the union is unspecified. — deferred, operator-triage policy belongs to Epic 3 (rule-eval)
+- [x] [Review][Defer] **`rate_limited` flag has no producer in v1** — `ReadingFlagSchema` lists `["out_of_order", "clock_skew_detected", "rate_limited"]` but `stepRateCheck` (`frame.ts:194-204`) emits a `rate_limited` envelope + audit hook + disconnect, never stamping `["rate_limited"]` on the persisted row or `reading:new` broadcast. — deferred, producer belongs to Epic 3 (rule-eval intersection)
+
+### Patch
+
+- [x] [Review][Patch] **`clock_skew_detected` does not reach `onRuleEvaluation` hook end-to-end** — added test in `frame.spec.ts` (clock-skew flag describe block) installing `onRuleEvaluation` spy and asserting `flags: ["clock_skew_detected"]` for a 90s-past-skew frame.
+- [x] [Review][Patch] **`clock_skew_detected` does not reach `onAuditAppend` (reading_ingested) hook end-to-end** — added test in `frame.spec.ts` (clock-skew flag describe block) installing `onAuditAppend` spy and asserting the `reading_ingested` call carries `context.flags: ["clock_skew_detected"]`.
+- [x] [Review][Patch] **`hooks.ts` flag types still `readonly string[]`** — `RuleEvaluationInput.flags` tightened to `readonly ReadingFlag[]` with `import type { ReadingFlag } from "@surakkha/shared"`.
+- [x] [Review][Patch] **Test-rig clock magic constants scattered** — extracted to `packages/api/src/__tests__/rigClock.ts` with `RIG_CLOCK_MS`, `RIG_CLOCK_TICK_MS`, and `freshTsMs()` exports; `frame.spec.ts` and `server.spec.ts` import from there.
+- [x] [Review][Patch] **`server.spec.ts:308` uses `Date.now() - 1_000`** — replaced with `freshTsMs()` from the shared rig-clock fixture for a single point of reference.
+
+### Defer
+
+- [x] [Review][Defer] **Simulator import of new constants** — Story 2.4 is `backlog`; the constraint "the api and simulator import them" is forward-looking. The constants are exported and ready. — deferred, awaits Story 2.4
+- [x] [Review][Defer] **`flags` union / `rate_limited` producer** — see Decision Needed above; the underlying choice is operator-triage policy that belongs to the rule-eval story (Epic 3). — deferred, awaits human decision above
+
+### Dismissed (count: 9)
+
+- F-4 `disconnect(false)` semantics — spec §"Design Notes" "Why `socket.disconnect(false)` on stale-frame" documents the deliberate trade-off.
+- F-5 future-skew >5min accepted with flag — spec constraint "Never reject a future-skewed frame" mandates this.
+- F-6/F-7/F-8 boundary tests at 60s, 5min, 300s — all explicitly pinned by `frame.spec.ts:454-462` (5min boundary) and `telemetry.spec.ts:386-405` (60s boundary).
+- F-9 NaN/Infinity `ts` — Zod schema `z.number().int().nonnegative()` rejects at parse; never reaches clock-skew math.
+- F-10 double-disconnect — control flow: `bad_request` exits before stale-frame check; `disconnect(false)` is called at most once per frame.
+- F-16/F-17/F-20/F-23 spec scope framing (title, enum contract, version bump) — not bugs.
+- F-19 wasted `classifyFlags` call — reading `frame.ts:152-181` confirms it's called only on the `next` path, never on `exit`.
+- F-21 fresh-frame `flags: []` — explicitly asserted at `frame.spec.ts:467-486` (59s skew boundary → `[]`).
