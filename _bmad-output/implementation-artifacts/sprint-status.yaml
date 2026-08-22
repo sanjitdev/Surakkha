@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-21
+# last_updated: 2026-08-22T22:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-22T20:00:00.000Z
+last_updated: 2026-08-22T22:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -76,7 +76,7 @@ development_status:
   # ===== Epic 2 — Devices & Telemetry =====
   epic-2: in-progress
   2-1-wire-contract-schemas: done
-  2-2-ingest-websocket-endpoint: review
+  2-2-ingest-websocket-endpoint: done
   2-3-unknown-missing-field-handling: backlog
   2-4-simulator-process-six-default-devices-seven-scenarios: backlog
   2-5-admin-simulator-admin-tab: backlog
@@ -270,14 +270,14 @@ stories:
 
   - id: "2.2"
     title: "Ingest WebSocket Endpoint"
-    status: review
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
+    commit: "22c7ea6"
+    shipped: "2026-08-22"
     covers: ["FR-5", "FR-7", "FR-8", "FR-10", "AR-3", "I-2"]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-2-ingest-websocket-endpoint.md"
-      review: null
+      review: "_bmad-output/implementation-artifacts/2-2-ingest-websocket-endpoint.md"
 
   - id: "2.3"
     title: "Unknown/Missing Field Handling"
