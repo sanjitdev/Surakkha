@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-22T23:45:00.000Z
+# last_updated: 2026-08-22T20:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-22T23:45:00.000Z
+last_updated: 2026-08-22T20:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -78,7 +78,7 @@ development_status:
   2-1-wire-contract-schemas: done
   2-2-ingest-websocket-endpoint: done
   2-3-unknown-missing-field-handling: done
-  2-4-simulator-process-six-default-devices-seven-scenarios: backlog
+  2-4-simulator-process-six-default-devices-seven-scenarios: review
   2-5-admin-simulator-admin-tab: backlog
   2-6-dashboard-shell: backlog
   2-7-map-view: backlog
@@ -292,13 +292,13 @@ stories:
 
   - id: "2.4"
     title: "Simulator Process + Six Default Devices + Seven Scenarios"
-    status: backlog
+    status: in-progress
     epic: "2"
     commit: null
     shipped: null
     covers: []
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/2-4-simulator-process-six-default-devices-seven-scenarios.md"
       review: null
 
   - id: "2.5"

@@ -1,0 +1,29 @@
+{
+  "tick_interval_ms": 2000,
+  "devices": [
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000001",
+      "scenario": "Normal"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000002",
+      "scenario": "RisingTDS"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000003",
+      "scenario": "TurbiditySpike"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000004",
+      "scenario": "ChlorineDrop"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000005",
+      "scenario": "Offline"
+    },
+    {
+      "device_id": "9b1c4f00-0000-4000-8000-000000000006",
+      "scenario": "RandomFailure"
+    }
+  ]
+}

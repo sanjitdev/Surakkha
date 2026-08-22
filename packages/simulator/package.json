@@ -2,7 +2,7 @@
   "name": "@surakkha/simulator",
   "version": "0.1.0",
   "private": true,
-  "description": "Telemetry simulator. Separate Node 20 process on the same wire contract as a real device (AR-12, I-12). Six default devices, seven scenarios. JWT aud=simulator, scope=telemetry:write.",
+  "description": "Telemetry simulator. Separate Node 20 process on the same wire contract as a real device (AR-12, I-12). Six default devices, seven scenarios. JWT aud=simulator, scope=telemetry:write. Connects to the api over Socket.IO at /ingest/<device_id>.",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -16,13 +16,12 @@
   },
   "dependencies": {
     "@surakkha/shared": "workspace:*",
-    "ws": "8.18.0",
     "jsonwebtoken": "9.0.2",
-    "zod": "3.23.8",
-    "pino": "9.4.0"
+    "pino": "9.4.0",
+    "socket.io-client": "4.8.0",
+    "zod": "3.23.8"
   },
   "devDependencies": {
-    "@types/ws": "8.5.12",
     "@types/jsonwebtoken": "9.0.6",
     "@types/node": "20.16.5",
     "tsx": "4.19.1",
