@@ -152,11 +152,18 @@ describe("processFrame — happy path", () => {
     expect(call.data.flags).toEqual([]);
     expect(call.data.metrics).toMatchObject({ ph: 7.2 });
 
+    // F-P11(c): pin the serverReceivedAt value so a regression that
+    // re-stamps the timestamp inside stepValidate fails this test.
+    expect(call.data.serverReceivedAt).toEqual(rig.now());
+
     expect(rig.io).toHaveBeenCalledWith(
       "reading:new",
       expect.objectContaining({
         device_id: DEVICE_ID,
         metrics: expect.objectContaining({ ph: 7.2 }),
+        // F-D2: flags surface on the broadcast payload so consumers
+        // can see late-frame reorder visibility without a REST fetch.
+        flags: [],
       }),
     );
   });
@@ -194,10 +201,13 @@ describe("processFrame — sequence reorder", () => {
       data: { flags: string[] };
     }).data;
     expect(flags).toEqual(["out_of_order"]);
-    // The broadcast still fires.
+    // The broadcast still fires, now carrying the flag (F-D2).
     expect(rig.io).toHaveBeenCalledWith(
       "reading:new",
-      expect.objectContaining({ device_id: DEVICE_ID }),
+      expect.objectContaining({
+        device_id: DEVICE_ID,
+        flags: ["out_of_order"],
+      }),
     );
   });
 
@@ -216,6 +226,70 @@ describe("processFrame — sequence reorder", () => {
     // Gap is logged via the audit hook, NOT as a flag on the row.
     expect(flags).toEqual([]);
   });
+
+  // F-P11(a): pin that the seq_drop_detected audit hook fires
+  // (not just that flags:[] persists). The existing gap test
+  // covers the row; this covers the audit-pipeline contract.
+  it("emits seq_drop_detected audit hook when a gap is observed", async () => {
+    const rig = buildRig();
+    let nowMs = 1_000_000_000_000;
+    rig.now = () => new Date(nowMs);
+    const hooks = {
+      onRuleEvaluation: vi.fn(async () => undefined),
+      onAlertEmission: vi.fn(async () => undefined),
+      onStateMachineUpdate: vi.fn(async () => undefined),
+      onAuditAppend: vi.fn(async () => undefined),
+    };
+    await callProcessFrame(rig, buildFrame({ seq: 10 }), DEVICE_ID, hooks);
+    nowMs += 3_000;
+    await callProcessFrame(rig, buildFrame({ seq: 13 }), DEVICE_ID, hooks);
+
+    // The first frame (seq:10) also produces a seq_drop_detected
+    // because the device's lastSeen defaults to -1 (gap of 10
+    // frames [0..9]). Filter for the second frame's specific
+    // drop_count so the test pins the contract: a gap crossing
+    // an EXISTING last_seen fires the audit hook.
+    const gapCalls = hooks.onAuditAppend.mock.calls.filter(
+      (call) =>
+        (call[0] as { auditAction: string; context?: { drop_count?: number } })
+          .auditAction === "seq_drop_detected" &&
+        (call[0] as { context: { drop_count: number } }).context.drop_count === 2,
+    );
+    expect(gapCalls).toHaveLength(1);
+    expect(gapCalls[0]?.[0]).toEqual({
+      auditAction: "seq_drop_detected",
+      deviceId: DEVICE_ID,
+      context: { drop_count: 2, last_seq: 13 },
+    });
+  });
+
+  // F-P7: a late frame (reorder) emits seq_reorder_detected on the
+  // audit hook so an operator triaging the audit log can distinguish
+  // a lost-frame gap from a late retransmit.
+  it("emits seq_reorder_detected audit hook on a late frame", async () => {
+    const rig = buildRig();
+    let nowMs = 1_000_000_000_000;
+    rig.now = () => new Date(nowMs);
+    const hooks = {
+      onRuleEvaluation: vi.fn(async () => undefined),
+      onAlertEmission: vi.fn(async () => undefined),
+      onStateMachineUpdate: vi.fn(async () => undefined),
+      onAuditAppend: vi.fn(async () => undefined),
+    };
+    await callProcessFrame(rig, buildFrame({ seq: 5 }), DEVICE_ID, hooks);
+    nowMs += 3_000;
+    await callProcessFrame(rig, buildFrame({ seq: 3 }), DEVICE_ID, hooks);
+
+    const reorderCalls = hooks.onAuditAppend.mock.calls.filter(
+      (call) => (call[0] as { auditAction: string }).auditAction === "seq_reorder_detected",
+    );
+    expect(reorderCalls).toHaveLength(1);
+    expect(reorderCalls[0]?.[0]).toEqual({
+      auditAction: "seq_reorder_detected",
+      deviceId: DEVICE_ID,
+      context: { seq: 3, last_seen: 5 },
+    });
+  });
 });
 
 describe("processFrame — bad request", () => {
@@ -224,11 +298,15 @@ describe("processFrame — bad request", () => {
     const bad = { ...buildFrame(), metrics: { ...buildFrame().metrics, ph: 15 } };
     const outcome = await callProcessFrame(rig, bad);
     expect(outcome).toEqual({ status: "bad_request" });
+    // F-P11(e): tighten the missing_fields assertion so a regression
+    // that flattens dotted paths to bare field names is caught.
+    // The wire contract from F2 (Story 2.1 amendment) is
+    // `metrics.ph` — firmware keys on the dotted-path shape.
     expect(rig.socket.emit).toHaveBeenCalledWith(
       "bad_request",
       expect.objectContaining({
         error: "bad_request",
-        missing_fields: expect.any(Array),
+        missing_fields: expect.arrayContaining(["metrics.ph"]),
       }),
     );
     // No row, no disconnect.
@@ -245,6 +323,45 @@ describe("processFrame — hooks no-op", () => {
     const outcome = await callProcessFrame(rig, buildFrame({ seq: 0 }));
     expect(outcome.status).toBe("accepted");
     expect(rig.prismaCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Story 2.2 — code review F-P11(b).
+ *
+ * `stepPersist` catches every Prisma throw and emits `persist_failed`
+ * before disconnecting. Pin that the envelope + disconnect fire so
+ * a regression that swallows the error (and lets the driver fall
+ * through to subsequent steps) is caught here rather than at the
+ * integration layer.
+ */
+describe("processFrame — persist failure", () => {
+  it("emits persist_failed and disconnects when prisma.reading.create rejects", async () => {
+    const rig = buildRig();
+    const cause = new Error("connection terminated");
+    rig.prismaCreate.mockRejectedValueOnce(cause);
+
+    // Suppress the api logger line that stepPersist now writes via
+    // console.error — we want the test output clean but still
+    // exercise the production logging path.
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const outcome = await callProcessFrame(rig, buildFrame({ seq: 0 }));
+      expect(outcome).toEqual({ status: "ignored" });
+      expect(rig.socket.emit).toHaveBeenCalledWith("persist_failed", {
+        error: "persist_failed",
+      });
+      expect(rig.socket.disconnect).toHaveBeenCalledWith(true);
+      // The underlying Prisma error reached the api logger so an
+      // operator can distinguish DB-down, FK-violation, and
+      // unique-key-violation in production logs.
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "ingest: persist failed",
+        expect.objectContaining({ deviceId: DEVICE_ID, err: cause }),
+      );
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 });
 
@@ -282,8 +399,25 @@ describe("processFrame — hook payloads", () => {
       flags: [],
     });
 
+    // F-P11(d): pin the placeholder payload literals for the two
+    // v1 no-op hook steps. The `stepAlertEmission` and
+    // `stepStateMachineUpdate` helpers hard-code `ruleId: ""`,
+    // `severity: "info"`, `state: "OBSERVING"`, `previousState: null`
+    // because the Epic 3/4 implementations are not yet wired.
+    // Pinning them here means a refactor that drifts the contract
+    // is caught by this test rather than by Epic 3 first-integration.
     expect(hooks.onAlertEmission).toHaveBeenCalledTimes(1);
+    expect(hooks.onAlertEmission).toHaveBeenCalledWith({
+      deviceId: DEVICE_ID,
+      ruleId: "",
+      severity: "info",
+    });
     expect(hooks.onStateMachineUpdate).toHaveBeenCalledTimes(1);
+    expect(hooks.onStateMachineUpdate).toHaveBeenCalledWith({
+      deviceId: DEVICE_ID,
+      state: "OBSERVING",
+      previousState: null,
+    });
     expect(hooks.onAuditAppend).toHaveBeenCalledTimes(1);
     expect(hooks.onAuditAppend).toHaveBeenCalledWith({
       auditAction: "reading_ingested",

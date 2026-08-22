@@ -143,18 +143,31 @@ export const verifyAccessToken = (token: string): JwtClaims | null => {
  * `sub === urlDeviceId` — and returns the parsed claims so the
  * connection handler can attach them to the socket.
  *
- * Returns `null` on signature failure or structural failure
- * (sub mismatch, audience not in {device,simulator}, wrong scope).
- * Throws on JWT-level decode failure for malformed tokens so callers
- * can distinguish "not signed by us" from "wrong audience".
+ * Returns a discriminated `VerifyIngestResult` so the WS handler
+ * can emit a distinct envelope per failure mode (F-P1): signature
+ * failure and audience-rejection both fold into `unauthenticated`
+ * (the token was either not signed by us or was issued for a
+ * non-ingest audience); scope mismatch and `sub` mismatch fold
+ * into `auth_error` with code `device_id_mismatch` (the token
+ * passed signature + audience but does not authorise THIS device).
+ * Before this change the handler emitted `device_id_mismatch` for
+ * every failure, which mislead devices debugging wrong-scope or
+ * wrong-audience issues.
  */
 const INGEST_ALLOWED_AUDIENCES = ["device", "simulator"] as const;
 const INGEST_REQUIRED_SCOPE = "telemetry:write";
 
+export type VerifyIngestResult =
+  | { readonly kind: "ok"; readonly claims: JwtClaims }
+  | { readonly kind: "sig_fail" }
+  | { readonly kind: "aud_fail" }
+  | { readonly kind: "scope_fail" }
+  | { readonly kind: "sub_mismatch" };
+
 export const verifyIngestClaims = (
   token: string,
   expectedSub: string,
-): JwtClaims | null => {
+): VerifyIngestResult => {
   let decoded: unknown;
   try {
     decoded = jwt.verify(token, getSecret(), {
@@ -163,26 +176,28 @@ export const verifyIngestClaims = (
       issuer: JWT_ISSUER,
     });
   } catch {
-    // Signature / expiry / format failure — caller treats this as
+    // Signature / expiry / format failure — caller emits
     // "unauthenticated" (I-1).
-    return null;
+    return { kind: "sig_fail" };
   }
-  if (typeof decoded !== "object" || decoded === null) return null;
+  if (typeof decoded !== "object" || decoded === null) return { kind: "sig_fail" };
   const claims = decoded as Partial<JwtClaims>;
 
-  // Structural checks. The JWT library already verified `iss`,
-  // `aud`, `sub`, `exp` against the registered claims; we layer
-  // the application-specific shape on top so the WS endpoint
-  // never accepts a `user` audience (I-3).
-  if (
-    typeof claims.sub !== "string" ||
-    claims.sub !== expectedSub ||
-    typeof claims.aud !== "string" ||
-    !(INGEST_ALLOWED_AUDIENCES as readonly string[]).includes(claims.aud) ||
-    claims.scope !== INGEST_REQUIRED_SCOPE
-  ) {
-    return null;
+  // Structural checks. The JWT library already verified `iss` and
+  // `exp` against the registered claims; we layer the application-
+  // specific shape on top so the WS endpoint never accepts a `user`
+  // audience (I-3). Sub-check runs LAST so a wrong-sub token still
+  // surfaces an accurate envelope if scope/aud were also wrong.
+  if (typeof claims.aud !== "string") return { kind: "sig_fail" };
+  if (!(INGEST_ALLOWED_AUDIENCES as readonly string[]).includes(claims.aud)) {
+    return { kind: "aud_fail" };
+  }
+  if (claims.scope !== INGEST_REQUIRED_SCOPE) {
+    return { kind: "scope_fail" };
+  }
+  if (typeof claims.sub !== "string" || claims.sub !== expectedSub) {
+    return { kind: "sub_mismatch" };
   }
 
-  return claims as JwtClaims;
+  return { kind: "ok", claims: claims as JwtClaims };
 };

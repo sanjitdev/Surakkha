@@ -94,13 +94,19 @@ export const SIMULATOR_TOKEN_TTL_SECONDS = 3600;
 export const DEVICE_TOKEN_TTL_SECONDS = 86400;
 
 /**
- * Validate that `sub` is a UUIDv4 string. We re-parse through
- * `JwtClaimsSchema` after building the claim so a bad `sub` from the
- * caller fails fast at the call site instead of producing a token that
- * the verifier will reject later.
+ * Validate that `sub` is a UUIDv4 string. The regex pins BOTH the
+ * version nibble (3rd group MUST start with `4`) AND the variant nibble
+ * (4th group MUST start with `8-b`); the previous variant-only check
+ * accepted valid UUIDv1 with a `8-b` variant nibble (e.g. `…-1234-1234-
+ * 8def-…`). We re-parse through `JwtClaimsSchema` after building the
+ * claim so a bad `sub` from the caller fails fast at the call site
+ * instead of producing a token that the verifier will reject later.
  */
 const assertUuidV4 = (sub: string): void => {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sub)) {
+  // Version nibble = `4`, variant nibble = `[89ab]`.
+  const UUID_V4_REGEX =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!UUID_V4_REGEX.test(sub)) {
     throw new Error(`simulator/device claim template: sub must be a UUIDv4 (got ${sub})`);
   }
 };
@@ -109,9 +115,11 @@ const assertUuidV4 = (sub: string): void => {
  * Build a claim *template* (NOT a signed JWT) for the simulator process.
  * Signing happens at the call site with `JWT_SECRET`; the shared package
  * must not touch `process.env`. The returned object re-parses cleanly
- * through `JwtClaimsSchema.parse()`.
+ * through `JwtClaimsSchema.parse()` and is frozen so a caller cannot
+ * mutate the claim before signing without triggering a TypeError at
+ * assignment time.
  */
-export const simulatorClaimTemplate = (sub: string): JwtClaims => {
+export const simulatorClaimTemplate = (sub: string): Readonly<JwtClaims> => {
   assertUuidV4(sub);
   const iat = Math.floor(Date.now() / 1000);
   const claim: JwtClaims = {
@@ -122,14 +130,15 @@ export const simulatorClaimTemplate = (sub: string): JwtClaims => {
     iat,
     exp: iat + SIMULATOR_TOKEN_TTL_SECONDS,
   };
-  return JwtClaimsSchema.parse(claim);
+  const parsed = JwtClaimsSchema.parse(claim);
+  return Object.freeze(parsed);
 };
 
 /**
  * Build a claim template for a real device. Same env-independence as
  * `simulatorClaimTemplate`; 24-hour TTL per architecture §3.4.
  */
-export const deviceClaimTemplate = (sub: string): JwtClaims => {
+export const deviceClaimTemplate = (sub: string): Readonly<JwtClaims> => {
   assertUuidV4(sub);
   const iat = Math.floor(Date.now() / 1000);
   const claim: JwtClaims = {
@@ -140,5 +149,6 @@ export const deviceClaimTemplate = (sub: string): JwtClaims => {
     iat,
     exp: iat + DEVICE_TOKEN_TTL_SECONDS,
   };
-  return JwtClaimsSchema.parse(claim);
+  const parsed = JwtClaimsSchema.parse(claim);
+  return Object.freeze(parsed);
 };

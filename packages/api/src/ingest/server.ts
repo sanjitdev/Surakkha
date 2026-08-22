@@ -134,15 +134,27 @@ export const buildIngestServer = (
       return;
     }
 
-    const claims = verifyIngestClaims(token, urlDeviceId);
-    if (claims === null) {
-      // Token didn't sign / didn't match / wrong audience. The
-      // spec's I/O matrix distinguishes sub-mismatch from
-      // unauthenticated, but both close with 4401.
-      socket.emit("auth_error", { error: "device_id_mismatch" });
+    const result = verifyIngestClaims(token, urlDeviceId);
+    if (result.kind !== "ok") {
+      // F-P1: differentiate failure modes so the device / simulator
+      // gets an actionable error envelope. Signature failure and
+      // audience-not-ingest both mean "we didn't issue this for the
+      // ingest path" → "unauthenticated". Scope mismatch and
+      // sub mismatch mean "the token IS for ingest but doesn't
+      // authorise this connection" → "auth_error" with a code so
+      // operators triaging device mis-configs can tell "wrong
+      // device_id" apart from "wrong scope".
+      if (result.kind === "sig_fail" || result.kind === "aud_fail") {
+        socket.emit("unauthenticated");
+      } else if (result.kind === "scope_fail") {
+        socket.emit("auth_error", { error: "forbidden_scope" });
+      } else {
+        socket.emit("auth_error", { error: "device_id_mismatch" });
+      }
       socket.disconnect(true);
       return;
     }
+    const { claims } = result;
 
     // Stash claims so the per-frame listener can use them if needed.
     socket.data["ingestClaims"] = claims;
@@ -151,7 +163,10 @@ export const buildIngestServer = (
       // The WS endpoint is bidirectional-writes-only: the server
       // does NOT accept any client → server commands except the
       // frame (architecture §3.6).
-      void processFrame({
+      // F-P3: attach a .catch so any throw inside the 10-step
+      // driver surfaces as a logged warning + disconnect instead
+      // of an unhandled promise rejection.
+      processFrame({
         deviceId: urlDeviceId,
         socket: {
           emit: (event, payload) => socket.emit(event, payload),
@@ -163,6 +178,10 @@ export const buildIngestServer = (
         prisma,
         io: broadcast,
         hooks: getIngestHooks(),
+      }).catch((err: unknown) => {
+        socket.emit("internal_error", { error: "internal_error" });
+        socket.disconnect(true);
+        console.error("ingest: processFrame threw", err);
       });
     });
   };

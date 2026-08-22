@@ -44,7 +44,8 @@ export interface AuditAppendInput {
   readonly auditAction:
     | "reading_ingested"
     | "reading_rate_limited"
-    | "seq_drop_detected";
+    | "seq_drop_detected"
+    | "seq_reorder_detected";
   readonly deviceId: string;
   readonly context?: Record<string, unknown>;
 }

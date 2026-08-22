@@ -145,9 +145,13 @@ const stepValidate = (
     deps.socket.emit("bad_request", translateZodError(result.error));
     return { kind: "exit", outcome: { status: "bad_request" } };
   }
+  // F-P6: `serverReceivedAt` was already seeded by `processFrame`
+  // before this step ran (single source of truth — the moment the
+  // driver took ownership of the inbound frame). `stepValidate`
+  // only contributes the parsed payload, not a re-stamped clock.
   return {
     kind: "next",
-    patch: { parsed: result.data, serverReceivedAt: deps.now() },
+    patch: { parsed: result.data },
   };
 };
 
@@ -190,7 +194,15 @@ const stepSeqDropCheck = async (
   const obs = deps.sequence.observe(deps.deviceId, state.parsed.seq);
   const patch: FrameStatePatch = { dropCount: obs.dropCount };
   if (obs.outcome === "reorder") {
+    // F-P7: surface late frames on the audit pipeline too. The
+    // flag travels on the persisted row and on the broadcast payload
+    // (see F-D2); the audit hook is the operator-triage surface.
     patch.flags = ["out_of_order"];
+    await deps.hooks.onAuditAppend({
+      auditAction: "seq_reorder_detected",
+      deviceId: deps.deviceId,
+      context: { seq: state.parsed.seq, last_seen: obs.newLastSeen },
+    });
   }
   if (obs.dropCount > 0) {
     await deps.hooks.onAuditAppend({
@@ -224,7 +236,12 @@ const stepPersist = async (
         flags: state.flags,
       },
     });
-  } catch {
+  } catch (err) {
+    // F-P5: surface the underlying error to the api logger so an
+    // operator can distinguish DB-down, FK-violation, and
+    // unique-key-violation. The device still gets the
+    // `persist_failed` envelope + disconnect.
+    console.error("ingest: persist failed", { deviceId: deps.deviceId, err });
     deps.socket.emit("persist_failed", { error: "persist_failed" });
     deps.socket.disconnect(true);
     return { kind: "exit", outcome: { status: "ignored" } };
@@ -293,6 +310,7 @@ const stepSocketBroadcast = (
     ts: state.parsed.ts,
     server_received_at: state.serverReceivedAt.toISOString(),
     metrics: state.parsed.metrics,
+    flags: state.flags,
   };
   deps.io.to(deviceRoom(deps.deviceId)).emit("reading:new", payload);
   return { kind: "next" };
@@ -315,6 +333,11 @@ export const processFrame = async (
     parsed: null,
     flags: [],
     dropCount: 0,
+    // F-P6: the server-anchored "moment the frame arrived at the
+    // api" timestamp. `stepValidate` does NOT re-stamp this —
+    // the driver's `now()` call is the canonical source so the
+    // ordering guarantee ("serverReceivedAt is the source of truth
+    // for ordering" — architecture §3.2) has exactly one read.
     serverReceivedAt: now(),
   };
 

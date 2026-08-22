@@ -1,0 +1,16 @@
+# Deferred Work Register
+
+## Deferred from: code review of 2-2-ingest-websocket-endpoint (2026-08-22)
+
+- **F-W1** — `@surakkha/db/scripts/migrate` exports map points to `./scripts/migrate.ts`. Node ESM does not natively load `.ts` files; the api `start` script runs compiled `dist/index.js` but `await import("@surakkha/db/scripts/migrate")` resolves to the `.ts` source — Node throws `ERR_MODULE_NOT_FOUND` at boot. Mitigations are package-build-time concerns (build the db package to `.js` OR run api under tsx in production). **Owned by Story 6.1 (Docker Compose + README quickstart).**
+- **F-W2** — `runMigrations()` spawns `pnpm exec prisma ...` as a child process at api boot, blocking the event loop on disk IO and child-process spawn. `prisma generate` re-runs every boot. No retry on transient DB unavailability. Migrations belong in a one-shot init container, not the long-running API. **Owned by Story 6.1 (Dockerfile + init container).**
+- **F-W3** — No graceful-shutdown handler on `httpServer`. Docker Compose sends SIGTERM on stop; the Node process exits immediately without draining in-flight frames or disconnecting the Prisma client. **Owned by Story 6.1.**
+- **F-W4** — `PerDeviceRateLimiter` and `PerDeviceSequence` state lives in unbounded `Map`s. A flood of attacker-supplied UUIDs will permanently inflate memory. No LRU / TTL / size cap. Real but bounded by I-9 (single Node process). Mitigation requires a deliberate eviction policy; out of scope for 2.2. **Deferred to production hardening (Epic 7).**
+- **F-W5** — `verifyIngestClaims` does not check that `urlDeviceId` corresponds to an existing `Device` row. A simulator with a valid JWT can connect under any UUID. The spec does not require device-existence-at-handshake in v1 (the `Device` model is a placeholder in 2.2). **Owned by Story 2.3 (Device model expansion) and the production-hardening pass.**
+- **F-W6** — `socket.disconnect(true)` emits the Socket.IO transport default close code (~4005), not the literal `4401` the spec I/O matrix and ACs reference. The spec change log explicitly acknowledges this and reframes the intent as "close on auth failure". Implementation matches the change log; AC literally says `4401` but is not enforced. **Needs spec amendment (frozen-after-approval intent requires human renegotiation).**
+- **F-W7** — `IoServer` constructed without `connectionStateRecovery` (Socket.IO v4.6+). Brief network blips cause a full re-handshake + re-auth. Real for flaky-device environments but not blocking for v1. **Deferred to production hardening.**
+- **F-W8** — `ReadingNewEventSchema` (shared events) is reused without a payload-shape test at the api→web boundary. The frame.spec.ts happy path uses `expect.objectContaining` which is loose. **Owned by Story 2.8 (Live Readings Table) — the first web consumer will pin the payload via TypeScript + zod at the SPA.**
+
+## Deferred from: code review of 2-1-wire-contract-schemas (2026-08-22)
+
+- *No outstanding deferrals.* The 2026-08-22 re-review resolved the original `frame.ts` placeholder deferral by amending spec AC5 to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as the canonical sources for the 10-step pipeline. Story 2.2 owns the ingest handler; AC5's literal text about a 31-line placeholder is deprecated.

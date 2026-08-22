@@ -88,37 +88,51 @@ This is the single most important architectural decision. Everything below deriv
 
 | Field | Type | Required | Rule |
 |-------|------|----------|------|
-| `device_id` | UUIDv4 string | yes | Must match the device-id segment of the WebSocket path; mismatch → `403` |
+| `device_id` | UUIDv4 string | yes | Must match the device-id segment of the WebSocket path; mismatch is folded into step 1 (validate) and surfaced as `400 bad_request` with `missing_fields:["device_id"]` (ADR 0013 §"Amendment"). |
 | `ts` | RFC3339 / ISO-8601 UTC string | yes | Server records `server_received_at` separately; `clock_skew_detected` flag set if `|server_received_at - ts| > 60s` |
 | `fw` | semver string | yes | Free-form; surfaced in admin ops view; not validated by server in v1 |
 | `seq` | non-negative integer | yes | Monotonically increasing per-device counter. Gaps ≤ 5 tolerated silently; gaps > 5 set `out_of_order` flag and are logged but accepted. Frames with `seq` ≤ last-seen `seq` are dropped silently (no error, no alert) |
 | `version` | integer | yes | v1.0 is locked at `1`. Unknown versions rejected with `400 invalid_version` |
-| `metrics` | object | yes | All six v1 metrics required. Missing metric → reject `400 missing_metric:<key>`. Unknown metric keys are ignored (forward-compat) |
+| `metrics` | object | yes | All six v1 metrics required. Missing metric → reject `400 bad_request` with `missing_fields:["metrics.<key>"]`. Unknown TOP-LEVEL frame keys rejected by `.strict()` (ADR 0001); unknown metric keys inside `metrics` are silently dropped (forward-compat per ADR 0001). |
 
 **Metric type contract** (enforced by Zod in `packages/shared/src/telemetry.ts`):
 
-| Key | Type | Unit | Range (typical) | Allowed null |
-|-----|------|------|-----------------|--------------|
+**Hard reject ranges** (BRD §8.3.1; `MetricRanges` in `telemetry.ts:13-20`). Frames outside these bounds fail validation with `400 bad_request` and `missing_fields:["metrics.<key>"]`:
+
+| Key | Type | Unit | Hard reject range | Allowed null |
+|-----|------|------|-------------------|--------------|
 | `ph` | number | pH | 0–14 | no |
 | `tds_ppm` | number | ppm | 0–5000 | no |
-| `turbidity_ntu` | number | NTU | 0–3000 | no |
+| `turbidity_ntu` | number | NTU | 0–1000 | no |
 | `temp_c` | number | °C | -10 to 80 | no |
-| `chlorine_ppm` | number | ppm | 0–10 | no |
+| `chlorine_ppm` | number | ppm | 0–5 | no |
 | `water_level_cm` | number | cm | 0–500 | no |
 
-Frames with any metric outside the allowed range are rejected with `400 metric_out_of_range:<key>`. NaN / Infinity rejected with `400 invalid_number`.
+**Soft (extended observation) ranges** (architecture §3.2; `MetricExtendedRanges` in `telemetry.ts`). Frames inside the soft range but outside the hard range are observationally unusual but accepted in v1. Story 2.3 owns the soft-vs-hard policy:
 
-**Server processing order** (deterministic, single-threaded per device):
+| Key | Soft extended range |
+|-----|---------------------|
+| `ph` | 0–14 (matches hard) |
+| `tds_ppm` | 0–5000 (matches hard) |
+| `turbidity_ntu` | 0–3000 |
+| `temp_c` | -10 to 80 (matches hard) |
+| `chlorine_ppm` | 0–10 |
+| `water_level_cm` | 0–500 (matches hard) |
 
-1. Auth check (JWT) → `401 unauthenticated` on fail.
-2. JSON parse → `400 invalid_json` on fail.
-3. Zod schema validation → `400` with `{error, missing_or_invalid}` body on fail.
-4. Path / `device_id` match → `403 device_id_mismatch` on fail.
-5. Rate cap (`1 reading / 2s` per device) → `429 rate_limited` with `Retry-After` header on reject; `rate_limited` flag set on `Reading` row.
-6. Sequence check (drop if `seq ≤ last_seq`).
-7. Persist `Reading` row with `server_received_at = now()`.
-8. Evaluate rules (see §4).
-9. Broadcast via Socket.IO room `device:<device_id>` (see §3.5).
+Frames with any metric outside the **hard** reject range are rejected with `400 bad_request`. NaN / Infinity rejected with `400 bad_request` (`.finite()` in `rangedFloat`).
+
+**Server processing order** (deterministic, single-threaded per device). Reordered 2026-08-22 to align with ADR 0013 / Story 2.1; see ADR 0013 §"Amendment" for the rationale.
+
+1. **Validate** (Zod schema enforcement — folds JSON parse + path/device_id match into one pass) → `400 bad_request` with `{error: "bad_request", missing_fields: string[]}` body on fail.
+2. **Auth check** (JWT, performed at **connection level** by `buildIngestServer#verifyIngestClaims`). On fail: emit `unauthenticated` (missing/malformed URL or token) or `auth_error {error:"device_id_mismatch"}` (claim failure), then disconnect. The per-frame step `stepAuthCheck` is a documented no-op slot for a future mid-connection auth-refresh check; see ADR 0013 §"Decision" step 2 rationale.
+3. **Rate cap** (`1 reading / 2s` per device) → `429 rate_limited` with `Retry-After` header on reject.
+4. **Sequence check** (drop if `seq ≤ last_seq`).
+5. **Persist** `Reading` row with `server_received_at = now()`.
+6. **Rule evaluation** (see §4) — Epic 3.
+7. **Alert emission** — Epic 3.
+8. **State-machine update** — Epic 4.
+9. **Audit append** — Epic 5.
+10. **Broadcast** via Socket.IO room `device:<device_id>` (see §3.5).
 
 The `metrics` shape is the **v1.0 seed** of the two-layer metric schema (BRD §10.1). v2 may add new metric keys by inserting into the `MetricDefinition` registry without changing the frame shape.
 

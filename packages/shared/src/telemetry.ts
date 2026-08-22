@@ -21,12 +21,24 @@ export const MetricRanges = {
 
 /**
  * Extended observation ranges from architecture §3.2 — the sensor's plausible
- * envelope (turbidity 0–3000 NTU, chlorine 0–10 ppm). Frames inside this
- * envelope but outside `MetricRanges` are observationally unusual but not
- * invalid; Story 2.3 owns the soft-vs-hard policy. Story 3.3 (Default
- * Thresholds Seed Script) references these constants.
+ * envelope. Four of the six metrics (`ph`, `tds_ppm`, `temp_c`,
+ * `water_level_cm`) match the hard reject ranges in `MetricRanges` — the v1
+ * sensor envelope and the v1 wire-contract hard envelope are coincident for
+ * those keys. The two that meaningfully extend (`turbidity_ntu 0–3000`,
+ * `chlorine_ppm 0–10`) reflect real-world sensor headroom for ST-102 / CL-17
+ * probes.
+ *
+ * Frames inside the extended envelope but outside the hard range are
+ * observationally unusual but accepted in v1. Story 2.3 owns the soft-vs-hard
+ * policy that may flag these in alerts. Story 3.3 (Default Thresholds Seed
+ * Script) reads these constants to seed rule thresholds.
+ *
+ * Renamed from `MetricSoftRanges` (2026-08-22) — the name "soft" implied a
+ * per-metric margin policy that does not yet exist. The new name tracks the
+ * architectural terminology ("extended observation range") and avoids the
+ * dead-fields confusion raised in code review finding [Review][Patch] F-A8.
  */
-export const MetricSoftRanges = {
+export const MetricExtendedRanges = {
   ph: { min: 0, max: 14 },
   tds_ppm: { min: 0, max: 5_000 },
   turbidity_ntu: { min: 0, max: 3_000 },
@@ -52,17 +64,28 @@ const rangedFloat = (key: MetricKey) =>
     .min(MetricRanges[key].min)
     .max(MetricRanges[key].max);
 
-export const TelemetryMetricsSchema = z.object({
-  ph: rangedFloat("ph"),
-  tds_ppm: rangedFloat("tds_ppm"),
-  turbidity_ntu: rangedFloat("turbidity_ntu"),
-  temp_c: rangedFloat("temp_c"),
-  chlorine_ppm: rangedFloat("chlorine_ppm"),
-  water_level_cm: rangedFloat("water_level_cm"),
-});
+/**
+ * v1 metrics object — REQUIRED keys are the full v1 metric set per ADR 0001.
+ * Derived from `MetricKeySchema.options` so adding an entry to the enum
+ * automatically extends the schema (each key gets its hard-reject range).
+ *
+ * `TelemetryMetricsSchema` deliberately omits `.strict()` per ADR 0001
+ * forward-compat rule: unknown metric keys are silently dropped, not
+ * rejected. Top-level `.strict()` is on `TelemetryFrameSchema` only.
+ */
+export const TelemetryMetricsSchema = z.object(
+  Object.fromEntries(
+    MetricKeySchema.options.map((key) => [key, rangedFloat(key)]),
+  ) as unknown as Record<MetricKey, z.ZodType<number>>,
+);
 export type TelemetryMetrics = z.infer<typeof TelemetryMetricsSchema>;
 
-/** v1 frame. Unknown fields are stripped by Zod's default; missing required → 400 (Story 2.3). */
+/**
+ * v1 frame. `.strict()` rejects unknown TOP-LEVEL keys (firmware contract).
+ * Per ADR 0001 unknown metric *keys* inside `metrics` are not added in v1
+ * (the v1 metric set is fixed); `.strict()` is correct for both surfaces.
+ * Missing required fields → 400 `bad_request` via `translateZodError` (Story 2.3).
+ */
 const FW_VERSION_MAX_LENGTH = 64;
 export const TelemetryFrameSchema = z
   .object({
@@ -99,7 +122,16 @@ export const PROCESSING_ORDER = [
 ] as const;
 export type ProcessingOrderStep = (typeof PROCESSING_ORDER)[number];
 
-/** Canonical error envelope for failed `TelemetryFrameSchema.safeParse()`. */
+/**
+ * Canonical error envelope for failed `TelemetryFrameSchema.safeParse()`.
+ *
+ * `missing_fields` is the dotted-path list of every field that failed
+ * validation. The name carries historical weight (firmware keys on it);
+ * semantically the value covers any kind of failure (missing, out-of-range,
+ * NaN, wrong-version, non-UUID). A v2 contract bump may split this into
+ * `missing_fields` + `invalid_fields`; for v1 the single array is the
+ * stable surface.
+ */
 export interface TelemetryBadRequest {
   readonly error: "bad_request";
   readonly missing_fields: string[];
@@ -107,18 +139,35 @@ export interface TelemetryBadRequest {
 
 /**
  * Translate a Zod failure into the wire error envelope the api surfaces to
- * clients. The path of every issue is joined with `.` (e.g. `metrics.ph`)
- * and de-duplicated; missing fields come out first, then invalid ones,
- * preserving Zod's iteration order.
+ * clients. Each issue path is joined with `.` (e.g. `metrics.ph`).
+ * De-duplication is by `path + issue code` so two issues on the same path
+ * with different codes (e.g. `expected number, received NaN` plus
+ * `min value 0`) are both surfaced — path-only de-dup silently drops
+ * information. For `unrecognized_keys` issues each offending key emits a
+ * SEPARATE missing-field entry (`extra_a` and `extra_b` rather than
+ * `extra_a.extra_b`) so firmware can read each one without parsing. Path
+ * iteration order matches Zod's.
  */
 export const translateZodError = (error: z.ZodError): TelemetryBadRequest => {
   const missingFields: string[] = [];
   const seen = new Set<string>();
   for (const issue of error.issues) {
-    const key = issue.path.join(".") || "(root)";
-    if (seen.has(key)) continue;
-    seen.add(key);
-    missingFields.push(key);
+    const basePath = issue.path.join(".");
+    const isUnrecognized =
+      issue.code === "unrecognized_keys" &&
+      Array.isArray((issue as { keys?: readonly string[] }).keys) &&
+      (issue as { keys: readonly string[] }).keys.length > 0;
+    const pathsToEmit: string[] = isUnrecognized
+      ? (issue as { keys: readonly string[] }).keys.map(
+          (k) => (basePath ? `${basePath}.${k}` : k),
+        )
+      : [basePath || "(root)"];
+    for (const path of pathsToEmit) {
+      const dedupKey = `${path}|${issue.code}`;
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
+      missingFields.push(path);
+    }
   }
   return { error: "bad_request", missing_fields: missingFields };
 };

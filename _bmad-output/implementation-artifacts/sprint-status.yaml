@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-21T20:00:00.000Z
+last_updated: 2026-08-22T20:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -75,9 +75,8 @@ development_status:
 
   # ===== Epic 2 — Devices & Telemetry =====
   epic-2: in-progress
-  2-1-wire-contract-schemas: review
+  2-1-wire-contract-schemas: done
   2-2-ingest-websocket-endpoint: review
-  2-2-ingest-websocket-endpoint: backlog
   2-3-unknown-missing-field-handling: backlog
   2-4-simulator-process-six-default-devices-seven-scenarios: backlog
   2-5-admin-simulator-admin-tab: backlog
@@ -260,14 +259,14 @@ stories:
   # ===== Epic 2 — Devices & Telemetry (backlog) =====
   - id: "2.1"
     title: "Wire Contract Schemas"
-    status: review
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
+    commit: "8e1d79e"
+    shipped: "2026-08-22"
     covers: ["FR-2", "AR-2", "AR-5"]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-1-wire-contract-schemas.md"
-      review: null
+      review: "_bmad-output/implementation-artifacts/stories/2.1.review.md"
 
   - id: "2.2"
     title: "Ingest WebSocket Endpoint"

@@ -134,15 +134,22 @@ describe("RBAC_NEGATIVE_CASES registry", () => {
 });
 
 describe("AuditActionSchema (Story 2.2 extension)", () => {
-  it("includes the three Story 2.2 ingest values", () => {
+  it("includes the four Story 2.2 ingest values", () => {
     expect(AuditActionSchema.options).toContain("reading_ingested");
     expect(AuditActionSchema.options).toContain("reading_rate_limited");
     expect(AuditActionSchema.options).toContain("seq_drop_detected");
+    // F-P7: late-frame reorder is distinct from gap-detection;
+    // both reach the audit pipeline via `IngestHooks.onAuditAppend`.
+    expect(AuditActionSchema.options).toContain("seq_reorder_detected");
   });
 
   it("parses every enum value without error", () => {
     for (const value of AuditActionSchema.options) {
       expect(AuditActionSchema.parse(value)).toBe(value);
     }
+  });
+
+  it("rejects an unknown audit action (fail-closed enum)", () => {
+    expect(AuditActionSchema.safeParse("not-a-real-action").success).toBe(false);
   });
 });

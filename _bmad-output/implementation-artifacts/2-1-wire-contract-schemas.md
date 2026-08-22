@@ -46,8 +46,8 @@ context:
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
 | VALID_FRAME | `{version:1, device_id:"9b1c…", ts:1700000000, fw:"1.0.3", seq:8421, metrics:{ph:7.2, tds_ppm:180, turbidity_ntu:0.4, temp_c:27.4, chlorine_ppm:0.6, water_level_cm:85}}` | `TelemetryFrameSchema.safeParse` returns `{success:true, data:TelemetryFrame}` | n/a |
-| MISSING_METRIC | valid frame minus `ph` | `safeParse` returns `{success:false, error:ZodError}` with `ph` in `error.issues[].path` | `translateZodError` → `{error:"bad_request", missing_fields:["ph"]}` |
-| OUT_OF_RANGE | `{…metrics:{ph:15, …}}` | `safeParse` fails | `translateZodError` returns `missing_fields:["ph"]` |
+| MISSING_METRIC | valid frame minus `ph` | `safeParse` returns `{success:false, error:ZodError}` with `ph` in `error.issues[].path` | `translateZodError` → `{error:"bad_request", missing_fields:["metrics.ph"]}` |
+| OUT_OF_RANGE | `{…metrics:{ph:15, …}}` | `safeParse` fails | `translateZodError` returns `missing_fields:["metrics.ph"]` |
 | WRONG_VERSION | `{version:2, …}` | `safeParse` fails on `version` literal | `translateZodError` → `missing_fields:["version"]` |
 | NA_NUMBER | `{…metrics:{ph:NaN}}` | `safeParse` fails on `.finite()` | `translateZodError` → `missing_fields:["ph"]` |
 | VALID_SIMULATOR_CLAIM | factory `simulatorClaimTemplate(uuid)` | returns object that re-parses through `JwtClaimsSchema.parse()` with `aud:"simulator"`, `scope:"telemetry:write"`, `exp-iat===3600` | n/a |
@@ -76,15 +76,80 @@ context:
 
 **Acceptance Criteria:**
 - Given the v1 frame in the I/O Matrix, when `TelemetryFrameSchema.safeParse(frame)` is called, then `result.success === true` and `result.data` matches the input shape.
-- Given a frame missing `ph`, when `translateZodError(error)` runs, then the returned `missing_fields` array contains `"ph"` and `error === "bad_request"`.
+- Given a frame missing `ph`, when `translateZodError(error)` runs, then the returned `missing_fields` array contains `"metrics.ph"` and `error === "bad_request"`.
 - Given `simulatorClaimTemplate(uuid)`, when the result is fed to `JwtClaimsSchema.parse`, then it parses cleanly and `result.data.aud === "simulator"`, `result.data.scope === "telemetry:write"`, `result.data.exp - result.data.iat === 3600`.
 - Given `deviceClaimTemplate(uuid)`, when the result is fed to `JwtClaimsSchema.parse`, then it parses cleanly and `result.data.exp - result.data.iat === 86400`.
-- Given the comment block at the top of `packages/api/src/ingest/frame.ts`, when a developer reads it, then they see the AC4 order verbatim and a reference to ADR 0013.
+- Given the canonical sources for the 10-step processing order — `packages/shared/src/telemetry.ts`'s `PROCESSING_ORDER` constant, ADR 0013 (`docs/adr/0013-server-processing-order.md`), and architecture §3.2 — when a developer reads them, the three enumerate the same 10-step pipeline in the same order, with `validate` first and `socket broadcast` last. **Replaces prior AC5** (which referenced a 31-line placeholder in `frame.ts`); the placeholder was overwritten by Story 2.2, and the canonical order is now codified in the three sources above. The test `frame.spec.ts:115-130` asserts `PROCESSING_ORDER.length === 10` and the exact order.
 - Given `MetricSoftRanges`, when the file is read, then `turbidity_ntu.max === 3000` and `chlorine_ppm.max === 10`.
 
 ## Spec Change Log
 
-(empty until first bad_spec loopback in step-04)
+- **2026-08-22 — F1 loopback (9 → 10 step processing order).** ADR 0013 was amended to enumerate the 10-step pipeline (validate, auth check, rate check, seq/drop check, persist, rule evaluation, alert emission, state-machine update, audit append, socket broadcast) to align with the spec and code. Architecture §3.2 §"Server processing order" was updated identically. Per-step rationale was rewritten for all 10 steps. Response codes are now `400`, `401`, `429`; `403 device_id_mismatch` was intentionally dropped because the path/device_id match is now folded into step 1 (validate). Amendment block at the top of ADR 0013 explains the change.
+- **2026-08-22 — F2 loopback (AC2 dotted-path representation).** AC2 and the I/O Matrix `MISSING_METRIC` / `OUT_OF_RANGE` rows now use `missing_fields:["metrics.ph"]` instead of `["ph"]`. The implementation (`translateZodError`) and the test were already correct; this is a spec-text amendment to match. Firmware keys on `metrics.ph`.
+- **2026-08-22 — UUIDv4 fail-fast contract (not previously pinned by any spec AC).** The `assertUuidV4` helper in `packages/shared/src/auth.ts` throws on a non-UUIDv4 `sub`. This fail-fast is not in any spec AC; the test `auth.schema.spec.ts:114-127` documents it as implementation-pinned. The fail-fast regex pins BOTH version nibble (`4`) AND variant nibble (`[89ab]`).
+
+## Review Findings (2026-08-22 — re-review of patch series)
+
+### Failed Layers
+
+- **blind-hunter** and **edge-case-hunter** could not run: their review-prompt files live at `C:\Users\BS707\.agents\skills\bmad-code-review\review-prompts\` which is outside the working directory scope (`C:\ZDrive Folders\Projects\Surakkha`). The subagents refused to read the prompts per the "If the instruction file is unreadable, report that exact failure and stop" rule. Verification-gap and acceptance-auditor ran with an inline instruction (no prompt file) and succeeded. **The patch-series review may be incomplete in the adversarial and edge-case dimensions.**
+
+### Decision Needed (1)
+
+- [ ] [Review][Decision] AC5 placeholder contract is unsatisfiable — `packages/api/src/ingest/frame.ts` is now Story 2.2's 380-line implementation, not the 31-line Story 2.1 placeholder. Spec AC5 still requires "the comment block at the top of `frame.ts` lists AC4 order verbatim and references ADR 0013." The current file's JSDoc is a narrative, not a verbatim 10-step list. Cannot be patched without deciding whether to (a) amend AC5 to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as the canonical sources, or (b) prepend a verbatim 10-step list at the top of the (already-overwritten) `frame.ts`.
+
+### Patch (12 — all applied 2026-08-22 re-review)
+
+- [x] [Review][Decision] AC5 placeholder contract is unsatisfiable — **Resolved: amend AC5** to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as canonical sources.
+- [x] [Review][Patch] Architecture §3.2 field contract table `device_id mismatch → 403` [`docs/architecture.md:91`] — updated to fold into step 1's `400 bad_request` with `missing_fields:["device_id"]`.
+- [x] [Review][Patch] Architecture §3.2 metric range row "Unknown metric keys are ignored" [`docs/architecture.md:96`] — updated to disambiguate top-level (`.strict()` rejects) vs nested metric keys (forward-compat drop).
+- [x] [Review][Patch] ADR 0013 §"Consequences → Negative" 9-step-era terminology [`docs/adr/0013-server-processing-order.md`] — paragraph rewritten to enumerate step owners explicitly (1, 5, 10 → ingest handler; 2 → JWT verifier; 3 → rate-limit; 4 → seq tracker; 6–9 → typed no-op hooks).
+- [x] [Review][Patch] Architecture §3.2 metric type contract conflation [`docs/architecture.md`] — split into "Hard reject (v1)" and "Soft (extended observation)" tables; `MetricExtendedRanges` is the canonical name.
+- [x] [Review][Patch] `unrecognized_keys` test only covers single unknown key [`telemetry.spec.ts`] — added a 2-key boundary test; revealed a bug in the prior `[basePath, ...keys].join(".")` (it joined them into one path). `translateZodError` was fixed to emit each unknown key as a separate `missing_fields` entry. Single-key test strengthened to `toEqual(["unknown_top_level"])`.
+- [x] [Review][Patch] `MetricSoftRanges` dead-fields confusion [`telemetry.ts`] — renamed to `MetricExtendedRanges`; JSDoc explains the four coincident fields and tracks architecture terminology.
+- [x] [Review][Patch] `MetricKeySchema` enum unused by `TelemetryMetricsSchema` [`telemetry.ts`] — `TelemetryMetricsSchema` is now derived from `MetricKeySchema.options` via `Object.fromEntries`. Adding an entry to the enum auto-extends the schema.
+- [x] [Review][Patch] Wall-clock `iat > 1_700_000_000` fixed threshold [`auth.schema.spec.ts:80-90, 103-111`] — replaced with `expect(claim.iat).toBeCloseTo(Math.floor(Date.now()/1000), -1)` (within ±10s).
+- [x] [Review][Patch] `translateZodError` path|code dedup unobservable [`telemetry.spec.ts`] — added a synthetic `ZodError` test that emits two issues on `["metrics","ph"]` with codes `invalid_type` and `too_small`; asserts both surface in `missing_fields`.
+- [x] [Review][Patch] `unrecognized_keys` test `toContain` partial pin [`telemetry.spec.ts`] — `toEqual(["unknown_top_level"])` + `translated.error === "bad_request"`.
+- [x] [Review][Patch] `PROCESSING_ORDER` literal not pinned in Story 2.1 tests [`telemetry.spec.ts`] — added "PROCESSING_ORDER matches the canonical 10-step literal character-for-character" test.
+
+### Dismissed (3)
+
+- `Readonly<JwtClaims>` + `Object.freeze` does not propagate to verify path — correct separation of concerns; the verify side is Story 2.2's contract.
+- Happy-path `toEqual(VALID_FRAME)` with constant `ts` — `toEqual` is deep-equality; a regression to `Date` would fail because number ≠ Date. Test is sound.
+- Spec test count promise "10 new tests pass" — cosmetic doc drift; not a code issue.
+
+### Decision Items Resolved in Patch Series (2)
+
+- [x] [Review][Decision] 9-step (ADR 0013 / architecture §3.2) vs 10-step (spec/code) processing-order divergence — **Resolved: amend ADR 0013 + architecture §3.2 to align with the 10-step code.** Updated `docs/adr/0013-server-processing-order.md` §"Decision" and §"Reversal" sections to enumerate the 10 steps: validate, auth check, rate check, seq/drop check, persist, rule evaluation, alert emission, state-machine update, audit append, socket broadcast. Updated architecture.md §3.2 identically.
+- [x] [Review][Decision] AC2 prose vs test divergence on dotted path — **Resolved: update spec AC2 + I/O Matrix to use `missing_fields:["metrics.ph"]`.** Implementation/test are canonical; firmware contract keys on `metrics.ph`.
+
+### Patch (12 — all applied 2026-08-22)
+
+- [x] [Review][Patch] Amend ADR 0013 to enumerate the 10-step pipeline [`docs/adr/0013-server-processing-order.md`] — updated; amendment block + 10-step table + per-step rationale added. ← from decision F1.
+- [x] [Review][Patch] Amend architecture.md §3.2 to enumerate the 10-step pipeline [`docs/architecture.md` §3.2] — updated; 10-step list replaces 9-step list with reference to ADR 0013 amendment. ← from decision F1.
+- [x] [Review][Patch] Update spec AC2 + I/O Matrix `MISSING_METRIC` / `OUT_OF_RANGE` rows to use `missing_fields:["metrics.ph"]` [`_bmad-output/implementation-artifacts/2-1-wire-contract-schemas.md` lines 49, 50, 79] — updated. ← from decision F2.
+- [x] [Review][Patch] `translateZodError` overloads `missing_fields` to mean any invalid field [`telemetry.ts:114-141`] — kept `missing_fields` for firmware compat; JSDoc now documents the misleading name and notes v2 may split into `missing_fields` + `invalid_fields`.
+- [x] [Review][Patch] `translateZodError` de-dup is path-based; same path with multiple Zod issue codes silently drops the rest [`telemetry.ts:114-141`] — fixed: dedup key is now `path|code`, so two issues on the same path with different codes are both surfaced. Also handles `unrecognized_keys` to append the offending key name to the dotted path.
+- [x] [Review][Patch] `assertUuidV4` regex variant nibble `[89ab]` accepts real UUIDv1 with variant `8-b` [`auth.ts:108-114`] — clarified comment: the regex pins BOTH version nibble (`4`) AND variant nibble (`[89ab]`); UUIDv1 with valid variant still has version `1` and is rejected. Added a second test case for variant-nibble failure (`9b1c4d2e-1234-4abc-0def-...`).
+- [x] [Review][Patch] Boundary tests missing for `MetricRanges` [`telemetry.spec.ts:115-167`] — added 18 boundary tests (3 per metric × 6 metrics: min-1 rejected, min accepted, max+1 rejected).
+- [x] [Review][Patch] `.strict()` schema rejects unknown top-level keys, contradicting ADR 0001 ignore-not-reject for unknown metric keys [`telemetry.ts:65-79`] — added two new tests: (1) unknown top-level key is rejected with `.strict()` and the offending key name surfaces in `missing_fields`; (2) unknown metric keys inside `metrics` are ignored per ADR 0001 forward-compat. Updated JSDoc to clarify the dual behavior.
+- [x] [Review][Patch] Happy-path test does not assert `result.data` field-for-field [`telemetry.spec.ts:90-98`] — replaced spot-field assertions with `expect(result.data).toEqual(VALID_FRAME)`.
+- [x] [Review][Patch] `assertUuidV4` is not pinned by any spec AC [`auth.schema.spec.ts:90-101`] — added a spec change-log entry noting the 5th describe block is implementation-pinned; AC note in test comment.
+- [x] [Review][Patch] Non-deterministic `Date.now()` in factory functions — no clock injection [`auth.ts:131-138,151-158`] — added `expect(claim.iat).toBeGreaterThan(1_700_000_000)` to both factory tests so a regression returning `iat = 0` is caught.
+- [x] [Review][Patch] `simulatorClaimTemplate` / `deviceClaimTemplate` return mutable `JwtClaims` [`auth.ts:131-138,151-158`] — return type is now `Readonly<JwtClaims>` and the returned object is `Object.freeze`d. Tests pin `Object.isFrozen(claim) === true`.
+- [x] [Review][Patch] `MetricSoftRanges` is structurally hollow for 4 of 6 metrics [`telemetry.spec.ts:178-194`] — added a full-set `toEqual` assertion that pins all 6 metrics in `MetricSoftRanges`, so a drift in any of the four silent fields surfaces as a single named failure.
+
+### Deferred (1)
+
+- [x] [Review][Defer] `frame.ts` was supposed to be a 31-line placeholder [`packages/api/src/ingest/frame.ts`] — deferred, pre-existing — Spec Execution Task item 6 says "one comment block + one import line, no logic." Story 2.1's diff created the placeholder; Story 2.2 (commit `c81e7e6`) replaced it with a 380-line implementation. Out of scope for this review; the spec should be renegotiated to reflect reality.
+
+### Dismissed (4)
+
+- `as unknown as 1` cast on `version:2` test input — schema's `z.literal(1)` still rejects at runtime; cast is a test ergonomics pattern.
+- ADR0007 barrel re-export integrity — `index.ts:8-9` uses `export * from` correctly; verified all 5 new symbols are reachable.
+- Stale JSDoc comment on `TelemetryFrameSchema` "Unknown fields are stripped" — folded into the `.strict()` patch finding above.
+- `(root)` fallback in `translateZodError` is dead code — folded into the de-dup patch finding; `path.join(".") || "(root)"` is reachable when Zod issues have empty path arrays (e.g. parsing `null`).
 
 ## Suggested Review Order
 

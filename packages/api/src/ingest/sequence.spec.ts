@@ -42,6 +42,21 @@ describe("PerDeviceSequence", () => {
     });
   });
 
+  // F-P14: pin the FIRST `observe` after a brand-new lastSeen=-1
+  // default so a regression in the gap-drop formula
+  // (`newSeq - lastAcceptedSeq - 1`) that mis-computes the
+  // "last_seen === -1" baseline is caught here. The formula with
+  // lastSeen=-1 is `seq - (-1) - 1 = seq`; for seq=3 that's
+  // dropCount=3 (frames 0,1,2 were missed).
+  it("first observe(DEVICE, 3) from a fresh state reports dropCount=3", () => {
+    const seq = new PerDeviceSequence();
+    expect(seq.observe(DEVICE, 3)).toEqual({
+      outcome: "accept",
+      dropCount: 3,
+      newLastSeen: 3,
+    });
+  });
+
   it("marks reorder for seq:3 after seq:5 (lastSeen unchanged)", () => {
     const seq = new PerDeviceSequence();
     seq.observe(DEVICE, 5);

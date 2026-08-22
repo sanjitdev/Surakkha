@@ -57,5 +57,15 @@ describe("PerDeviceRateLimiter", () => {
     expect(limiter.tryAccept(DEVICE_A, 1_000).ok).toBe(false);
     // Device B is fresh — first frame must pass.
     expect(limiter.tryAccept(DEVICE_B, 1_000)).toEqual({ ok: true });
+
+    // F-P13: pin the second direction of isolation too — a follow-up
+    // frame on DEVICE_B inside DEVICE_B's own 2s window must be
+    // rejected. Without this, a regression that shares state
+    // across devices would only be caught at the integration layer.
+    vi.setSystemTime(1_500);
+    expect(limiter.tryAccept(DEVICE_B, 1_500)).toEqual({
+      ok: false,
+      retryAfterSeconds: 2,
+    });
   });
 });

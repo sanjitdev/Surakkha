@@ -2,16 +2,20 @@
  * Story 2.2 — `verifyIngestClaims` (claim-driven verifier for the WS
  * ingest endpoint).
  *
- * Covers the six required cases:
- *   1. valid device token (aud=device, sub matches URL)
- *   2. valid simulator token (aud=simulator, sub matches URL)
- *   3. sub mismatch (aud correct, sub does not match URL)
- *   4. aud=user rejection (audience not in {device, simulator})
- *   5. scope mismatch (right audience, wrong scope)
- *   6. signature failure (token signed with a different secret)
+ * Covers the six required cases + the F-P1 discriminator mapping:
+ *   1. valid device token (aud=device, sub matches URL) → {kind:"ok"}
+ *   2. valid simulator token (aud=simulator, sub matches URL) → {kind:"ok"}
+ *   3. sub mismatch → {kind:"sub_mismatch"}
+ *   4. aud=user rejection → {kind:"aud_fail"}
+ *   5. scope mismatch → {kind:"scope_fail"}
+ *   6. signature failure (token signed with a different secret) → {kind:"sig_fail"}
+ *   7. wrong issuer → {kind:"sig_fail"} (jwt.verify throws, our catch returns sig_fail)
+ *   8. 30s clock-skew tolerance window for `exp`
  *
- * The pattern mirrors `jwt.spec.ts` — set JWT_SECRET per test, use
- * `vi.spyOn(process, "exit")` if needed, restore at the end.
+ * The pattern mirrors `jwt.spec.ts` — set JWT_SECRET per test,
+ * restore at the end. The return shape is now a tagged union
+ * (F-P1) so the WS handler can emit distinct envelopes per failure
+ * mode.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import jwt from "jsonwebtoken";
@@ -57,11 +61,12 @@ describe("Story 2.2 — verifyIngestClaims", () => {
       sub: DEVICE_UUID,
       scope: "telemetry:write",
     });
-    const claims = verifyIngestClaims(token, DEVICE_UUID);
-    expect(claims).not.toBeNull();
-    expect(claims?.aud).toBe("device");
-    expect(claims?.sub).toBe(DEVICE_UUID);
-    expect(claims?.scope).toBe("telemetry:write");
+    const result = verifyIngestClaims(token, DEVICE_UUID);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.claims.aud).toBe("device");
+    expect(result.claims.sub).toBe(DEVICE_UUID);
+    expect(result.claims.scope).toBe("telemetry:write");
   });
 
   it("accepts a valid simulator token whose sub matches the URL device_id", () => {
@@ -71,42 +76,43 @@ describe("Story 2.2 — verifyIngestClaims", () => {
       sub: DEVICE_UUID,
       scope: "telemetry:write",
     });
-    const claims = verifyIngestClaims(token, DEVICE_UUID);
-    expect(claims).not.toBeNull();
-    expect(claims?.aud).toBe("simulator");
+    const result = verifyIngestClaims(token, DEVICE_UUID);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.claims.aud).toBe("simulator");
   });
 
-  it("rejects when the JWT sub does not match the URL device_id", () => {
+  it("returns {kind:sub_mismatch} when the JWT sub does not match the URL device_id", () => {
     const token = sign({
       iss: "surakkha-api",
       aud: "device",
       sub: OTHER_UUID,
       scope: "telemetry:write",
     });
-    expect(verifyIngestClaims(token, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(token, DEVICE_UUID).kind).toBe("sub_mismatch");
   });
 
-  it("rejects a user-audience token (aud=user is not an ingest audience)", () => {
+  it("returns {kind:aud_fail} for a user-audience token", () => {
     const token = sign({
       iss: "surakkha-api",
       aud: "user",
       sub: DEVICE_UUID,
       scope: "user:read",
     });
-    expect(verifyIngestClaims(token, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(token, DEVICE_UUID).kind).toBe("aud_fail");
   });
 
-  it("rejects when the scope is not telemetry:write", () => {
+  it("returns {kind:scope_fail} when the scope is not telemetry:write", () => {
     const token = sign({
       iss: "surakkha-api",
       aud: "device",
       sub: DEVICE_UUID,
       scope: "user:read",
     });
-    expect(verifyIngestClaims(token, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(token, DEVICE_UUID).kind).toBe("scope_fail");
   });
 
-  it("returns null on a token signed with a different secret", () => {
+  it("returns {kind:sig_fail} on a token signed with a different secret", () => {
     const token = sign(
       {
         iss: "surakkha-api",
@@ -116,10 +122,10 @@ describe("Story 2.2 — verifyIngestClaims", () => {
       },
       OTHER_SECRET,
     );
-    expect(verifyIngestClaims(token, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(token, DEVICE_UUID).kind).toBe("sig_fail");
   });
 
-  it("rejects a token whose iss is not surakkha-api", () => {
+  it("returns {kind:sig_fail} when the issuer is not surakkha-api", () => {
     const token = jwt.sign(
       {
         iss: "other-issuer",
@@ -130,7 +136,7 @@ describe("Story 2.2 — verifyIngestClaims", () => {
       STRONG_SECRET,
       { algorithm: "HS256", expiresIn: 3600 },
     );
-    expect(verifyIngestClaims(token, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(token, DEVICE_UUID).kind).toBe("sig_fail");
   });
 
   it("accepts a token whose exp is 25 seconds in the past (within 30s clock-skew tolerance) and rejects a 60s-stale token", () => {
@@ -157,7 +163,7 @@ describe("Story 2.2 — verifyIngestClaims", () => {
       STRONG_SECRET,
       { algorithm: "HS256" },
     );
-    expect(verifyIngestClaims(withinSkew, DEVICE_UUID)).not.toBeNull();
-    expect(verifyIngestClaims(beyondSkew, DEVICE_UUID)).toBeNull();
+    expect(verifyIngestClaims(withinSkew, DEVICE_UUID).kind).toBe("ok");
+    expect(verifyIngestClaims(beyondSkew, DEVICE_UUID).kind).toBe("sig_fail");
   });
 });

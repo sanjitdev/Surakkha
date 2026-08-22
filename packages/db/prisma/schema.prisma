@@ -24,6 +24,10 @@ datasource db {
 model Device {
   id         String    @id
   lastSeenAt DateTime?
+  // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
+  // matches the FK constraint in the migration; a removed Device
+  // does not leave orphan Reading rows behind.
+  readings   Reading[] @relation("DeviceReadings")
 }
 
 /**
@@ -50,6 +54,11 @@ model Reading {
   metrics          Json
   seq              Int
   flags            String[] @default([])
+
+  // F-P8: enforce the device_id authority at the DB layer. The
+  // matching migration FK is the runtime authority; this relation
+  // attribute keeps the Prisma client honest.
+  device           Device   @relation("DeviceReadings", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([deviceId, ts])
   @@index([deviceId, seq])

@@ -110,6 +110,17 @@ const io = new IoServer(httpServer, {
   path: INGEST_PATH_PREFIX,
   pingTimeout: 25_000,
   pingInterval: 20_000,
+  // F-P10: cap inbound WS message size (a v1 telemetry frame is
+  // <1 KB). Default is 1 MB which would let a malicious client
+  // OOM the api process with a single oversized payload.
+  maxHttpBufferSize: 64_000,
+  // F-P10: WS endpoint is not browser-facing in v1 — devices and
+  // simulators authenticate via JWT, not cookies. `cors: { origin:
+  // false }` rejects cross-origin browser connections; same-origin
+  // (api host) still works because Socket.IO treats that as the
+  // allowed origin. v2 may revisit if a browser-based admin client
+  // needs WS access (it does not today).
+  cors: { origin: false },
 });
 
 /**
@@ -167,7 +178,15 @@ const ingestHandlerPromise = resolveReadingDelegate().then((prisma) =>
 );
 
 io.on("connection", (socket) => {
-  void ingestHandlerPromise.then((handler) => handler(socket));
+  // F-P4: if `resolveReadingDelegate()` rejects (Prisma init failure)
+  // or `buildIngestServer` throws, every connection would otherwise
+  // silently never get a handler. Surface the error and disconnect.
+  ingestHandlerPromise
+    .then((handler) => handler(socket))
+    .catch((err: unknown) => {
+      logger.error({ err }, "ingest: handler init failed");
+      socket.disconnect(true);
+    });
 });
 
 /**

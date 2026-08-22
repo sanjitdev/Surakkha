@@ -133,21 +133,63 @@ describe("buildIngestServer — connection validation", () => {
       }
     }
   });
+});
 
-  it("simulator audience: registers the frame listener and does NOT error/disconnect", async () => {
-    const previousSecret = process.env["JWT_SECRET"];
+/**
+ * Story 2.2 — code review F-P12.
+ *
+ * The pre-existing tests cover MISSING_TOKEN and SUB_MISMATCH at the
+ * connection layer, but the discriminated `VerifyIngestResult`
+ * union (F-P1) introduced three more failure modes (sig_fail,
+ * aud_fail, scope_fail) that must map to distinct envelopes at the
+ * WS boundary. Pin each one here.
+ *
+ * The end-to-end listener invocation test closes the gap that the
+ * "simulator audience" test only asserted `socket.on("frame")` was
+ * called — it never invoked the registered handler to confirm
+ * `processFrame` actually fires through.
+ */
+describe("buildIngestServer — discriminated failure envelopes", () => {
+  type FrameListener = (raw: unknown) => Promise<void> | void;
+
+  const signWithSecret = async (
+    payload: Record<string, unknown>,
+    secret: string,
+  ): Promise<string> => {
+    const jwt = await import("jsonwebtoken");
+    return jwt.default.sign(payload, secret, {
+      algorithm: "HS256",
+      expiresIn: 3600,
+    });
+  };
+
+  const withSecret = async <T>(
+    body: () => Promise<T>,
+  ): Promise<T> => {
+    const previous = process.env["JWT_SECRET"];
     process.env["JWT_SECRET"] = "x".repeat(64);
     try {
-      const jwt = await import("jsonwebtoken");
-      const token = jwt.default.sign(
+      return await body();
+    } finally {
+      if (previous === undefined) {
+        delete process.env["JWT_SECRET"];
+      } else {
+        process.env["JWT_SECRET"] = previous;
+      }
+    }
+  };
+
+  it("signature failure (different secret) emits unauthenticated and disconnects", async () => {
+    await withSecret(async () => {
+      const wrongSecret = "y".repeat(64);
+      const token = await signWithSecret(
         {
           iss: "surakkha-api",
-          aud: "simulator",
+          aud: "device",
           sub: DEVICE_UUID,
           scope: "telemetry:write",
         },
-        process.env["JWT_SECRET"] as string,
-        { algorithm: "HS256", expiresIn: 3600 },
+        wrongSecret,
       );
       const rig = buildRig({
         handshake: {
@@ -158,20 +200,142 @@ describe("buildIngestServer — connection validation", () => {
 
       await rig.handler(rig.socket);
 
-      // No auth error envelope and no disconnect.
-      expect(rig.socket.emit).not.toHaveBeenCalled();
-      expect(rig.socket.disconnect).not.toHaveBeenCalled();
-      // The frame listener IS registered.
+      expect(rig.socket.emit).toHaveBeenCalledWith("unauthenticated");
+      expect(rig.socket.disconnect).toHaveBeenCalledWith(true);
+      expect(rig.socket.on).not.toHaveBeenCalled();
+      expect(rig.prismaCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  it("aud=user emits unauthenticated and disconnects (never auth_error)", async () => {
+    await withSecret(async () => {
+      const token = await signWithSecret(
+        {
+          iss: "surakkha-api",
+          aud: "user",
+          sub: DEVICE_UUID,
+          scope: "user:read",
+        },
+        process.env["JWT_SECRET"] as string,
+      );
+      const rig = buildRig({
+        handshake: {
+          url: `/ingest/${DEVICE_UUID}`,
+          auth: { token },
+        },
+      });
+
+      await rig.handler(rig.socket);
+
+      // F-P1: aud_fail maps to the same `unauthenticated` envelope
+      // as sig_fail — both mean "you are not allowed on this WS at
+      // all". Only sub/scope surface the more specific `auth_error`.
+      expect(rig.socket.emit).toHaveBeenCalledWith("unauthenticated");
+      expect(rig.socket.emit).not.toHaveBeenCalledWith(
+        "auth_error",
+        expect.anything(),
+      );
+      expect(rig.socket.disconnect).toHaveBeenCalledWith(true);
+      expect(rig.socket.on).not.toHaveBeenCalled();
+    });
+  });
+
+  it("scope mismatch emits auth_error forbidden_scope and disconnects", async () => {
+    await withSecret(async () => {
+      const token = await signWithSecret(
+        {
+          iss: "surakkha-api",
+          aud: "device",
+          sub: DEVICE_UUID,
+          scope: "user:read",
+        },
+        process.env["JWT_SECRET"] as string,
+      );
+      const rig = buildRig({
+        handshake: {
+          url: `/ingest/${DEVICE_UUID}`,
+          auth: { token },
+        },
+      });
+
+      await rig.handler(rig.socket);
+
+      // F-P1: scope_fail is its own envelope (not the same as a
+      // wrong-device token). Operators reading the audit pipeline
+      // can distinguish "device mis-configured its scope" from
+      // "device trying to impersonate a different UUID".
+      expect(rig.socket.emit).toHaveBeenCalledWith("auth_error", {
+        error: "forbidden_scope",
+      });
+      expect(rig.socket.disconnect).toHaveBeenCalledWith(true);
+      expect(rig.socket.on).not.toHaveBeenCalled();
+    });
+  });
+
+  it("valid simulator token: registered frame listener processes a frame end-to-end", async () => {
+    await withSecret(async () => {
+      const token = await signWithSecret(
+        {
+          iss: "surakkha-api",
+          aud: "simulator",
+          sub: DEVICE_UUID,
+          scope: "telemetry:write",
+        },
+        process.env["JWT_SECRET"] as string,
+      );
+      const rig = buildRig({
+        handshake: {
+          url: `/ingest/${DEVICE_UUID}`,
+          auth: { token },
+        },
+      });
+
+      await rig.handler(rig.socket);
+
+      // F-P12(b): invoke the registered `frame` listener with a
+      // valid payload and assert processFrame was reached — the
+      // previous simulator test only verified registration.
       const frameCall = rig.socket.on.mock.calls.find(
         (call: unknown[]) => call[0] === "frame",
       );
       expect(frameCall).toBeDefined();
-    } finally {
-      if (previousSecret === undefined) {
-        delete process.env["JWT_SECRET"];
-      } else {
-        process.env["JWT_SECRET"] = previousSecret;
-      }
-    }
+      const listener = frameCall?.[1] as FrameListener;
+      expect(typeof listener).toBe("function");
+
+      await listener({
+        version: 1,
+        device_id: DEVICE_UUID,
+        ts: 1_700_000_000_000,
+        fw: "1.0.3",
+        seq: 0,
+        metrics: {
+          ph: 7.2,
+          tds_ppm: 180,
+          turbidity_ntu: 0.4,
+          temp_c: 27.4,
+          chlorine_ppm: 0.6,
+          water_level_cm: 85,
+        },
+      });
+      // The production handler is `(raw) => { processFrame(...).catch(...) }`
+      // — the promise is fire-and-forget. Drain the microtask queue
+      // so the awaited `prisma.reading.create` resolves before the
+      // assertions below.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // Prisma row was persisted via the registered frame listener.
+      expect(rig.prismaCreate).toHaveBeenCalledTimes(1);
+      const [{ data }] = rig.prismaCreate.mock.calls[0]! as [
+        { data: { deviceId: string; seq: number; flags: string[] } },
+      ];
+      expect(data.deviceId).toBe(DEVICE_UUID);
+      expect(data.seq).toBe(0);
+      expect(data.flags).toEqual([]);
+      // Broadcast hit the room keyed by URL device_id.
+      expect(rig.io).toHaveBeenCalledWith(
+        "reading:new",
+        expect.objectContaining({ device_id: DEVICE_UUID }),
+      );
+    });
   });
 });

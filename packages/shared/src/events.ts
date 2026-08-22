@@ -15,6 +15,16 @@ export const ReadingNewEventSchema = z.object({
   ts: z.number().int().nonnegative(),
   server_received_at: ISO8601,
   metrics: TelemetryMetricsSchema,
+  /**
+   * Per-frame flags surfaced from the ingest handler. Today the only
+   * flag is `"out_of_order"` (Story 2.2: a late frame, `seq <
+   * last_seen`). Future flags (`rate_limited`, `clock_skew_detected`)
+   * round-trip the same array. Defaults to `[]` so an unflagged frame
+   * omits the key on the wire — the schema's `.default([])` keeps the
+   * api→web contract back-compat for any consumer that hasn't read
+   * this yet.
+   */
+  flags: z.array(z.string()).default([]),
 });
 export type ReadingNewEvent = z.infer<typeof ReadingNewEventSchema>;
 
