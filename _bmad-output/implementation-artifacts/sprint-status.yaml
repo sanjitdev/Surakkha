@@ -77,7 +77,7 @@ development_status:
   epic-2: in-progress
   2-1-wire-contract-schemas: done
   2-2-ingest-websocket-endpoint: done
-  2-3-unknown-missing-field-handling: backlog
+  2-3-unknown-missing-field-handling: review
   2-4-simulator-process-six-default-devices-seven-scenarios: backlog
   2-5-admin-simulator-admin-tab: backlog
   2-6-dashboard-shell: backlog
@@ -281,13 +281,13 @@ stories:
 
   - id: "2.3"
     title: "Unknown/Missing Field Handling"
-    status: backlog
+    status: review
     epic: "2"
-    commit: null
+    commit: "3910280"
     shipped: null
-    covers: []
+    covers: ["FR-2", "NFR-14", "I-9"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/2-3-unknown-missing-field-handling.md"
       review: null
 
   - id: "2.4"
