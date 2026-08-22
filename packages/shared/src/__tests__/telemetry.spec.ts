@@ -12,8 +12,12 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  classifyFlags,
+  CLOCK_SKEW_DETECT_MS,
   MetricExtendedRanges,
   PROCESSING_ORDER,
+  ReadingFlagSchema,
+  STALE_FRAME_THRESHOLD_MS,
   type TelemetryFrame,
   TelemetryFrameSchema,
   translateZodError,
@@ -276,5 +280,128 @@ describe("PROCESSING_ORDER (architecture §3.2, ADR 0013)", () => {
         "socket broadcast",
       ]),
     );
+  });
+});
+
+/**
+ * Story 2.3 — ReadingFlagSchema (closed enum pin).
+ *
+ * The persisted `flags` column and the `reading:new` wire payload both
+ * flow through this enum. A typo'd flag is caught here at the seam so
+ * ops queries (`SELECT WHERE 'clock_skew_deteced' = ANY (flags)`) cannot
+ * silently miss a flag.
+ */
+describe("ReadingFlagSchema (Story 2.3)", () => {
+  it("accepts every v1 flag exactly once", () => {
+    expect(ReadingFlagSchema.options).toEqual([
+      "out_of_order",
+      "clock_skew_detected",
+      "rate_limited",
+    ]);
+  });
+
+  it.each([
+    "out_of_order",
+    "clock_skew_detected",
+    "rate_limited",
+  ])("parses `%s` without error", (flag) => {
+    expect(ReadingFlagSchema.parse(flag)).toBe(flag);
+  });
+
+  it("rejects an unknown flag (closed enum)", () => {
+    expect(ReadingFlagSchema.safeParse("not_a_flag").success).toBe(false);
+  });
+
+  it("rejects a typo of an existing flag (no fuzzy match)", () => {
+    // Most common drift: missing underscore / typo'd casing. Pin that
+    // the parser does NOT silently normalise.
+    expect(ReadingFlagSchema.safeParse("clock_skew_deteced").success).toBe(false);
+    expect(ReadingFlagSchema.safeParse("CLOCK_SKEW_DETECTED").success).toBe(false);
+    expect(ReadingFlagSchema.safeParse("clock-skew-detected").success).toBe(false);
+  });
+});
+
+/**
+ * Story 2.3 — STALE_FRAME_THRESHOLD_MS / CLOCK_SKEW_DETECT_MS constants.
+ *
+ * The simulator (Story 2.4) imports these so its pre-send ts validation
+ * stays in lockstep with the api. A regression that drifts the value
+ * would silently change the v1 contract.
+ */
+describe("Story 2.3 — stale-frame + clock-skew thresholds", () => {
+  it("STALE_FRAME_THRESHOLD_MS is 5 minutes", () => {
+    expect(STALE_FRAME_THRESHOLD_MS).toBe(5 * 60 * 1_000);
+  });
+
+  it("CLOCK_SKEW_DETECT_MS is 60 seconds (architecture §3.2 row pin)", () => {
+    expect(CLOCK_SKEW_DETECT_MS).toBe(60 * 1_000);
+  });
+
+  it("stale window is larger than clock-skew window (5min > 1min)", () => {
+    // Logical invariant: a frame that is past the skew window but
+    // within the stale window is exactly the row that gets the
+    // `clock_skew_detected` flag (not the stale-frame envelope).
+    expect(STALE_FRAME_THRESHOLD_MS).toBeGreaterThan(CLOCK_SKEW_DETECT_MS);
+  });
+});
+
+/**
+ * Story 2.3 — classifyFlags helper.
+ *
+ * The api calls `classifyFlags(parsed, serverReceivedAt)` after a
+ * successful Zod parse to derive the per-frame flag set. Rules:
+ *   - |skew| ≤ 60s       → []
+ *   - 60s < skew < 5min  → ["clock_skew_detected"] (any sign)
+ *   - skew > 5min (past) → up to the api's stale-frame check; helper
+ *                          returns ["clock_skew_detected"] in case the
+ *                          caller did not pre-check (defensive).
+ */
+describe("classifyFlags (Story 2.3)", () => {
+  const baseTs = 1_787_221_864_000; // 2026-08-20T10:31:04Z
+  const baseFrame = (ts: number): TelemetryFrame => ({
+    ...VALID_FRAME,
+    ts,
+  });
+
+  it("returns [] when serverReceivedAt equals ts (zero skew)", () => {
+    const at = new Date(baseTs);
+    expect(classifyFlags(baseFrame(baseTs), at)).toEqual([]);
+  });
+
+  it("returns [] when |skew| is 30s (well under threshold)", () => {
+    expect(classifyFlags(baseFrame(baseTs - 30_000), new Date(baseTs))).toEqual([]);
+    expect(classifyFlags(baseFrame(baseTs + 30_000), new Date(baseTs))).toEqual([]);
+  });
+
+  it("returns [clock_skew_detected] when past skew is 90s", () => {
+    const result = classifyFlags(baseFrame(baseTs - 90_000), new Date(baseTs));
+    expect(result).toEqual(["clock_skew_detected"]);
+  });
+
+  it("returns [clock_skew_detected] when future skew is 90s", () => {
+    // Device clock ran forward during sleep — accepted with the flag.
+    const result = classifyFlags(baseFrame(baseTs + 90_000), new Date(baseTs));
+    expect(result).toEqual(["clock_skew_detected"]);
+  });
+
+  it("returns [clock_skew_detected] at exactly 61s skew (boundary +1)", () => {
+    const result = classifyFlags(baseFrame(baseTs - 61_000), new Date(baseTs));
+    expect(result).toEqual(["clock_skew_detected"]);
+  });
+
+  it("returns [] at exactly 59s skew (boundary -1)", () => {
+    const result = classifyFlags(baseFrame(baseTs - 59_000), new Date(baseTs));
+    expect(result).toEqual([]);
+  });
+
+  it("returns [clock_skew_detected] for any skew within the stale window", () => {
+    // The api's stale-frame check would have rejected frames with
+    // skew > 5min, but classifyFlags still surfaces the flag for
+    // callers that don't pre-check (defensive contract).
+    const result = classifyFlags(
+      baseFrame(baseTs - 4 * 60_000),
+      new Date(baseTs),
+    );
+    expect(result).toEqual(["clock_skew_detected"]);
   });
 });

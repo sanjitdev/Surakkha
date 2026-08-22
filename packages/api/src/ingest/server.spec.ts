@@ -305,7 +305,13 @@ describe("buildIngestServer — discriminated failure envelopes", () => {
       await listener({
         version: 1,
         device_id: DEVICE_UUID,
-        ts: 1_700_000_000_000,
+        // Story 2.3 — fresh ts so the stale-frame check in
+        // stepValidate accepts the frame. The withSecret body uses
+        // JWT_SECRET = "x".repeat(64) (no clock injection), so the
+        // server-side `now()` defaults to real wall clock and the
+        // frame's ts must be within the stale window. Tests that
+        // need a specific skew override ts explicitly.
+        ts: Date.now() - 1_000,
         fw: "1.0.3",
         seq: 0,
         metrics: {

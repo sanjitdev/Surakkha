@@ -35,7 +35,12 @@ const DEVICE_ID = "9b1c4f00-0000-4000-8000-00000000000a";
 const buildFrame = (overrides: Partial<TelemetryFrame> = {}): TelemetryFrame => ({
   version: 1,
   device_id: DEVICE_ID,
-  ts: 1_700_000_000_000,
+  // Story 2.3 — default to "fresh" relative to the rig's test clock
+  // (2026-08-20T10:31:04Z = 1_787_221_864_000 ms) so the new
+  // stale-frame check in `stepValidate` doesn't reject the frame
+  // before the test body runs. Tests that specifically need a
+  // stale ts override it explicitly via the `overrides` argument.
+  ts: 1_787_221_864_000,
   fw: "1.0.3",
   seq: 0,
   metrics: {
@@ -189,7 +194,7 @@ describe("processFrame — rate limit", () => {
 describe("processFrame — sequence reorder", () => {
   it("persists a late frame with flags:['out_of_order'] and still broadcasts", async () => {
     const rig = buildRig();
-    let nowMs = 1_000_000_000_000;
+    let nowMs = 1_787_221_865_000;
     rig.now = () => new Date(nowMs);
     await callProcessFrame(rig, buildFrame({ seq: 5 }));
     // Advance 3s so the rate limiter window has elapsed.
@@ -213,7 +218,7 @@ describe("processFrame — sequence reorder", () => {
 
   it("records a gap drop_count when seq jumps (10 → 13)", async () => {
     const rig = buildRig();
-    let nowMs = 1_000_000_000_000;
+    let nowMs = 1_787_221_865_000;
     rig.now = () => new Date(nowMs);
     await callProcessFrame(rig, buildFrame({ seq: 10 }));
     // Advance 3s so the rate limiter window has elapsed.
@@ -232,7 +237,7 @@ describe("processFrame — sequence reorder", () => {
   // covers the row; this covers the audit-pipeline contract.
   it("emits seq_drop_detected audit hook when a gap is observed", async () => {
     const rig = buildRig();
-    let nowMs = 1_000_000_000_000;
+    let nowMs = 1_787_221_865_000;
     rig.now = () => new Date(nowMs);
     const hooks = {
       onRuleEvaluation: vi.fn(async () => undefined),
@@ -268,7 +273,7 @@ describe("processFrame — sequence reorder", () => {
   // a lost-frame gap from a late retransmit.
   it("emits seq_reorder_detected audit hook on a late frame", async () => {
     const rig = buildRig();
-    let nowMs = 1_000_000_000_000;
+    let nowMs = 1_787_221_865_000;
     rig.now = () => new Date(nowMs);
     const hooks = {
       onRuleEvaluation: vi.fn(async () => undefined),
@@ -362,6 +367,121 @@ describe("processFrame — persist failure", () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * Story 2.3 — stale-frame + clock-skew behaviour.
+ *
+ * `stepValidate` now runs the stale-frame check (ts older than
+ * `STALE_FRAME_THRESHOLD_MS`) and stamps the `clock_skew_detected` flag
+ * via `classifyFlags` for any frame whose `|serverReceivedAt − ts|` exceeds
+ * `CLOCK_SKEW_DETECT_MS`. These tests pin both behaviours end-to-end.
+ */
+describe("processFrame — stale-frame rejection (Story 2.3)", () => {
+  it("emits stale_frame with age_seconds and soft-disconnects when ts is older than the stale window", async () => {
+    const rig = buildRig();
+    // The rig clock defaults to 2026-08-20T10:31:04.000Z; the frame's
+    // ts is 6 minutes earlier (past the 5-minute stale window).
+    const staleTs = rig.now().getTime() - 6 * 60_000;
+    const outcome = await callProcessFrame(
+      rig,
+      buildFrame({ ts: staleTs, seq: 0 }),
+    );
+    expect(outcome).toEqual({ status: "ignored" });
+
+    // Story 2.3 — `stale_frame` envelope carries `age_seconds` (floor of
+    // skew), NOT `missing_fields` (that's `bad_request`).
+    expect(rig.socket.emit).toHaveBeenCalledWith(
+      "stale_frame",
+      expect.objectContaining({ age_seconds: expect.any(Number) }),
+    );
+    const ageSeconds = (rig.socket.emit.mock.calls.find(
+      (call) => call[0] === "stale_frame",
+    )?.[1] as { age_seconds: number }).age_seconds;
+    // 6 minutes = 360 seconds (the value is a floor of skew ms / 1000).
+    expect(ageSeconds).toBeGreaterThanOrEqual(360);
+    expect(ageSeconds).toBeLessThan(420);
+
+    // Story 2.3 — soft-disconnect (keep the connection open so a
+    // backlog of fresh frames behind this one is still accepted).
+    expect(rig.socket.disconnect).toHaveBeenCalledWith(false);
+
+    // No row, no broadcast.
+    expect(rig.prismaCreate).not.toHaveBeenCalled();
+    expect(rig.io).not.toHaveBeenCalled();
+  });
+
+  it("does NOT trigger stale_frame for ts exactly at the window boundary", async () => {
+    // Build a frame whose ts is exactly 5 minutes before the rig clock
+    // — the boundary is exclusive (`>` in stepValidate), so the frame
+    // should pass.
+    const rig = buildRig();
+    const boundaryTs = rig.now().getTime() - 5 * 60_000;
+    const outcome = await callProcessFrame(
+      rig,
+      buildFrame({ ts: boundaryTs, seq: 0 }),
+    );
+    expect(outcome).toEqual({ status: "accepted" });
+    expect(rig.socket.disconnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("processFrame — clock-skew flag (Story 2.3)", () => {
+  it("stamps flags:['clock_skew_detected'] on the persisted row when past skew is 90s", async () => {
+    const rig = buildRig();
+    const skewTs = rig.now().getTime() - 90_000;
+    const outcome = await callProcessFrame(
+      rig,
+      buildFrame({ ts: skewTs, seq: 0 }),
+    );
+    expect(outcome).toEqual({ status: "accepted" });
+
+    const [{ data }] = rig.prismaCreate.mock.calls[0]! as [
+      { data: { flags: readonly string[] } },
+    ];
+    expect(data.flags).toEqual(["clock_skew_detected"]);
+
+    // The flag also rides on the reading:new broadcast (Story 2.2 F-D2).
+    expect(rig.io).toHaveBeenCalledWith(
+      "reading:new",
+      expect.objectContaining({ flags: ["clock_skew_detected"] }),
+    );
+    // Connection is NOT disconnected for clock-skew (only stale-frame
+    // soft-disconnects).
+    expect(rig.socket.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("stamps flags:['clock_skew_detected'] on future skew within tolerance", async () => {
+    // Device clock ran forward during sleep — accept with the flag.
+    const rig = buildRig();
+    const skewTs = rig.now().getTime() + 90_000;
+    const outcome = await callProcessFrame(
+      rig,
+      buildFrame({ ts: skewTs, seq: 0 }),
+    );
+    expect(outcome).toEqual({ status: "accepted" });
+
+    const [{ data }] = rig.prismaCreate.mock.calls[0]! as [
+      { data: { flags: readonly string[] } },
+    ];
+    expect(data.flags).toEqual(["clock_skew_detected"]);
+  });
+
+  it("does NOT stamp clock_skew_detected at exactly the boundary -1", async () => {
+    // 59 seconds past skew is under the 60s threshold; expect [].
+    const rig = buildRig();
+    const skewTs = rig.now().getTime() - 59_000;
+    const outcome = await callProcessFrame(
+      rig,
+      buildFrame({ ts: skewTs, seq: 0 }),
+    );
+    expect(outcome).toEqual({ status: "accepted" });
+
+    const [{ data }] = rig.prismaCreate.mock.calls[0]! as [
+      { data: { flags: readonly string[] } },
+    ];
+    expect(data.flags).toEqual([]);
   });
 });
 

@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 
-import { MetricKeySchema, TelemetryMetricsSchema } from "./telemetry.js";
+import { MetricKeySchema, ReadingFlagSchema, TelemetryMetricsSchema } from "./telemetry.js";
 
 const ISO8601 = z.string().datetime({ offset: true });
 
@@ -16,15 +16,17 @@ export const ReadingNewEventSchema = z.object({
   server_received_at: ISO8601,
   metrics: TelemetryMetricsSchema,
   /**
-   * Per-frame flags surfaced from the ingest handler. Today the only
-   * flag is `"out_of_order"` (Story 2.2: a late frame, `seq <
-   * last_seen`). Future flags (`rate_limited`, `clock_skew_detected`)
-   * round-trip the same array. Defaults to `[]` so an unflagged frame
-   * omits the key on the wire — the schema's `.default([])` keeps the
-   * api→web contract back-compat for any consumer that hasn't read
-   * this yet.
+   * Per-frame flags stamped by the ingest handler. Closed enum
+   * (`ReadingFlagSchema`) — the wire does not accept firmware-supplied
+   * flags. Story 2.3 pins the v1 set to `out_of_order | clock_skew_
+   * detected | rate_limited`; a new flag is a v2 contract bump.
+   * `.default([])` keeps an unflagged frame's payload identical to the
+   * pre-Story-2.3 wire shape so the api→web contract is back-compat.
+   * The inferred type is `readonly ReadingFlag[]` so the api's frame
+   * state can flow the same array reference from classify through
+   * persist to broadcast without a copy.
    */
-  flags: z.array(z.string()).default([]),
+  flags: z.array(ReadingFlagSchema).default([]).readonly(),
 });
 export type ReadingNewEvent = z.infer<typeof ReadingNewEventSchema>;
 

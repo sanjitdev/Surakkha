@@ -21,8 +21,11 @@
  *   - Story 2.2 spec (`_bmad-output/implementation-artifacts/2-2-…md`)
  */
 import {
+  classifyFlags,
   PROCESSING_ORDER,
+  type ReadingFlag,
   type ReadingNewEvent,
+  STALE_FRAME_THRESHOLD_MS,
   type TelemetryFrame,
   TelemetryFrameSchema,
   translateZodError,
@@ -46,7 +49,7 @@ export interface ReadingRepository {
         readonly serverReceivedAt: Date;
         readonly metrics: TelemetryFrame["metrics"];
         readonly seq: number;
-        readonly flags: readonly string[];
+        readonly flags: readonly ReadingFlag[];
       };
     }): Promise<unknown>;
   };
@@ -107,14 +110,14 @@ type StepResult =
 
 interface FrameStatePatch {
   parsed?: TelemetryFrame;
-  flags?: string[];
+  flags?: readonly ReadingFlag[];
   dropCount?: number;
   serverReceivedAt?: Date;
 }
 
 interface FrameState {
   parsed: TelemetryFrame | null;
-  flags: string[];
+  flags: readonly ReadingFlag[];
   dropCount: number;
   serverReceivedAt: Date;
 }
@@ -145,13 +148,36 @@ const stepValidate = (
     deps.socket.emit("bad_request", translateZodError(result.error));
     return { kind: "exit", outcome: { status: "bad_request" } };
   }
+
+  // Story 2.3 — stale-frame check. The frame is well-formed; reject
+  // only if the device-side `ts` is older than the stale-frame window.
+  // The connection is soft-disconnected (`disconnect(false)`) so a
+  // backlog of fresh frames behind this one is still accepted. We do
+  // NOT classify this as `ignored` from the caller's perspective —
+  // there is no persist, no broadcast; the device gets the
+  // `stale_frame` envelope + `age_seconds` and can decide whether to
+  // reset its clock.
+  const skewMs = state.serverReceivedAt.getTime() - result.data.ts;
+  if (skewMs > STALE_FRAME_THRESHOLD_MS) {
+    const ageSeconds = Math.floor(skewMs / 1_000);
+    deps.socket.emit("stale_frame", { age_seconds: ageSeconds });
+    deps.socket.disconnect(false);
+    return { kind: "exit", outcome: { status: "ignored" } };
+  }
+
+  // Story 2.3 — clock-skew flag stamping. Future skew AND past skew
+  // (within the stale window) both stamp `clock_skew_detected`. The
+  // helper is the single source of truth shared with the simulator.
+  const flags = classifyFlags(result.data, state.serverReceivedAt);
+
   // F-P6: `serverReceivedAt` was already seeded by `processFrame`
   // before this step ran (single source of truth — the moment the
   // driver took ownership of the inbound frame). `stepValidate`
-  // only contributes the parsed payload, not a re-stamped clock.
+  // only contributes the parsed payload + flag set, not a re-stamped
+  // clock.
   return {
     kind: "next",
-    patch: { parsed: result.data },
+    patch: { parsed: result.data, flags },
   };
 };
 

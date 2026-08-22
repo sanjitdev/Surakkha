@@ -9,6 +9,14 @@
  */
 import { z } from "zod";
 
+// Time unit helpers — kept local to telemetry.ts so the magic-number
+// lint rule has named handles for the stale-frame and clock-skew
+// thresholds. ESLint's `no-magic-numbers` rule fires on raw numeric
+// literals; these constants make the arithmetic readable AND lintable.
+const MS_PER_SECOND = 1_000;
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
+
 // v1 metric ranges from BRD §8.3.1 (WHO/BSTI source of truth).
 export const MetricRanges = {
   ph: { min: 0, max: 14 },
@@ -136,6 +144,91 @@ export interface TelemetryBadRequest {
   readonly error: "bad_request";
   readonly missing_fields: string[];
 }
+
+/**
+ * Canonical envelope for a frame whose device-side `ts` is older than
+ * the stale-frame window (see `STALE_FRAME_THRESHOLD_MS`). The connection
+ * is kept open (`socket.disconnect(false)`) so a backlog of fresh frames
+ * behind the stale one is still accepted; the device gets the
+ * `age_seconds` value so it can decide whether to reset its clock.
+ *
+ * `stale_frame` is NOT a flag on the persisted row — the frame was never
+ * persisted. The enum lives in its own envelope so the api can distinguish
+ * "your payload is broken" (`bad_request`) from "your payload is well-
+ * formed but too old" (`stale_frame`) in the audit pipeline.
+ */
+export interface TelemetryStaleFrame {
+  readonly error: "stale_frame";
+  readonly age_seconds: number;
+}
+
+/**
+ * v1 flag set — closed enum per architecture §3.6 ("`flags` on Reading is
+ * a small enum column covering `out_of_order`, `clock_skew_detected`,
+ * `rate_limited`"). The server stamps every flag; the wire contract does
+ * not let firmware set them. A typo in the flag column (e.g. `"clock_
+ * skew"`) fails `ReadingFlagSchema.parse` at the seam so a bad row cannot
+ * silently slip into ops queries (`SELECT WHERE 'clock_skew_deteced' = ANY
+ * (flags)`).
+ *
+ * Adding a flag is a v2 contract bump (NFR-14 + ADR 0001).
+ */
+export const ReadingFlagSchema = z.enum([
+  "out_of_order",
+  "clock_skew_detected",
+  "rate_limited",
+]);
+export type ReadingFlag = z.infer<typeof ReadingFlagSchema>;
+
+/**
+ * Stale-frame window. Frames whose device-side `ts` is more than this many
+ * milliseconds in the past (relative to `serverReceivedAt`) are rejected
+ * with a `stale_frame` envelope. The window is intentionally small (5
+ * minutes) — see Story 2.3 spec §"Design Notes" for the rationale. Real
+ * devices emit every 2s; longer offline periods are *lost* frames, not
+ * late frames, and the canonical timeline must not accept padding.
+ */
+export const STALE_FRAME_THRESHOLD_MS = 5 * MS_PER_MINUTE;
+
+/**
+ * Clock-skew detection threshold. Frames whose `|serverReceivedAt − ts|`
+ * exceeds this are persisted with `flags:["clock_skew_detected"]`. The
+ * value (60s) is pinned by architecture §3.2 — an NTP-disciplined device
+ * drifts <1s; an undisciplined RTC drifts ~1min/month. Catches the
+ * "device forgot NTP sync on boot" case without flagging normal operation.
+ *
+ * Future skew (positive) is also accepted with the flag — a device whose
+ * clock ran forward during sleep is real, not an attack.
+ */
+export const CLOCK_SKEW_DETECT_MS = MS_PER_MINUTE;
+
+/**
+ * Compute the flag set the server stamps on a parsed frame. The function
+ * is the single source of truth for flag-derivation logic; the simulator
+ * (Story 2.4) and the api's `stepValidate` both call it.
+ *
+ * Rules (Story 2.3 I/O matrix):
+ *   - |serverReceivedAt − ts| ≤ 60s       → []
+ *   - 60s < skew ≤ 5min (any sign)        → ["clock_skew_detected"]
+ *   - ts < serverReceivedAt − 5min        → caller's stale-frame path
+ *     was already triggered before this; this helper returns []. The
+ *     stale-frame decision lives upstream so the api can emit the
+ *     `stale_frame` envelope AND soft-disconnect.
+ *
+ * Note: the `out_of_order` and `rate_limited` flags are stamped by their
+ * own dedicated steps (`stepSeqDropCheck` and `stepRateCheck`), not here.
+ * This helper is *only* for flags derivable from the validated timestamp.
+ */
+export const classifyFlags = (
+  parsed: TelemetryFrame,
+  serverReceivedAt: Date,
+): readonly ReadingFlag[] => {
+  const skewMs = serverReceivedAt.getTime() - parsed.ts;
+  if (Math.abs(skewMs) > CLOCK_SKEW_DETECT_MS) {
+    return ["clock_skew_detected"];
+  }
+  return [];
+};
 
 /**
  * Translate a Zod failure into the wire error envelope the api surfaces to
