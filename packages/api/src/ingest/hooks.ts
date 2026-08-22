@@ -15,6 +15,8 @@
  * through the iteration.
  */
 
+import type { ReadingFlag } from "@surakkha/shared";
+
 export interface RuleEvaluationInput {
   readonly deviceId: string;
   readonly frame: {
@@ -25,7 +27,12 @@ export interface RuleEvaluationInput {
     readonly seq: number;
     readonly metrics: Record<string, number>;
   };
-  readonly flags: readonly string[];
+  /**
+   * Closed enum per `ReadingFlagSchema` (Story 2.3). Tightened from
+   * `readonly string[]` so a hook implementation that does not handle
+   * the closed enum surfaces at compile time, not at runtime.
+   */
+  readonly flags: readonly ReadingFlag[];
 }
 
 export interface AlertEmissionInput {

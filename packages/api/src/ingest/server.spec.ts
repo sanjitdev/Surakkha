@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildIngestServer } from "./server";
 import { type ReadingRepository } from "./frame";
+import { freshTsMs } from "../__tests__/rigClock";
 
 const DEVICE_UUID = "9b1c4f00-1234-4abc-9def-0123456789ab";
 const OTHER_UUID = "9b1c4f00-1234-4abc-9def-0123456789cd";
@@ -309,9 +310,11 @@ describe("buildIngestServer — discriminated failure envelopes", () => {
         // stepValidate accepts the frame. The withSecret body uses
         // JWT_SECRET = "x".repeat(64) (no clock injection), so the
         // server-side `now()` defaults to real wall clock and the
-        // frame's ts must be within the stale window. Tests that
-        // need a specific skew override ts explicitly.
-        ts: Date.now() - 1_000,
+        // frame's ts must be within the stale window. `freshTsMs()`
+        // from the shared rig-clock fixture returns
+        // `Date.now() - 1000` — deterministically fresh relative to
+        // wall clock at the moment of the call.
+        ts: freshTsMs(),
         fw: "1.0.3",
         seq: 0,
         metrics: {

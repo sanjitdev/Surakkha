@@ -29,6 +29,7 @@ import {
 import { resetIngestHooks, type IngestHooks } from "./hooks";
 import { PerDeviceRateLimiter } from "./rateLimit";
 import { PerDeviceSequence } from "./sequence";
+import { RIG_CLOCK_MS, RIG_CLOCK_TICK_MS } from "../__tests__/rigClock";
 
 const DEVICE_ID = "9b1c4f00-0000-4000-8000-00000000000a";
 
@@ -36,11 +37,11 @@ const buildFrame = (overrides: Partial<TelemetryFrame> = {}): TelemetryFrame => 
   version: 1,
   device_id: DEVICE_ID,
   // Story 2.3 — default to "fresh" relative to the rig's test clock
-  // (2026-08-20T10:31:04Z = 1_787_221_864_000 ms) so the new
-  // stale-frame check in `stepValidate` doesn't reject the frame
-  // before the test body runs. Tests that specifically need a
-  // stale ts override it explicitly via the `overrides` argument.
-  ts: 1_787_221_864_000,
+  // (see `packages/api/src/__tests__/rigClock.ts`) so the new stale-frame
+  // check in `stepValidate` doesn't reject the frame before the test
+  // body runs. Tests that specifically need a stale ts override it
+  // explicitly via the `overrides` argument.
+  ts: RIG_CLOCK_MS,
   fw: "1.0.3",
   seq: 0,
   metrics: {
@@ -194,7 +195,7 @@ describe("processFrame — rate limit", () => {
 describe("processFrame — sequence reorder", () => {
   it("persists a late frame with flags:['out_of_order'] and still broadcasts", async () => {
     const rig = buildRig();
-    let nowMs = 1_787_221_865_000;
+    let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     await callProcessFrame(rig, buildFrame({ seq: 5 }));
     // Advance 3s so the rate limiter window has elapsed.
@@ -218,7 +219,7 @@ describe("processFrame — sequence reorder", () => {
 
   it("records a gap drop_count when seq jumps (10 → 13)", async () => {
     const rig = buildRig();
-    let nowMs = 1_787_221_865_000;
+    let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     await callProcessFrame(rig, buildFrame({ seq: 10 }));
     // Advance 3s so the rate limiter window has elapsed.
@@ -237,7 +238,7 @@ describe("processFrame — sequence reorder", () => {
   // covers the row; this covers the audit-pipeline contract.
   it("emits seq_drop_detected audit hook when a gap is observed", async () => {
     const rig = buildRig();
-    let nowMs = 1_787_221_865_000;
+    let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     const hooks = {
       onRuleEvaluation: vi.fn(async () => undefined),
@@ -273,7 +274,7 @@ describe("processFrame — sequence reorder", () => {
   // a lost-frame gap from a late retransmit.
   it("emits seq_reorder_detected audit hook on a late frame", async () => {
     const rig = buildRig();
-    let nowMs = 1_787_221_865_000;
+    let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     const hooks = {
       onRuleEvaluation: vi.fn(async () => undefined),
@@ -482,6 +483,57 @@ describe("processFrame — clock-skew flag (Story 2.3)", () => {
       { data: { flags: readonly string[] } },
     ];
     expect(data.flags).toEqual([]);
+  });
+
+  // Review [Patch] P-1 — `onRuleEvaluation` hook receives the flag set
+  // the validator seeded (clock-skew-detected for skewed frames). The
+  // happy-path hook-payloads test below only exercises `flags: []`; a
+  // regression that re-seeds `state.flags` between validate and
+  // rule-eval would ship silently without this pin.
+  it("forwards flags:['clock_skew_detected'] to onRuleEvaluation for a skewed frame", async () => {
+    const rig = buildRig();
+    const hooks: IngestHooks = {
+      onRuleEvaluation: vi.fn(async () => undefined),
+      onAlertEmission: vi.fn(async () => undefined),
+      onStateMachineUpdate: vi.fn(async () => undefined),
+      onAuditAppend: vi.fn(async () => undefined),
+    };
+    const skewTs = rig.now().getTime() - 90_000;
+    const frame = buildFrame({ ts: skewTs, seq: 0 });
+    const outcome = await callProcessFrame(rig, frame, DEVICE_ID, hooks);
+    expect(outcome).toEqual({ status: "accepted" });
+    expect(hooks.onRuleEvaluation).toHaveBeenCalledWith({
+      deviceId: DEVICE_ID,
+      frame,
+      flags: ["clock_skew_detected"],
+    });
+  });
+
+  // Review [Patch] P-2 — `onAuditAppend` (reading_ingested) hook
+  // receives `context.flags` with the flag set the validator seeded.
+  // Epic 5's audit-pipeline indexing on `clock_skew_detected` would
+  // silently stop receiving skew events without this pin.
+  it("forwards flags:['clock_skew_detected'] to onAuditAppend reading_ingested context for a skewed frame", async () => {
+    const rig = buildRig();
+    const hooks: IngestHooks = {
+      onRuleEvaluation: vi.fn(async () => undefined),
+      onAlertEmission: vi.fn(async () => undefined),
+      onStateMachineUpdate: vi.fn(async () => undefined),
+      onAuditAppend: vi.fn(async () => undefined),
+    };
+    const skewTs = rig.now().getTime() - 90_000;
+    const frame = buildFrame({ ts: skewTs, seq: 0 });
+    const outcome = await callProcessFrame(rig, frame, DEVICE_ID, hooks);
+    expect(outcome).toEqual({ status: "accepted" });
+    const ingestedCalls = hooks.onAuditAppend.mock.calls.filter(
+      (call) => (call[0] as { auditAction: string }).auditAction === "reading_ingested",
+    );
+    expect(ingestedCalls).toHaveLength(1);
+    expect(ingestedCalls[0]?.[0]).toEqual({
+      auditAction: "reading_ingested",
+      deviceId: DEVICE_ID,
+      context: { seq: 0, flags: ["clock_skew_detected"] },
+    });
   });
 });
 
