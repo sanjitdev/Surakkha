@@ -7,10 +7,11 @@
  * do not fan out N subscriptions per dashboard render.
  *
  * Behaviour:
- *   - On mount: open the api socket (URL = `"/api"` from main.tsx's
- *     `API_ORIGIN`).
+ *   - On mount: open the api socket (namespace = `"/dashboard"` —
+ *     matches the server-side `SUBSCRIBER_PATH_SEGMENT` branch in
+ *     `packages/api/src/index.ts`).
  *   - Subscribe to `reading:new` events from the `readings:latest`
- *     room (see `packages/api/src/ingest/frame.ts:341`, Story 2.6
+ *     room (see `packages/api/src/ingest/frame.ts:359`, Story 2.6
  *     added the broadcast room).
  *   - On every `reading:new`, invalidate `["readings", "latest"]` on
  *     the shared TanStack Query client so the four regions refetch
@@ -55,7 +56,9 @@ export const DASHBOARD_READINGS_QUERY_KEY = ["readings", "latest"] as const;
  * non-empty string is acceptable — the hook only iterates over
  * events, the open socket itself is mocked at the network layer).
  */
-export const useDashboardSocket = (url: string = "/api"): void => {
+export const useDashboardSocket = (
+  url: string = "/dashboard",
+): void => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 

@@ -51,6 +51,7 @@ import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
 import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
+import { handleSubscriberConnection } from "./ingest/subscriber";
 import { authenticate } from "./middleware/authorize";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 
@@ -352,6 +353,25 @@ const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
 const ingestHandlerPromise = resolveReadingDelegate().then((prisma) =>
   buildIngestServer({ io, prisma }),
 );
+
+// Story 2.6 — declare the `/dashboard` namespace so the web's
+// `io(baseUrl + "/dashboard", ...)` handshake is accepted by the
+// server. Without this Socket.IO replies with "Invalid namespace"
+// and disconnects. The `/dashboard` namespace routes subscribers
+// through `handleSubscriberConnection`; the root namespace keeps
+// routing ingest devices through `buildIngestServer`.
+const dashboardNamespace = io.of("/dashboard");
+
+dashboardNamespace.on("connection", (socket) => {
+  try {
+    handleSubscriberConnection(
+      socket as unknown as Parameters<typeof handleSubscriberConnection>[0],
+    );
+  } catch (err) {
+    logger.error({ err }, "ingest: subscriber handler failed");
+    socket.disconnect(true);
+  }
+});
 
 io.on("connection", (socket) => {
   // F-P4: if `resolveReadingDelegate()` rejects (Prisma init failure)

@@ -116,7 +116,14 @@ export const connectSocket = (
     return activeSocket;
   }
   const token = getAccessToken();
+  // The api's Socket.IO server is mounted at `path: "/ingest/"` (Story
+  // 2.2). The web subscriber connects with the namespace `/dashboard`
+  // so the server-side connection handler can distinguish subscribers
+  // (session-token authenticated) from ingest devices (UUID +
+  // device-JWT authenticated). See `packages/api/src/index.ts`
+  // `isSubscriberConnection` for the matching server-side check.
   const socket: Socket = io(args.url, {
+    path: "/ingest/",
     transports: ["websocket"],
     auth: { token },
     reconnection: false, // we manage reconnect on token_expired ourselves

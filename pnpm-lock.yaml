@@ -114,6 +114,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: 2.1.1
         version: 2.1.1(vitest@2.1.1(@types/node@20.16.5)(happy-dom@15.7.4))
+      socket.io-client:
+        specifier: 4.8.0
+        version: 4.8.0
       tsx:
         specifier: 4.19.1
         version: 4.19.1

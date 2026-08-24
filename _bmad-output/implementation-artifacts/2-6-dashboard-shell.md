@@ -2,7 +2,7 @@
 title: 'Story 2.6 — Dashboard Shell'
 type: 'feature'
 created: '2026-08-24'
-status: 'in-progress'
+status: 'in-review'
 baseline_commit: '5503b04ea2a5f5c0de0e31e30e1d48f1535d3b01' # feat(simulator,api,web,db,shared): Story 2.5 — /admin/simulator admin tab
 context:
   - docs/architecture.md#3.5-websocket-event-contract-api-to-web
