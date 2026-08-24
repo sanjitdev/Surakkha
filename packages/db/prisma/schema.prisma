@@ -37,6 +37,11 @@ model Device {
   // matches the FK constraint in the migration; a removed Device
   // does not leave orphan Reading rows behind.
   readings   Reading[] @relation("DeviceReadings")
+  // Story 2.6: Incident rows owned by this Device. Same FK cascade
+  // contract as `readings`; Story 4.2 may add additional incident
+  // tables (IncidentEvent, IncidentAssignment) that branch off this
+  // same DeviceId.
+  incidents  Incident[] @relation("DeviceIncidents")
 }
 
 /**
@@ -71,4 +76,40 @@ model Reading {
 
   @@index([deviceId, ts])
   @@index([deviceId, seq])
+}
+
+/**
+ * Incident — Story 2.6 placeholder (real model lands in Story 4.2).
+ *
+ * The dashboard's Recent Incidents preview needs a queryable Incident
+ * table so `GET /api/incidents/recent` can return a non-empty shape
+ * once rule-firing lands in Epic 3. Story 4.2 expands the full state
+ * machine (architecture §5.1) — that story owns the OPEN /
+ * ACKNOWLEDGED / INSPECTING / SAFE / UNSAFE / MONITORING / RESOLVED
+ * column additions, the actor FK, the IncidentEvent audit table,
+ * etc. This model is intentionally minimal: the minimum columns the
+ * 2.6 wire shape needs (`id`, `device_id`, `severity`, `metric`,
+ * `value`, `opened_at`).
+ *
+ * `deviceId` references the canonical `Device.id` (UUIDv4). `severity`
+ * is a free-form string here (NOT a Prisma enum) because Story 4.2
+ * may pivot to a different canonical set; pinning the enum at the
+ * Story 2.6 boundary would force a migration that Epic 4 then has
+ * to undo. The api validates `severity ∈ {"info","warning","critical"}`
+ * at the boundary (see `incidents/recentRouter`).
+ *
+ * Index:
+ *   - (deviceId, openedAt DESC) — primary dashboard query path.
+ */
+model Incident {
+  id        String   @id @default(uuid())
+  deviceId  String
+  severity  String
+  metric    String
+  value     Float
+  openedAt  DateTime @default(now())
+
+  device    Device   @relation("DeviceIncidents", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([deviceId, openedAt])
 }

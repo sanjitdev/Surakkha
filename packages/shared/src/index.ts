@@ -12,3 +12,4 @@ export * from "./incident.js";
 export * from "./rbac.js";
 export * from "./logger.js";
 export * from "./simulator.js";
+export * from "./dashboard.js";

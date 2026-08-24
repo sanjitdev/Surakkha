@@ -97,6 +97,24 @@ export type ProcessFrameOutcome =
 const deviceRoom = (deviceId: string): string => `device:${deviceId}`;
 
 /**
+ * Story 2.6 — broadcast room for the operator dashboard.
+ *
+ * The dashboard needs ONE subscription that fans out to ALL six
+ * simulator devices (architecture §3.5: "Both events are emitted to
+ * the Socket.IO room `device:<device_id>` for live updates, and to
+ * the broadcast room `alerts:open` for new alerts / incidents").
+ * Per-device rooms (`device:<uuid>`) require the dashboard to open
+ * six sockets — Story 2.6 picked the broadcast-room path (lower
+ * complexity, single socket, simple semantics).
+ *
+ * The room name is `readings:latest` (not `readings:all` as the spec
+ * draft originally proposed) because the dashboard reads the LATEST
+ * state via REST on cold load and then keeps it fresh via this
+ * stream — the room is the "newest readings" channel.
+ */
+const READINGS_LATEST_ROOM = "readings:latest";
+
+/**
  * Per-step result. Steps that mutate state return a `patch`; the
  * driver applies the patch in a single assignment so ESLint's
  * `no-param-reassign` rule does not fire inside step helpers.
@@ -339,6 +357,12 @@ const stepSocketBroadcast = (
     flags: state.flags,
   };
   deps.io.to(deviceRoom(deps.deviceId)).emit("reading:new", payload);
+  // Story 2.6 — broadcast the same payload to `readings:latest` so a
+  // single dashboard socket subscribes once and fans out to all six
+  // devices (vs opening six per-device sockets). The per-device emit
+  // above stays so any existing per-device watcher (e.g. an Operator
+  // /incidents/:id drilldown) still receives the device-scoped stream.
+  deps.io.to(READINGS_LATEST_ROOM).emit("reading:new", payload);
   return { kind: "next" };
 };
 

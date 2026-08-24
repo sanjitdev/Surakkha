@@ -2,7 +2,7 @@
 title: 'Story 2.6 — Dashboard Shell'
 type: 'feature'
 created: '2026-08-24'
-status: 'ready-for-dev'
+status: 'in-progress'
 baseline_commit: '5503b04ea2a5f5c0de0e31e30e1d48f1535d3b01' # feat(simulator,api,web,db,shared): Story 2.5 — /admin/simulator admin tab
 context:
   - docs/architecture.md#3.5-websocket-event-contract-api-to-web
@@ -91,14 +91,14 @@ context:
 
 ## Tasks & Acceptance
 
-1. **Wire API surface** — Add `GET /api/readings/latest` (RBAC-gated) returning the latest reading per device with the `ReadingNewEvent` shape. Empty state: `{ readings: [] }`.
-2. **Wire incidents preview surface** — Add `GET /api/incidents?state=open&limit=10` returning the most recent open incidents. Empty state: `{ incidents: [] }`. **Prerequisite**: a real `Incident` Prisma model or a structured-logger read; resolve the Ask-First #2 decision before starting.
-3. **Build the Dashboard shell** — Replace `DashboardStub` with a four-region component in the documented DOM order. Each region is a placeholder with its empty state.
-4. **Build the KPI band** — Four `KpiStat` cards in the same `grid-cols-1 md:grid-cols-2 lg:grid-cols-4` pattern as `SeverityCards`. Counts derived from the latest reading per device's worst severity.
-5. **Wire the socket subscription** — `useDashboardSocket` connects once per mount, subscribes to the readings stream, and invalidates the `["readings", "latest"]` key on `reading:new`. Multiple regions sharing this hook do not multiply subscriptions.
-6. **Wire RBAC** — All authenticated roles can read; the page is mounted inside `CurrentRoleProvider` so role-gating is implicit. No `<RbacRoute>` wrapper (per Epic 2: every authenticated role sees the dashboard).
-7. **Tests** — `Dashboard.spec.tsx` covers: the four regions in DOM order, the four KPI cards with their severities, the empty states, the socket invalidation on `reading:new`, and the no-unmount guarantee across a socket reconnect.
-8. **Lint, type-check, prettier** — green.
+1. [x] **Wire API surface** — Add `GET /api/readings/latest` (RBAC-gated) returning the latest reading per device with the `ReadingNewEvent` shape. Empty state: `{ readings: [] }`.
+2. [x] **Wire incidents preview surface** — Add `GET /api/incidents/recent?limit=10` returning the most recent open incidents (last 24h window). Empty state: `{ incidents: [] }`. **Prerequisite**: a minimal `Incident` Prisma model + migration added in this story; full Epic 4 state machine is deferred.
+4. [x] **Build the KPI band** — Four `KpiStat` cards in the same `grid-cols-1 md:grid-cols-2 lg:grid-cols-4` pattern as `SeverityCards`. Counts derived from the latest reading per device's worst severity via `placeholderSeverity` (Story 3.5 will replace with rule-driven engine).
+3. [x] **Build the Dashboard shell** — Replace `DashboardStub` with a four-region component in the documented DOM order. Each region is a placeholder with its empty state (`KpiBand` / `MapRegion` / `LiveReadingsRegion` / `RecentIncidentsRegion`).
+5. [x] **Wire the socket subscription** — `useDashboardSocket` connects once per mount, subscribes to the readings stream, and invalidates the `["readings", "latest"]` key on `reading:new`. Multiple regions sharing this hook do not multiply subscriptions (idempotent `connectSocket`).
+6. [x] **Wire RBAC** — All authenticated roles can read; the page is mounted inside `CurrentRoleProvider` so role-gating is implicit. No `<RbacRoute>` wrapper (per Epic 2: every authenticated role sees the dashboard).
+7. [x] **Tests** — `Dashboard.spec.tsx` covers: the four regions in DOM order, the four KPI cards with their severities, the empty states, the socket invalidation on `reading:new`, the no-unmount guarantee across a socket reconnect, and the populated-incidents read-only card affordance.
+8. [x] **Lint, type-check, prettier** — green across all five packages (`pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`).
 
 ## Acceptance Criteria
 
@@ -145,8 +145,47 @@ context:
 - Story 2.9 wraps the dashboard with the offline banner and disables action buttons while disconnected. This story does NOT add the banner; the AppShell remains unchanged.
 - The Viewer role reads the dashboard with no changes to the existing RBAC matrix (Story 1.5 already grants `Device.read` to all four roles).
 
-## Open Questions (must resolve before / during build)
+## Open Questions (resolved during build)
 
-1. **Broadcast room vs per-device subscription.** `frame.ts:341` emits to `device:<device_id>`. The dashboard wants a single subscription that fans out to all six devices. Add a broadcast room `readings:latest` (recommended — single socket, simple semantics), or open six sockets per dashboard (more complex, but uses existing wiring without modification).
-2. **Incident model.** The Recent Incidents feed needs `GET /api/incidents`. The `Incident` Prisma model is owned by Story 4.2. Either (a) ship a stub `Incident` model in Story 2.6 (cleaner — makes the dashboard truly demo-ready), or (b) defer the feed to Story 4.4 and ship a "Recent Incidents feed ships with Story 4.4" empty state. Recommend (a) so the demo loop closes here.
-3. **Severity for the KPI count.** The KPI band derives its count from the latest reading's worst severity. But the spec says severity is rule-driven (Epic 3, Story 3.5). Until Epic 3 lands, the dashboard can derive severity from the same threshold defaults seeded by Story 3.3 (or, if 3.3 has not landed either, a minimal placeholder severity function: any metric outside its healthy range is critical, otherwise is healthy). Resolve before the KPI band implementation task.
+1. **Broadcast room vs per-device subscription.** ✅ Resolved — added a second `io.to("readings:latest").emit(...)` in `frame.ts:stepSocketBroadcast` alongside the existing per-device emit. `useDashboardSocket` subscribes once to that broadcast room; `connectSocket` is idempotent per URL so multiple regions sharing the hook do not multiply subscriptions. The per-device emit stays so per-device watchers (e.g. an Operator's `/incidents/:id` drilldown) still receive the device-scoped stream.
+2. **Incident model.** ✅ Resolved — shipped a minimal `Incident` Prisma model (`id, deviceId, severity, metric, value, openedAt`) + cascade migration so the demo loop closes here. Full Epic 4 state-machine fields (acknowledgedBy, state, etc.) land in Story 4.2; the columns are additive so the wire shape is forward-compatible.
+3. **Severity for the KPI count.** ✅ Resolved — added `placeholderSeverity(reading)` in `@surakkha/shared/dashboard` returning `healthy | warning | critical` from inline `PLACEHOLDER_HEALTHY_RANGES` (mirroring Story 2.4 simulator defaults). `warning` is reserved for the Epic 3 rule engine; today's wiring only emits `healthy` or `critical`. Story 3.5 replaces this helper; the `Severity` enum mirrors the four `KpiStat` severities so the dashboard never has to migrate.
+
+## Implementation Notes
+
+**Files added or modified** (24 total):
+
+| Package | Path | Change |
+|---------|------|--------|
+| shared | `src/dashboard.ts` | NEW — wire types + `placeholderSeverity` + `PLACEHOLDER_HEALTHY_RANGES` |
+| shared | `src/index.ts` | MOD — re-export `./dashboard.js` |
+| shared | `src/__tests__/dashboard.spec.ts` | NEW — 15 tests pinning the placeholder severity |
+| shared | `package.json` | MOD — add `./dashboard` subpath export |
+| db | `prisma/schema.prisma` | MOD — `Incident` model + back-relation on `Device` |
+| db | `prisma/migrations/20260824000000_incident_placeholder/migration.sql` | NEW |
+| api | `src/ingest/frame.ts` | MOD — emit to both `device:<id>` and `readings:latest` rooms |
+| api | `src/ingest/frame.spec.ts` | MOD — new broadcast-room-split test (bypasses `callProcessFrame` so the room-tracking shim can capture per-room tuples) |
+| api | `src/readings/latestRouter.ts` | NEW — `GET /api/readings/latest`, RBAC `read Device` |
+| api | `src/readings/latestRouter.spec.ts` | NEW — 5 tests (happy / 401 / empty / 500 / Admin+Operator) |
+| api | `src/incidents/recentRouter.ts` | NEW — `GET /api/incidents/recent?limit=10`, RBAC `read Incident` |
+| api | `src/incidents/recentRouter.spec.ts` | NEW — 8 tests (happy / default-10 / custom-limit / 400 / 401 / empty / 500) |
+| api | `src/index.ts` | MOD — mount both routers; lazy Prisma adapters for both |
+| web | `src/dashboard/Dashboard.tsx` | NEW — four-region shell |
+| web | `src/dashboard/KpiBand.tsx` | NEW — four `KpiStat` cards |
+| web | `src/dashboard/MapRegion.tsx` | NEW — placeholder with `data-testid="dashboard-map-region"` |
+| web | `src/dashboard/LiveReadingsRegion.tsx` | NEW — placeholder |
+| web | `src/dashboard/RecentIncidentsRegion.tsx` | NEW — read-only preview |
+| web | `src/dashboard/useDashboardSocket.ts` | NEW — single shared socket subscription |
+| web | `src/dashboard/useDashboardReadings.ts` | NEW — TanStack Query + `summarizeReadings` |
+| web | `src/dashboard/Dashboard.spec.tsx` | NEW — 13 tests pinning AC1–AC7 + populated card path |
+| web | `src/main.tsx` | MOD — replace `DashboardStub` with `<Dashboard />` on `/` + `/dashboard` |
+| web | `src/realtime/socketClient.ts` | UNCHANGED — used as-is via `connectSocket` |
+| web | `src/api/apiClient.ts` | UNCHANGED — used as-is via `apiFetch` |
+
+**Verification** — `pnpm -r test` → **447 tests** across 35 files (api 133, web 119, simulator 81, shared 102, db 12). `pnpm -r lint` and `pnpm -r typecheck` clean across all five packages. The new Dashboard spec pins 13 tests across AC1 (DOM order, 4 KpiStat cards, 4 severities), AC2 (cache invalidation on `reading:new`, multi-device), AC3 (empty 0/0/0/0 band), AC4 (verbatim empty-state copy), AC5 (no-unmount across socket lifecycle), AC6 (Viewer / Operator / Admin), AC7 (readings 500 → empty states).
+
+**Risks / follow-ups**:
+- The `Incident` model is intentionally minimal; Story 4.2 may add columns and migrate to a Postgres enum for `severity`.
+- `placeholderSeverity` is ephemeral; Story 3.5 swaps it for the rule-driven engine.
+- The Map and Live Readings regions ship as placeholders; Stories 2.7 / 2.8 fill them.
+- Story 2.9 wraps the dashboard with the offline banner; this story does not change the AppShell.

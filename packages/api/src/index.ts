@@ -5,7 +5,8 @@
  *   GET  /health         — Docker Compose healthcheck (unchanged from Step 0)
  *   POST /auth/login     — Story 1.4 (issues access token + refresh cookie)
  *   POST /auth/refresh   — Story 1.4 (mints a new access token from cookie)
- *   GET  /devices        — Story 1.5 (RBAC-protected demo endpoint)
+ *   GET  /api/readings/latest   — Story 2.6 (dashboard cold-load; replaces the Story 1.5 /devices stub)
+ *   GET  /api/incidents/recent  — Story 2.6 (dashboard incidents preview)
  *   WS   /ingest/<uuid>  — Story 2.2 (Socket.IO claim-driven ingestion)
  *
  * Story 1.4 AC: JWT_SECRET fail-fast — the process exits with code 1
@@ -34,11 +35,12 @@
  */
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 
+import { type LatestReadingPayload } from "@surakkha/shared/dashboard";
 import { createLogger } from "@surakkha/shared/logger";
+import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 import cookieParser from "cookie-parser";
 import express, { type Express, type Request, type Response } from "express";
 import { Server as IoServer } from "socket.io";
-
 
 import {
   buildAdminSimulatorPublicRouter,
@@ -47,8 +49,10 @@ import {
 import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
+import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
-import { authenticate, authorize } from "./middleware/authorize";
+import { authenticate } from "./middleware/authorize";
+import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 
 const DEFAULT_API_PORT = 3000;
 const HTTP_OK = 200;
@@ -85,18 +89,112 @@ app.use(buildAdminSimulatorPublicRouter());
 app.use(authenticate);
 
 /**
- * Demo protected endpoint — Story 1.5. The real `/devices` surface
- * (Epic 2) will land its own router with the same authorize gate.
- * This stub exists so curl can prove the wiring without spinning up
- * the full ingestion stack.
+ * Story 2.6 — `/api/readings/latest` (replaces the Story 1.5 stub at
+ * `/devices`). RBAC-gated by `read Device` so every authenticated role
+ * (Admin/Operator/Technician/Viewer) can hit it. The admin tab uses
+ * its own `/admin/simulator/devices` listing — this endpoint is the
+ * dashboard's REST cold-load path (`/api/readings/latest`).
  */
-app.get(
-  "/devices",
-  authorize({ action: "read", resource: "Device" }, audit),
-  (_req: Request, res: Response) => {
-    res.status(HTTP_OK).json({ devices: [] });
-  },
-);
+const listLatestReadingsFromPrisma = async (): Promise<readonly LatestReadingPayload[]> => {
+  try {
+    const client = await resolvePrismaClient();
+    // The `client` is the lazy-resolved singleton (typed minimally —
+    // see resolvePrismaClient). $queryRaw runs the DISTINCT ON query
+    // stubbed in the production adapter.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (client as any).$queryRaw`
+      SELECT DISTINCT ON (r."deviceId")
+             r."deviceId",
+             d."name",
+             r."ts",
+             r."serverReceivedAt",
+             r."metrics",
+             r."flags"
+        FROM "Reading" r
+        JOIN "Device" d ON d."id" = r."deviceId"
+       ORDER BY r."deviceId", r."serverReceivedAt" DESC
+    `;
+    return (rows as ReadonlyArray<{
+      readonly deviceId: string;
+      readonly name: string | null;
+      readonly ts: Date;
+      readonly serverReceivedAt: Date;
+      readonly metrics: TelemetryMetrics;
+      readonly flags: string[];
+    }>).map((row) => ({
+      device_id: row.deviceId,
+      name: row.name,
+      ts: row.ts instanceof Date ? row.ts.getTime() : Number(row.ts),
+      server_received_at:
+        row.serverReceivedAt instanceof Date
+          ? row.serverReceivedAt.toISOString()
+          : new Date(row.serverReceivedAt).toISOString(),
+      metrics: row.metrics,
+      flags: row.flags ?? [],
+    }));
+  } catch (err) {
+    logger.warn({ err }, "listLatestReadings: prisma error, returning empty list");
+    return [];
+  }
+};
+
+app.use(buildLatestReadingsRouter({ audit, listLatest: listLatestReadingsFromPrisma }));
+
+/**
+ * Story 2.6 — `/api/incidents/recent`. Returns up to `?limit=10`
+ * incidents from the last 24 hours, ordered by `opened_at DESC`.
+ * RBAC: `read Incident` — every authenticated role can read.
+ */
+const RECENT_WINDOW_HOURS = 24;
+const HOUR_MS = 3_600_000;
+
+const listRecentIncidentsFromPrisma = async (limit: number) => {
+  try {
+    const client = await resolvePrismaClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    const since = new Date(Date.now() - RECENT_WINDOW_HOURS * HOUR_MS);
+    const rows = await c.incident.findMany({
+      where: { openedAt: { gte: since } },
+      orderBy: { openedAt: "desc" },
+      take: limit,
+      select: {
+        id: true,
+        deviceId: true,
+        severity: true,
+        metric: true,
+        value: true,
+        openedAt: true,
+      },
+    });
+    const SEVERITY_BUCKETS = new Set(["info", "warning", "critical"]);
+    return (rows as ReadonlyArray<{
+      readonly id: string;
+      readonly deviceId: string;
+      readonly severity: string;
+      readonly metric: string;
+      readonly value: number;
+      readonly openedAt: Date;
+    }>).map((row) => ({
+      id: row.id,
+      device_id: row.deviceId,
+      severity: SEVERITY_BUCKETS.has(row.severity)
+        ? (row.severity as "info" | "warning" | "critical")
+        : ("warning" as const),
+      metric: row.metric,
+      value: row.value,
+      opened_at:
+        row.openedAt instanceof Date
+          ? row.openedAt.toISOString()
+          : new Date(row.openedAt).toISOString(),
+    }));
+  } catch (err) {
+    logger.warn({ err }, "listRecentIncidents: prisma error, returning empty list");
+    return [];
+  }
+};
+
+app.use(buildRecentIncidentsRouter({ audit, listRecent: listRecentIncidentsFromPrisma }));
 
 /**
  * Story 2.5 — mount the admin simulator router. The router reads

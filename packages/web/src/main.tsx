@@ -41,6 +41,7 @@ import { apiLogin, configureApiClient } from "./api/apiClient";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
 import { KpiStat } from "./components/KpiStat";
+import { Dashboard } from "./dashboard/Dashboard";
 import { queryClient } from "./queryClient";
 import { AppShell } from "./shell/AppShell";
 
@@ -52,18 +53,10 @@ if (root === null) {
 }
 
 /**
- * Stub dashboard — Story 1.7 replaces with the real KPI band + map +
- * live readings. Keeping a single placeholder route so the shell has
- * something to render inside `<Outlet />`.
+ * Stub dashboard — removed in Story 2.6; the real `<Dashboard />`
+ * four-region shell now renders inside `<AppShell>`. Keeping the
+ * old identifier only as a story-history note.
  */
-const DashboardStub = () => (
-  <div data-testid="dashboard-stub">
-    <h1 className="text-2xl font-semibold text-neutral-body">Dashboard</h1>
-    <p className="mt-2 text-md text-neutral-secondary">
-      Story 1.7 fills this in with the KPI band + map + live readings.
-    </p>
-  </div>
-);
 
 /**
  * Generic page placeholder for routes whose content lives in later
@@ -180,7 +173,7 @@ createRoot(root).render(
           element={
             <CurrentRoleProvider>
               <AppShell>
-                <DashboardStub />
+                <Dashboard />
               </AppShell>
             </CurrentRoleProvider>
           }
@@ -190,7 +183,7 @@ createRoot(root).render(
           element={
             <CurrentRoleProvider>
               <AppShell>
-                <DashboardStub />
+                <Dashboard />
               </AppShell>
             </CurrentRoleProvider>
           }

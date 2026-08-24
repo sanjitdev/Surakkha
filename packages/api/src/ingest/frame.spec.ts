@@ -175,6 +175,66 @@ describe("processFrame — happy path", () => {
   });
 });
 
+/**
+ * Story 2.6 — broadcast room split.
+ *
+ * `frame.ts:stepSocketBroadcast` emits the same `reading:new` payload
+ * to TWO rooms: `device:<device_id>` (existing per-device watcher) AND
+ * `readings:latest` (the dashboard's single-socket fan-out room).
+ * A regression that drops either emit silently leaves the dashboard
+ * with stale data, so we pin both emits at the seam.
+ */
+describe("processFrame — broadcast room split (Story 2.6)", () => {
+  it("emits reading:new to BOTH device:<id> AND readings:latest rooms", async () => {
+    // Room-tracking rig: each `to(room)` call records the room name
+    // alongside the (event, payload) tuple so we can assert BOTH
+    // rooms were emitted. We bypass `callProcessFrame` so the room
+    // shim can capture the per-room tuple instead of collapsing both
+    // emits through `rig.io`.
+    const emitted: Array<{ readonly room: string; readonly event: string; readonly payload: unknown }> = [];
+    const prismaCreate = vi.fn(async () => ({}));
+    const rig: TestRig = {
+      socket: { emit: vi.fn(), disconnect: vi.fn() },
+      prisma: { reading: { create: prismaCreate } },
+      prismaCreate,
+      io: vi.fn(),
+      rateLimiter: new PerDeviceRateLimiter(),
+      sequence: new PerDeviceSequence(),
+      now: () => new Date("2026-08-20T10:31:04.000Z"),
+    };
+    const roomTrackingIo = {
+      to(room: string) {
+        return {
+          emit: (event: string, payload: unknown) => {
+            emitted.push({ room, event, payload });
+          },
+        };
+      },
+    };
+
+    await processFrame({
+      deviceId: DEVICE_ID,
+      socket: rig.socket,
+      raw: buildFrame({ seq: 0 }),
+      rateLimiter: rig.rateLimiter,
+      sequence: rig.sequence,
+      prisma: rig.prisma,
+      io: roomTrackingIo as unknown as Parameters<typeof processFrame>[0]["io"],
+      now: rig.now,
+    });
+
+    const roomSet = new Set(emitted.map((e) => e.room));
+    expect(roomSet.has(`device:${DEVICE_ID}`)).toBe(true);
+    expect(roomSet.has("readings:latest")).toBe(true);
+    // Both emits carry the same event + device_id.
+    for (const e of emitted) {
+      expect(e.event).toBe("reading:new");
+      const payload = e.payload as { device_id: string };
+      expect(payload.device_id).toBe(DEVICE_ID);
+    }
+  });
+});
+
 describe("processFrame — rate limit", () => {
   it("short-circuits the second frame within 2s and emits rate_limited", async () => {
     const rig = buildRig();

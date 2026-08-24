@@ -38,6 +38,10 @@
     "./simulator": {
       "types": "./dist/simulator.d.ts",
       "import": "./dist/simulator.js"
+    },
+    "./dashboard": {
+      "types": "./dist/dashboard.d.ts",
+      "import": "./dist/dashboard.js"
     }
   },
   "scripts": {
