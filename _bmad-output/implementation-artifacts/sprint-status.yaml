@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-24T20:45:00.000Z
+last_updated: 2026-08-24T21:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -74,7 +74,7 @@ development_status:
   epic-1-retrospective: done
 
   # ===== Epic 2 — Devices & Telemetry =====
-  epic-2: in-progress
+  epic-2: done
   2-1-wire-contract-schemas: done
   2-2-ingest-websocket-endpoint: done
   2-3-unknown-missing-field-handling: done
@@ -83,7 +83,7 @@ development_status:
   2-6-dashboard-shell: done
   2-7-map-view: done
   2-8-live-readings-table: done
-  2-9-connection-state-offline-ux: review
+  2-9-connection-state-offline-ux: done
 
   # ===== Epic 3 — Rules & Alerts =====
   epic-3: backlog
@@ -347,14 +347,14 @@ stories:
 
   - id: "2.9"
     title: "Connection State + Offline UX"
-    status: review
+    status: done
     epic: "2"
     commit: "bcf7c81"
-    shipped: null
+    shipped: "2026-08-24"
     covers: ["UX-DR-11"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-2-9-connection-state-offline-ux.md"
-      review: null
+      review: "_bmad-output/implementation-artifacts/.review-content-2.9/review-content.txt"
 
   # ===== Epic 3 — Rules & Alerts (backlog) =====
   - id: "3.1"
@@ -754,6 +754,13 @@ retrospectives:
     shipped: "2026-08-21"
     output: "_bmad-output/implementation-artifacts/epic-1-retrospective.md"
 
+  - id: "epic-2-retrospective"
+    title: "Epic 2 — Devices & Telemetry"
+    status: done
+    epic: "2"
+    shipped: "2026-08-24"
+    output: "_bmad-output/implementation-artifacts/epic-2-retrospective.md"
+
 # Epic-level summaries (preserved for the readiness gate + tracking view)
 epics:
   - id: "1"
@@ -764,7 +771,7 @@ epics:
   - id: "2"
     title: "Devices & Telemetry"
     goal: "A reviewer can launch the docker-compose stack, log in, and see six devices on the map and live readings in the table updating at the configured rate."
-    status: in-progress
+    status: done
     stories: ["2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9"]
   - id: "3"
     title: "Rules & Alerts"
