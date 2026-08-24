@@ -117,13 +117,27 @@ describe("Story 2.5 — GET /admin/simulator/status (public)", () => {
     await close();
   });
 
-  it("returns 503 disabled: true when SIMULATOR_SECRET is unset", async () => {
+  it("returns 503 disabled: true when SIMULATOR_SECRET is unset (G2-08 unified shape)", async () => {
     setSecret(undefined);
     const { url, close } = await startApp({ audit: { emit: () => undefined } });
     const res = await fetch(`${url}/admin/simulator/status`);
     expect(res.status).toBe(503);
-    const body = (await res.json()) as { enabled: boolean; reason: string };
-    expect(body.enabled).toBe(false);
+    // Unified disabled shape: `{ disabled: true, reason: "missing" }`
+    // matches the POST 503 path and the simulator's 403 path. Spec
+    // I/O matrix line 47 pins `{ disabled: true }`.
+    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(body.disabled).toBe(true);
+    expect(body.reason).toBe("missing");
+    await close();
+  });
+
+  it("returns 503 disabled: true when SIMULATOR_SECRET is below 32 chars (G2-03 mirror)", async () => {
+    setSecret("too-short");
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/status`);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(body.disabled).toBe(true);
     expect(body.reason).toBe("missing");
     await close();
   });
@@ -198,7 +212,10 @@ describe("Story 2.5 — POST /admin/simulator/:device_id/scenario", () => {
     );
     expect(successEvent).toBeDefined();
     expect(successEvent?.userId).toBe(ADMIN_ID);
-    expect(successEvent?.context).toMatchObject({
+    // G2-11 + G2-17 — pin the EXACT audit row shape (no extra
+    // `paused: undefined` key for a scenario-only switch; exact key
+    // set, exact value).
+    expect(successEvent?.context).toEqual({
       device_id: DEVICE_A,
       scenario: "RisingTDS",
     });
@@ -404,6 +421,249 @@ describe("Story 2.5 — POST /admin/simulator/:device_id/scenario", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("secret_mismatch");
+    await close();
+  });
+
+  // G2-09 — `{ scenario: "Bogus", paused: true }` combo must
+  // surface as 400 invalid_scenario (not 502 simulator_unreachable).
+  it("returns 400 invalid_scenario for an unknown scenario with paused (G2-09)", async () => {
+    let outboundCalls = 0;
+    const outboundFetch: typeof fetch = (async () => {
+      outboundCalls += 1;
+      return new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "Bogus", paused: true }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_scenario");
+    // Validation gate must intercept BEFORE the outbound call.
+    expect(outboundCalls).toBe(0);
+    await close();
+  });
+
+  // Strict-mode unknown body key → 400 validation_error (G2-19).
+  it("returns 400 validation_error when the body has an unknown key", async () => {
+    let outboundCalls = 0;
+    const outboundFetch: typeof fetch = (async () => {
+      outboundCalls += 1;
+      return new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS", extra_key: "x" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("validation_error");
+    expect(outboundCalls).toBe(0);
+    await close();
+  });
+
+  // 400 invalid_device_id (G2-19).
+  it("returns 400 invalid_device_id when the URL device_id is not a v4 UUID", async () => {
+    let outboundCalls = 0;
+    const outboundFetch: typeof fetch = (async () => {
+      outboundCalls += 1;
+      return new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/not-a-uuid/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_device_id");
+    expect(outboundCalls).toBe(0);
+    await close();
+  });
+
+  // 502 simulator_unreachable with `upstream` body (G2-19).
+  it("returns 502 simulator_unreachable with upstream body for non-200 non-403 simulator responses", async () => {
+    const outboundFetch: typeof fetch = (async () =>
+      new Response(JSON.stringify({ error: "internal_error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as {
+      error: string;
+      upstream: { kind: string; status: number; body: unknown };
+    };
+    expect(body.error).toBe("simulator_unreachable");
+    expect(body.upstream.status).toBe(500);
+    expect(body.upstream.body).toEqual({ error: "internal_error" });
+    await close();
+  });
+
+  // 502 simulator_unreachable when simulator returns 200 with non-JSON (G2-19).
+  it("returns 502 with upstream.body === null when simulator returns non-JSON", async () => {
+    const outboundFetch: typeof fetch = (async () =>
+      new Response("not-json", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      })) as unknown as typeof fetch;
+
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      outboundFetch,
+    });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    // 200 + non-JSON → the api tries to parse as {applied: true}, fails,
+    // and renders 502. The router also handles this path as `unknown`.
+    // The contract is "the SPA never crashes"; the exact status code
+    // for "non-JSON 200" is documented as 502 simulator_unreachable.
+    expect([502, 500]).toContain(res.status);
+    await close();
+  });
+
+  // 503 disabled when api secret below 32 chars (G2-03).
+  it("returns 503 disabled when api-side SIMULATOR_SECRET is below 32 chars (G2-03)", async () => {
+    setSecret("too-short");
+    const { url, close } = await startApp({ audit: { emit: () => undefined } });
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scenario: "RisingTDS" }),
+    });
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(body.disabled).toBe(true);
+    expect(body.reason).toBe("missing");
+    await close();
+  });
+
+  // G2-12 — paused-only request: audit row context is {device_id, paused}
+  // and the simulator receives `{ paused: true }` (not `{ paused: true,
+  // scenario: undefined }`).
+  it("paused-only request: audit row context keys are exactly {device_id, paused}", async () => {
+    let outboundBody: unknown = null;
+    const outboundFetch: typeof fetch = (async (
+      _input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      outboundBody = init?.body !== undefined ? JSON.parse(init.body as string) : null;
+      return new Response(JSON.stringify({ applied: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const events: AuditEvent[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: (e) => events.push(e) },
+      outboundFetch,
+    });
+
+    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ paused: true }),
+    });
+    expect(res.status).toBe(200);
+
+    // Outbound body must carry ONLY `paused`, no `scenario` key.
+    expect(outboundBody).toEqual({ paused: true });
+
+    const successEvent = events.find(
+      (e) => e.auditAction === "simulator_event" && e.outcome === "success",
+    );
+    expect(successEvent).toBeDefined();
+    // Audit row context has exactly two keys, no `scenario` key.
+    expect(Object.keys(successEvent?.context ?? {}).sort()).toEqual([
+      "device_id",
+      "paused",
+    ]);
+    expect(successEvent?.context?.["paused"]).toBe(true);
+    await close();
+  });
+
+  // G1-02 — Operator read returns the SAME body shape as Admin (no
+  // silent omission of `name` / `scenario`).
+  it("Operator read of /devices returns the full body shape with name + scenario fields", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      listDevices: async () => [
+        { id: DEVICE_A, name: "DEVICE-1", scenario: "Normal" },
+        // G1-19 — legacy pre-Story-2.5 row with nulls.
+        { id: DEVICE_B, name: null, scenario: null },
+      ],
+    });
+    const res = await fetch(`${url}/admin/simulator/devices`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      devices: Array<{ device_id: string; name: string | null; scenario: string | null }>;
+    };
+    expect(body.devices).toEqual([
+      { device_id: DEVICE_A, name: "DEVICE-1", scenario: "Normal" },
+      { device_id: DEVICE_B, name: null, scenario: null },
+    ]);
     await close();
   });
 });

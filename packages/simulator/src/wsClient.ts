@@ -193,12 +193,12 @@ export class WsClient {
   public __test__paused = (): boolean => this.paused;
 
   /**
-   * Test seam: read the device_id. Used by `index.ts:boot()` to
-   * register the client into the control server's lookup map. The
-   * device_id is immutable after construction so this is a one-way
-   * getter — there's no `__test__setDeviceId`.
+   * Read the device_id. Used by `index.ts:boot()` to register the
+   * client into the control server's lookup map — production code,
+   * not a test seam. The device_id is immutable after construction
+   * so this is a one-way getter.
    */
-  public __test__deviceId = (): string => this.opts.deviceId;
+  public deviceId = (): string => this.opts.deviceId;
 
   /**
    * Story 2.5 — runtime scenario swap. Called by the control server

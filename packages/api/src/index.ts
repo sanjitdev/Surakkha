@@ -100,9 +100,9 @@ app.get(
 
 /**
  * Story 2.5 — mount the admin simulator router. The router reads
- * the six Device rows via a lazy Prisma client (same pattern the
- * ingest handler uses — avoids a hard dependency on DATABASE_URL
- * for HTTP-only tests).
+ * the six Device rows via a shared lazy Prisma singleton (same
+ * pattern the ingest handler uses — avoids a hard dependency on
+ * DATABASE_URL for HTTP-only tests).
  */
 const listDevicesFromPrisma = async (): Promise<
   ReadonlyArray<{
@@ -112,35 +112,22 @@ const listDevicesFromPrisma = async (): Promise<
   }>
 > => {
   try {
-    const mod = (await import("@prisma/client")) as unknown as {
-      PrismaClient: new () => {
-        device: {
-          findMany: (args: {
-            readonly select: {
-              readonly id: true;
-              readonly name: true;
-              readonly scenario: true;
-            };
-            readonly orderBy: { readonly id: "asc" };
-          }) => Promise<
-            Array<{
-              readonly id: string;
-              readonly name: string | null;
-              readonly scenario: string | null;
-            }>
-          >;
-        };
-      };
-    };
-    const client = new mod.PrismaClient();
+    const client = await resolvePrismaClient();
     const rows = await client.device.findMany({
       select: { id: true, name: true, scenario: true },
       orderBy: { id: "asc" },
     });
     return rows;
-  } catch {
+  } catch (err) {
     // Without a DB we return an empty list. The admin tab can render
     // an empty state rather than failing the entire page render.
+    // Log so an operator can tell the difference between "no devices
+    // seeded yet" and "DB unreachable" — a per-request `new
+    // PrismaClient()` would have leaked handles under burst load.
+    logger.warn(
+      { err },
+      "listDevices: prisma error, returning empty list",
+    );
     return [];
   }
 };
@@ -185,11 +172,58 @@ const io = new IoServer(httpServer, {
 });
 
 /**
+ * Resolve the shared Prisma client. Lazy so the HTTP-only test suite
+ * (which never instantiates the WS path) does not need DATABASE_URL
+ * set. The dynamic import surfaces the underlying error if the Prisma
+ * client has not been generated yet — at which point the api boot
+ * path fails fast with a clear message.
+ *
+ * ONE singleton per process: a per-request `new PrismaClient()` would
+ * leak SQLite handles under burst load (each handle holds a file
+ * descriptor and a connection-pool slot).
+ */
+let cachedPrismaRaw: unknown = null;
+const resolvePrismaClient = async (): Promise<{
+  readonly device: {
+    findMany: (args: {
+      readonly select: { readonly id: true; readonly name: true; readonly scenario: true };
+      readonly orderBy: { readonly id: "asc" };
+    }) => Promise<
+      Array<{
+        readonly id: string;
+        readonly name: string | null;
+        readonly scenario: string | null;
+      }>
+    >;
+  };
+  readonly reading: {
+    create: (args: {
+      readonly data: {
+        readonly deviceId: string;
+        readonly ts: Date;
+        readonly serverReceivedAt: Date;
+        readonly metrics: unknown;
+        readonly seq: number;
+        readonly flags: readonly string[];
+      };
+    }) => Promise<unknown>;
+  };
+}> => {
+  if (cachedPrismaRaw !== null) {
+    return cachedPrismaRaw as Awaited<ReturnType<typeof resolvePrismaClient>>;
+  }
+  const mod = (await import("@prisma/client")) as unknown as {
+    PrismaClient: new () => unknown;
+  };
+  const client = new mod.PrismaClient();
+  cachedPrismaRaw = client;
+  return client as Awaited<ReturnType<typeof resolvePrismaClient>>;
+};
+
+/**
  * Resolve the Prisma reading delegate. Lazy so the HTTP-only
  * test suite (which never instantiates the WS path) does not need
- * DATABASE_URL set. The dynamic import surfaces the underlying
- * error if the Prisma client has not been generated yet — at
- * which point the api boot path fails fast with a clear message.
+ * DATABASE_URL set.
  */
 interface ReadingDelegate {
   readonly reading: {
@@ -206,32 +240,15 @@ interface ReadingDelegate {
   };
 }
 
-let cachedPrisma: ReadingDelegate | null = null;
 const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
-  if (cachedPrisma !== null) return cachedPrisma;
-  const mod = (await import("@prisma/client")) as unknown as {
-    PrismaClient: new () => {
-      reading: {
-        create(args: {
-          readonly data: {
-            readonly deviceId: string;
-            readonly ts: Date;
-            readonly serverReceivedAt: Date;
-            readonly metrics: unknown;
-            readonly seq: number;
-            readonly flags: readonly string[];
-          };
-        }): Promise<unknown>;
-      };
-    };
-  };
-  const client = new mod.PrismaClient();
-  cachedPrisma = {
+  const client = await resolvePrismaClient();
+  return {
     reading: {
-      create: (args) => client.reading.create(args as never) as Promise<unknown>,
+      create: (args) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client as any).reading.create(args) as Promise<unknown>,
     },
   };
-  return cachedPrisma;
 };
 
 const ingestHandlerPromise = resolveReadingDelegate().then((prisma) =>

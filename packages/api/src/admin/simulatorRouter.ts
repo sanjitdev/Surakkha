@@ -83,13 +83,17 @@ const UUID_V4_REGEX =
 const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 
 /**
- * Single-flight per device (P5). `pendingSwitches` holds the
- * in-flight promise for a given device_id; a second concurrent POST
- * that hits the same device before the first resolves waits on the
- * first's promise (single-flight, queue size 1). The `pendingDepth`
- * counter is incremented BEFORE the second request's promise is
- * awaited; if it exceeds 1 (i.e. a third request landed while the
- * second was queued), the third returns 409 `switch_in_progress`.
+ * Single-flight per device (P5). The depth invariant:
+ *   - depth = 1 → first request is in-flight
+ *   - depth = 2 → second request is queued behind the first
+ *   - depth ≥ 3 → third+ request returns 409 `switch_in_progress`
+ *
+ * `pendingSwitches` holds the in-flight promise for a given device_id.
+ * The `pendingDepth` counter is incremented when a request STARTS work
+ * (queue-acceptance, not 409 rejection). The 409 path never mutates
+ * the maps — a burst of three concurrent POSTs leaves depth = 2, not
+ * 3 (G2-04 fix). The `finally` block decrements and clears the maps
+ * once depth drains to 0.
  *
  * The data structures are module-scoped so concurrent POSTs (e.g.
  * two admins double-clicking Switch) coalesce correctly without a
@@ -98,10 +102,23 @@ const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 const pendingSwitches = new Map<string, Promise<unknown>>();
 const pendingDepth = new Map<string, number>();
 
+/** Same minimum as `JWT_SECRET` and the simulator-side
+ * `resolveSimulatorSecret`. Below this length the api treats the
+ * secret as missing — symmetric enforcement so the api doesn't
+ * happily accept a 1-character secret that the simulator would
+ * reject. */
+const SIMULATOR_SECRET_MIN_LENGTH = 32;
+
 /**
  * Resolve the api's outbound `SIMULATOR_SECRET` and the simulator
- * base URL. Returns `null` when secret is missing — the caller maps
- * that to 503 `{ disabled: true }` and skips any outbound call.
+ * base URL. Returns `null` when secret is missing or below the
+ * minimum length — the caller maps that to 503 `{ disabled: true }`
+ * and skips any outbound call. The same 32-char minimum that the
+ * simulator enforces (`resolveSimulatorSecret` in
+ * `packages/simulator/src/control/server.ts`) is mirrored here so the
+ * two sides cannot drift into "api thinks enabled, simulator thinks
+ * disabled" (spec line 26: "Missing/short on either side → disabled
+ * state").
  */
 interface ResolvedSimulatorConfig {
   readonly baseUrl: string;
@@ -111,6 +128,7 @@ interface ResolvedSimulatorConfig {
 const resolveSimulatorConfig = (): ResolvedSimulatorConfig | null => {
   const secret = process.env["SIMULATOR_SECRET"];
   if (secret === undefined || secret === "") return null;
+  if (secret.length < SIMULATOR_SECRET_MIN_LENGTH) return null;
   const baseUrl =
     process.env["SIMULATOR_URL"] ?? "http://localhost:4001";
   return { baseUrl, secret };
@@ -210,12 +228,13 @@ const validateScenarioRequest = (
   const body = parsed.data;
   // Spec P4 — distinguish "unknown scenario" (loud, dedicated error
   // code so the SPA can show a tailored toast) from "malformed body"
-  // (generic `validation_error`). Only when `scenario` is the user's
-  // declared intent (paused is absent) — a `paused`+invalid-scenario
-  // combo is genuinely malformed.
+  // (generic `validation_error`). ANY unknown scenario name yields
+  // `invalid_scenario` — even when paired with `paused` (AC5 promises
+  // 400 invalid_scenario for any unknown name, regardless of
+  // accompanying fields). The `paused` field is accepted by the
+  // schema as long as it's a boolean.
   if (
     body.scenario !== undefined &&
-    body.paused === undefined &&
     !SCENARIO_SET.has(body.scenario as ScenarioName)
   ) {
     res.status(HTTP_BAD_REQUEST).json({ error: "invalid_scenario" });
@@ -238,8 +257,13 @@ export const buildAdminSimulatorPublicRouter = (): Router => {
     markPublic((_req, res) => {
       const cfg = resolveSimulatorConfig();
       if (cfg === null) {
+        // Unify disabled-state shape with the authenticated POST
+        // path: `{ disabled: true, reason: "missing" }`. The spec's
+        // I/O matrix (line 47) pins `{ disabled: true }` for GET,
+        // and using the same shape across GET and POST lets the SPA
+        // collapse both to one banner state without branching.
         res.status(HTTP_SERVICE_UNAVAILABLE).json({
-          enabled: false,
+          disabled: true,
           reason: "missing",
         });
         return;
@@ -272,8 +296,10 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
     markPublic((_req, res) => {
       const cfg = resolveSimulatorConfig();
       if (cfg === null) {
+        // Mirrors the public GET shape: `{ disabled: true, reason:
+        // "missing" }` for symmetry with the POST 503 path.
         res.status(HTTP_SERVICE_UNAVAILABLE).json({
-          enabled: false,
+          disabled: true,
           reason: "missing",
         });
         return;
@@ -335,7 +361,11 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
       // — but the queue has a tight bound.
       const depth = (pendingDepth.get(deviceId) ?? 0) + 1;
       if (depth > 2) {
-        pendingDepth.set(deviceId, depth);
+        // 409 path: do NOT mutate `pendingDepth`. The 409 returns
+        // synchronously without ever awaiting work, so the depth
+        // counter is unaffected — a burst of three concurrent POSTs
+        // leaves depth = 2, not 3. The `finally` block on accepted
+        // requests clears the map once depth drains to 0.
         res.status(HTTP_CONFLICT).json({ error: "switch_in_progress" });
         return;
       }
@@ -390,15 +420,19 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
         // surface — the spec says "no AuditLog row is written" on
         // a failed switch.
         if (result.ok) {
+          // Spec payload shape is `{ device_id, scenario }`. We
+          // conditionally include `paused` only when the admin
+          // actually set it — a scenario-only switch records
+          // `{ device_id, scenario }`, a pause-only switch records
+          // `{ device_id, paused: true }`.
+          const context: Record<string, unknown> = { device_id: deviceId };
+          if (body.scenario !== undefined) context["scenario"] = body.scenario;
+          if (body.paused !== undefined) context["paused"] = body.paused;
           deps.audit.emit({
             auditAction: "simulator_event",
             userId: req.user?.id,
             outcome: "success",
-            context: {
-              device_id: deviceId,
-              scenario: body.scenario,
-              paused: body.paused,
-            },
+            context,
           });
         }
         return result;

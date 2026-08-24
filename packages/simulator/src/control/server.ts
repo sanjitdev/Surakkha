@@ -46,7 +46,6 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
-const HTTP_SERVICE_UNAVAILABLE = 503;
 
 const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -206,29 +205,41 @@ const parseRoute = (rawUrl: string): ParsedRoute | null => {
   if (pathOnly === "/admin/simulator/status") return { kind: "status" };
   const scenarioPrefix = "/admin/simulator/";
   if (!pathOnly.startsWith(scenarioPrefix)) return null;
-  // Strip prefix; what remains is `<uuid>` or `<uuid>/scenario`.
+  // Strip prefix; what remains must be exactly `<uuid>/scenario`.
+  // A bare `<uuid>` (no /scenario suffix) returns null — the api
+  // never emits that shape and we don't want to confuse it with a
+  // valid GET.
   const rest = pathOnly.slice(scenarioPrefix.length);
-  if (rest.endsWith(SCENARIO_SUFFIX)) {
-    const deviceId = parseUuidSegment(
-      rest.slice(0, rest.length - SCENARIO_SUFFIX.length),
-    );
-    return deviceId === null ? null : { kind: "scenario", deviceId };
-  }
-  // /admin/simulator/<uuid> (GET used as a fallback when the api is
-  // dispatching via Express — kept for completeness).
-  const deviceId = parseUuidSegment(rest);
+  if (!rest.endsWith(SCENARIO_SUFFIX)) return null;
+  const deviceId = parseUuidSegment(
+    rest.slice(0, rest.length - SCENARIO_SUFFIX.length),
+  );
   return deviceId === null ? null : { kind: "scenario", deviceId };
 };
 
 /**
  * Resolve a `secretResult` shape into the disabled-state response, or
  * `null` when the secret is present and valid.
+ *
+ * Returns 403 `{ error: "secret_mismatch" }` — NOT 503 — for two
+ * reasons:
+ *   1. Spec line 110 (Tasks & Acceptance) mandates that the simulator's
+ *      POST returns 403 when SIMULATOR_SECRET is unset, with the
+ *      missing-env case "collapsing" to the secret_mismatch disabled-
+ *      banner path on the SPA.
+ *   2. The api's `simulatorClient.ts` already maps 403 → typed
+ *      `secret_mismatch`, and the SPA renders the same disabled banner
+ *      for `secret_mismatch` regardless of which side's env is missing
+ *      (AC8). Returning 503 would force the api to misroute the
+ *      simulator-missing case as `simulator_unreachable` (a 502 in the
+ *      SPA's eyes), defeating the "same banner regardless of which
+ *      side is unset" intent (AC2 narrative).
  */
 const disabledResponse = (
   secretResult: { readonly ok: false; readonly reason: "missing" },
 ): { readonly status: number; readonly body: unknown } => ({
-  status: HTTP_SERVICE_UNAVAILABLE,
-  body: { disabled: true, reason: secretResult.reason },
+  status: HTTP_FORBIDDEN,
+  body: { error: "secret_mismatch", reason: secretResult.reason },
 });
 
 /**
@@ -364,6 +375,11 @@ export const buildControlHandler = (): ((
  * Boot the control server. Returns a `close()` function the caller
  * can use during graceful shutdown. The port is read once at call
  * time; tests inject their own port via `process.env.SIMULATOR_CONTROL_PORT`.
+ *
+ * The returned `port` is the kernel-assigned TCP port (via
+ * `server.address()`). When the caller passes `0` (or env `0`), the
+ * OS assigns a free port — important for tests that don't want to
+ * pre-allocate.
  */
 export const startControlServer = async (port?: number): Promise<{
   readonly port: number;
@@ -382,7 +398,10 @@ export const startControlServer = async (port?: number): Promise<{
   await new Promise<void>((resolve) =>
     server.listen(resolvedPort, "127.0.0.1", () => resolve()),
   );
+  const addr = server.address();
+  const actualPort =
+    addr !== null && typeof addr === "object" && "port" in addr ? addr.port : resolvedPort;
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => server.close(() => resolve()));
-  return { port: resolvedPort, close };
+  return { port: actualPort, close };
 };

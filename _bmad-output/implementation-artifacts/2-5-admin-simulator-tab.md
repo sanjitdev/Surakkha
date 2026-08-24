@@ -308,3 +308,35 @@ context:
 ### Dismissed (15)
 
 G1-05 (ScenarioNameSchema not adopted — out of Group 1 scope), G1-08 (migration timestamp predates commit), G1-09 (no DB CHECK constraint — by design), G1-18 (duplicate device_id in devices.json — defense-in-depth, Story 2.4 owns), G1-20 (seed wiring present — reviewer missed line 13), G1-21 (two import paths — consistent with existing subpath exports), G1-23 (nullable mismatch — spec explicit), G1-26 (export order — alphabetical not a stated convention), G1-29 (redundant `""` test — coverage is good), G1-30 (zod re-bundle bloat — consistent with existing modules), G1-31 (schema vs type-only ambiguity — both exported), G1-32 (non-string types — zod default rejection).
+
+### Group 2 (API + Simulator control) — 2026-08-24
+
+> Sources: blind-hunter + edge-case-hunter + verification-gap + acceptance-auditor.
+> Consolidated triage: `_bmad-output/implementation-artifacts/.review-2.5-group2/TRIAGE.md`.
+
+### Decision-Resolved (by user: apply all 26 patches)
+
+- [x] [Review][Patch] G2-01 — Simulator-side POST missing-secret returns 503 → 403 `{ error: "secret_mismatch", reason: "missing" }` to align with spec line 110 and the AC2 "same banner regardless of which side is unset" intent (api's secret_mismatch path → SPA disabled banner via AC8). [`packages/simulator/src/control/server.ts:disabledResponse`]
+- [x] [Review][Patch] G2-02 — `listDevicesFromPrisma` constructed `new PrismaClient()` per-request → leaks SQLite handles under burst. Hoisted to a shared lazy `resolvePrismaClient()` singleton (reused by `resolveReadingDelegate`). [`packages/api/src/index.ts`]
+- [x] [Review][Patch] G2-03 — Api-side `resolveSimulatorConfig` enforced 1-char minimum → enforced 32-char minimum to mirror the simulator's `resolveSimulatorSecret`. Symmetric enforcement (spec line 26). [`packages/api/src/admin/simulatorRouter.ts`]
+- [x] [Review][Patch] G2-04 — Single-flight queue invariant: documented in code; removed the `pendingDepth.set` on the 409 path that leaked depth under burst. [`packages/api/src/admin/simulatorRouter.ts`]
+- [x] [Review][Patch] G2-05 — Renamed `WsClient.__test__deviceId` → `WsClient.deviceId` (production getter, not a test seam). [`packages/simulator/src/wsClient.ts`, `packages/simulator/src/index.ts:boot`]
+- [x] [Review][Patch] G2-06..G2-26 — See TRIAGE.md for the full 26-patch list (verification-gap filling, audit-row shape, body-parser cleanup, header casing, etc.).
+
+### Defer (Group 2)
+
+- [x] [Review][Defer] F-2.5-9 — Audit `context` → `payload` rename. Cross-cutting; Story 5.6.
+- [x] [Review][Defer] F-2.5-10 — Body-size asymmetry (api 32 KB / sim 16 KB). Production hardening.
+- [x] [Review][Defer] F-2.5-11 — Outbound fetch `User-Agent` header.
+- [x] [Review][Defer] F-2.5-12 — Boot-window buffer-replay race.
+- [x] [Review][Defer] F-2.5-13 — DNS rebinding / SSRF hardening.
+- [x] [Review][Defer] F-2.5-14 — SCENARIO_NAMES cross-package drift (already F-2.5-1/5).
+- [x] [Review][Defer] F-2.5-15 — disabledResponse body shape change ripples to web clients (Group 3).
+- [x] [Review][Defer] F-2.5-16 — `parseRoute` bare-GET fallback removed (G2-14); per-device GET endpoint deferred.
+
+### Dismissed
+
+- Out-of-scope hardening (User-Agent, DNS pinning, redirect-handling).
+- Test-harness nits (env save/restore, vitest worker parallelism).
+- Already-implemented verification (intentional design choices: `setScenario` mutates `currentScenario` per loopback-1, `setPaused` is pause-the-tick semantics, `/status` mounted twice for safety, etc.).
+- Pre-existing concerns already tracked as F-2.5-1..8 from Group 1.

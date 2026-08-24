@@ -65,9 +65,10 @@ export type SimulatorSwitchResult =
 
 /**
  * Validate `SIMULATOR_URL` parses as an `http`/`https` URL with no
- * path beyond `/`. Misconfigured values (e.g. trailing `/api`, `..`
- * segments, `file://`) would otherwise be concatenated blindly into
- * the outbound URL. Returns `null` on any failure.
+ * path beyond `/` and a non-empty hostname. Misconfigured values
+ * (e.g. trailing `/api`, `..` segments, `file://`, `http://`) would
+ * otherwise be concatenated blindly into the outbound URL. Returns
+ * `null` on any failure.
  */
 export const validateSimulatorBaseUrl = (
   raw: string,
@@ -77,9 +78,10 @@ export const validateSimulatorBaseUrl = (
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return null;
     }
+    if (parsed.hostname === "") return null;
     // Reject any path beyond the bare origin so a misconfigured
     // `http://host/api` doesn't produce `http://host/api/admin/...`.
-    if (parsed.pathname !== "/" && parsed.pathname !== "") {
+    if (parsed.pathname !== "/") {
       return null;
     }
     return parsed.origin;

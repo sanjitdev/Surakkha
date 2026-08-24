@@ -310,7 +310,7 @@ export const boot = (): void => {
   }
   const registryEntries: Array<[string, RegistryClient]> = [];
   for (const c of clients) {
-    registryEntries.push([c.__test__deviceId(), c]);
+    registryEntries.push([c.deviceId(), c]);
   }
   setClientsRegistry(new Map(registryEntries));
 

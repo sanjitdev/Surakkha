@@ -105,23 +105,28 @@ describe("Story 2.5 — control server GET /admin/simulator/status", () => {
     await close();
   });
 
-  it("returns 503 disabled when SIMULATOR_SECRET is unset", async () => {
+  it("returns 403 secret_mismatch when SIMULATOR_SECRET is unset (collapsed disabled state)", async () => {
     delete process.env["SIMULATOR_SECRET"];
     const { url, close } = await startServer(new Map());
     const res = await fetch(`${url}/admin/simulator/status`);
-    expect(res.status).toBe(503);
-    const body = (await res.json()) as { disabled: boolean; reason: string };
-    expect(body.disabled).toBe(true);
+    // Missing env on the simulator side now returns 403 with the
+    // `secret_mismatch` body — same path the api's simulatorClient
+    // maps to the disabled banner via AC8. (Spec line 110 mandates
+    // 403 for missing env; was 503 in the v1 implementation.)
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; reason: string };
+    expect(body.error).toBe("secret_mismatch");
     expect(body.reason).toBe("missing");
     await close();
   });
 
-  it("returns 503 disabled when SIMULATOR_SECRET is below 32 chars", async () => {
+  it("returns 403 secret_mismatch when SIMULATOR_SECRET is below 32 chars", async () => {
     process.env["SIMULATOR_SECRET"] = "too-short";
     const { url, close } = await startServer(new Map());
     const res = await fetch(`${url}/admin/simulator/status`);
-    expect(res.status).toBe(503);
-    const body = (await res.json()) as { disabled: boolean; reason: string };
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; reason: string };
+    expect(body.error).toBe("secret_mismatch");
     expect(body.reason).toBe("missing");
     await close();
   });
@@ -258,14 +263,147 @@ describe("Story 2.5 — control server POST /admin/simulator/:device_id/scenario
     ).toBe(true);
     await close();
   });
+
+  it("returns 403 secret_mismatch on POST when SIMULATOR_SECRET is unset (G2-01)", async () => {
+    delete process.env["SIMULATOR_SECRET"];
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "RisingTDS" }),
+      },
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("secret_mismatch");
+    await close();
+  });
+
+  it("rejects GET on the scenario endpoint with 400 method_not_allowed", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "GET",
+        headers: { [SECRET_HEADER]: STRONG_SECRET },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "method_not_allowed" });
+    await close();
+  });
+
+  it("rejects PUT on the scenario endpoint with 400 method_not_allowed", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "PUT",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "RisingTDS" }),
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "method_not_allowed" });
+    await close();
+  });
+
+  it("returns 400 payload_too_large when body exceeds 16 KiB", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    // 17 KB of valid JSON content — the request lib may split this
+    // into multiple TCP chunks; the server accumulates until the
+    // cap is exceeded.
+    const huge = "x".repeat(17 * 1024);
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: `{"scenario":"${huge}"}`,
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    await close();
+  });
+
+  it("returns 400 invalid_json on malformed body", async () => {
+    const client = stubClient("Normal");
+    const { url, close } = await startServer(
+      new Map([[VALID_DEVICE, client]]),
+    );
+    const res = await fetch(
+      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
+      {
+        method: "POST",
+        headers: {
+          [SECRET_HEADER]: STRONG_SECRET,
+          "Content-Type": "application/json",
+        },
+        body: "{ scenario: \"RisingTDS\" ", // unterminated — invalid JSON
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_json" });
+    await close();
+  });
+
+  it("returns 404 not_found on unknown path (G2-14)", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/wibble`, {
+      headers: { [SECRET_HEADER]: STRONG_SECRET },
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found" });
+    await close();
+  });
+
+  it("returns 404 not_found on bare /admin/simulator/<uuid> with no /scenario suffix (G2-14)", async () => {
+    const { url, close } = await startServer(new Map());
+    const res = await fetch(`${url}/admin/simulator/${VALID_DEVICE}`, {
+      headers: { [SECRET_HEADER]: STRONG_SECRET },
+    });
+    // Bare-GET fallback removed in G2-14; the parser now rejects
+    // any path that doesn't end in /scenario.
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found" });
+    await close();
+  });
 });
 
 describe("Story 2.5 — startControlServer boots on env-supplied port", () => {
-  it("respects SIMULATOR_CONTROL_PORT env var", async () => {
+  it("returns a positive kernel-assigned port and accepts traffic (G2-17)", async () => {
     process.env["SIMULATOR_CONTROL_PORT"] = "0";
     setClientsRegistry(new Map());
     const { port, close } = await startControlServer();
-    expect(typeof port).toBe("number");
+    expect(port).toBeGreaterThan(0);
+    // Smoke-test that the server is actually listening (not just
+    // that listen() returned). A request with no secret header
+    // must surface 403.
+    const res = await fetch(`http://127.0.0.1:${port}/admin/simulator/status`);
+    expect(res.status).toBe(403);
     await close();
   });
 });
