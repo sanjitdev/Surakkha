@@ -9,7 +9,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { SCENARIO_NAMES, ScenarioNameSchema } from "./simulator.js";
+import {
+  SCENARIO_NAMES,
+  type ScenarioName,
+  ScenarioNameSchema,
+} from "./simulator.js";
 
 describe("Story 2.5 — shared SCENARIO_NAMES (closed enum)", () => {
   it("contains exactly seven names in the documented order", () => {
@@ -46,5 +50,16 @@ describe("Story 2.5 — shared SCENARIO_NAMES (closed enum)", () => {
 
   it("rejects the empty string", () => {
     expect(ScenarioNameSchema.safeParse("").success).toBe(false);
+  });
+
+  it("ScenarioName is the union of the seven names (compile-time pin)", () => {
+    // Each entry of `SCENARIO_NAMES` must be assignable to
+    // `ScenarioName`. If a future contributor renames an array entry,
+    // the inferred `ScenarioName` type changes and these assignments
+    // fail to compile.
+    for (const name of SCENARIO_NAMES) {
+      const typed: ScenarioName = name;
+      expect(typed).toBe(name);
+    }
   });
 });
