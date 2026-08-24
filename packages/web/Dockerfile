@@ -14,8 +14,9 @@ FROM node:20-alpine AS build
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 COPY --from=deps /repo/ ./
-COPY packages/shared/ packages/shared/
-COPY packages/web/ packages/web/
+# See api/Dockerfile for the `--exclude=node_modules` rationale.
+COPY --exclude=node_modules packages/shared/ packages/shared/
+COPY --exclude=node_modules packages/web/ packages/web/
 RUN pnpm -F @surakkha/shared build && pnpm -F @surakkha/web build
 
 FROM nginx:1.27-alpine AS runtime
