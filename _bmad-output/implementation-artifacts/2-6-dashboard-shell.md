@@ -2,7 +2,7 @@
 title: 'Story 2.6 — Dashboard Shell'
 type: 'feature'
 created: '2026-08-24'
-status: 'in-review'
+status: 'done'
 baseline_commit: '5503b04ea2a5f5c0de0e31e30e1d48f1535d3b01' # feat(simulator,api,web,db,shared): Story 2.5 — /admin/simulator admin tab
 context:
   - docs/architecture.md#3.5-websocket-event-contract-api-to-web
@@ -188,4 +188,78 @@ context:
 - The `Incident` model is intentionally minimal; Story 4.2 may add columns and migrate to a Postgres enum for `severity`.
 - `placeholderSeverity` is ephemeral; Story 3.5 swaps it for the rule-driven engine.
 - The Map and Live Readings regions ship as placeholders; Stories 2.7 / 2.8 fill them.
+
+## Suggested Review Order
+
+**Entry point — Dashboard mounting**
+
+- Top-of-tree view: where the four-region shell mounts in the authenticated app shell.
+  [`Dashboard.tsx:1`](../../packages/web/src/dashboard/Dashboard.tsx#L1)
+
+- DashboardStub is replaced with the real `<Dashboard />` on `/` and `/dashboard`.
+  [`main.tsx:178`](../../packages/web/src/main.tsx#L178)
+
+**Broadcast-room wiring (high-risk fix from review)**
+
+- Subscriber helper — token verify + room-join + `unauthenticated` emit; single source of truth for the namespace + room constants.
+  [`subscriber.ts:39`](../../packages/api/src/ingest/subscriber.ts#L39)
+
+- Server-side wiring — declares the `/dashboard` namespace and routes subscribers to `handleSubscriberConnection`; ingest devices keep going to `buildIngestServer`.
+  [`index.ts:355`](../../packages/api/src/index.ts#L355)
+
+- Frame broadcast step — second emit to the `readings:latest` room added alongside the existing device-room emit.
+  [`frame.ts:365`](../../packages/api/src/ingest/frame.ts#L365)
+
+- Web socket client — passes `path: "/ingest/"` and the namespace `/dashboard` so transport + namespace match the api.
+  [`socketClient.ts:118`](../../packages/web/src/realtime/socketClient.ts#L118)
+
+- Web dashboard hook — invalidates the `["readings", "latest"]` query key on every `reading:new`.
+  [`useDashboardSocket.ts:58`](../../packages/web/src/dashboard/useDashboardSocket.ts#L58)
+
+**Dashboard data flow**
+
+- Initial-load hook — wires REST `/api/readings/latest` into TanStack Query.
+  [`useDashboardReadings.ts:1`](../../packages/web/src/dashboard/useDashboardReadings.ts#L1)
+
+- KPI band — four `KpiStat` cards driven by `placeholderSeverity`, exactly the documented `grid-cols-1 md:grid-cols-2 lg:grid-cols-4` pattern.
+  [`KpiBand.tsx:1`](../../packages/web/src/dashboard/KpiBand.tsx#L1)
+
+- Region placeholders — Map / Live Readings ship as empty-state containers for Stories 2.7 / 2.8.
+  [`MapRegion.tsx:1`](../../packages/web/src/dashboard/MapRegion.tsx#L1)
+  [`LiveReadingsRegion.tsx:1`](../../packages/web/src/dashboard/LiveReadingsRegion.tsx#L1)
+
+- Recent Incidents feed — read-only card affordance; no action buttons (Epic 4 expands later).
+  [`RecentIncidentsRegion.tsx:1`](../../packages/web/src/dashboard/RecentIncidentsRegion.tsx#L1)
+
+**API surfaces**
+
+- Latest readings endpoint — DISTINCT ON per-device query joins to `Device.name` and maps to the `ReadingNewEvent` shape.
+  [`latestRouter.ts:73`](../../packages/api/src/readings/latestRouter.ts#L73)
+
+- Recent incidents endpoint — 24-hour window RBAC-gated, ordered by `opened_at DESC`.
+  [`recentRouter.ts:1`](../../packages/api/src/incidents/recentRouter.ts#L1)
+
+**Shared + schema**
+
+- Placeholder severity — minimal metric-driven rule; any out-of-healthy metric → `critical`, otherwise `healthy`. Story 3.5 replaces.
+  [`dashboard.ts:1`](../../packages/shared/src/dashboard.ts#L1)
+
+- Stub `Incident` model — minimal columns the wire shape needs; Story 4.2 expands.
+  [`schema.prisma:1`](../../packages/db/prisma/schema.prisma#L1)
+  [`migration.sql:1`](../../packages/db/prisma/migrations/20260824000000_incident_placeholder/migration.sql#L1)
+
+**Tests (read last)**
+
+- Dashboard component spec — pins all 7 ACs: DOM order, 4 KpiStat cards, cache invalidation, no-unmount, Viewer/Operator/Admin, 500 empty-state.
+  [`Dashboard.spec.tsx:1`](../../packages/web/src/dashboard/Dashboard.spec.tsx#L1)
+
+- Subscriber unit + integration — token verify path + a real `IoServer` round-trip proving a subscriber receives `reading:new`.
+  [`subscriber.spec.ts:1`](../../packages/api/src/ingest/subscriber.spec.ts#L1)
+  [`subscriberSocket.spec.ts:1`](../../packages/api/src/ingest/subscriberSocket.spec.ts#L1)
+
+- Shared placeholder severity tests + api router specs + broadcast-room split in frame spec.
+  [`dashboard.spec.ts:1`](../../packages/shared/src/__tests__/dashboard.spec.ts#L1)
+  [`latestRouter.spec.ts:1`](../../packages/api/src/readings/latestRouter.spec.ts#L1)
+  [`recentRouter.spec.ts:1`](../../packages/api/src/incidents/recentRouter.spec.ts#L1)
+  [`frame.spec.ts:188`](../../packages/api/src/ingest/frame.spec.ts#L188)
 - Story 2.9 wraps the dashboard with the offline banner; this story does not change the AppShell.
