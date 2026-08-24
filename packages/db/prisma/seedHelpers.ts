@@ -53,3 +53,78 @@ export const assertValidScenario = (
     );
   }
 };
+
+/**
+ * Per-device row from `devices.json`. The seed reads `lat` / `lng`
+ * optionally so a partially-shaped JSON still loads cleanly (Story
+ * 2.7 added the columns; the values default to undefined when
+ * absent).
+ */
+export interface DevicesJsonEntry {
+  readonly device_id: string;
+  readonly scenario: string;
+  readonly lat?: number;
+  readonly lng?: number;
+}
+
+/**
+ * Build the `update` payload for `prisma.device.upsert`. Returns an
+ * object whose keys are only the nullable columns that the existing
+ * row has not yet filled — a runtime-named device or a runtime-set
+ * scenario persists across re-runs.
+ *
+ * Pure: takes the existing row projection + the parsed entry; no
+ * Prisma / filesystem / global access.
+ */
+export const buildDeviceUpdateFields = (
+  existing: {
+    readonly name: string | null;
+    readonly scenario: string | null;
+    readonly lat: number | null;
+    readonly lng: number | null;
+  } | null,
+  entry: DevicesJsonEntry,
+  deriveNameFn: (id: string) => string,
+): {
+  name?: string;
+  scenario?: string;
+  lat?: number;
+  lng?: number;
+} => {
+  const fields: {
+    name?: string;
+    scenario?: string;
+    lat?: number;
+    lng?: number;
+  } = {};
+  if (existing?.name === null) fields.name = deriveNameFn(entry.device_id);
+  if (existing?.scenario === null) fields.scenario = entry.scenario;
+  return appendCoordinates(fields, entry, existing);
+};
+
+/**
+ * Helper extracted from `buildDeviceUpdateFields` so the per-cell
+ * decision tree stays below the eslint complexity cap.
+ */
+const appendCoordinates = (
+  fields: {
+    name?: string;
+    scenario?: string;
+    lat?: number;
+    lng?: number;
+  },
+  entry: DevicesJsonEntry,
+  existing: {
+    readonly lat: number | null;
+    readonly lng: number | null;
+  } | null,
+): {
+  name?: string;
+  scenario?: string;
+  lat?: number;
+  lng?: number;
+} => {
+  if (existing?.lat !== null || existing?.lng !== null) return fields;
+  if (entry.lat === undefined || entry.lng === undefined) return fields;
+  return { ...fields, lat: entry.lat, lng: entry.lng };
+};

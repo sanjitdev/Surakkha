@@ -33,6 +33,13 @@ model Device {
   // forward migration without a manual backfill step.
   name       String?
   scenario   String?
+  // Story 2.7: geographic coordinates for the operator dashboard's
+  // Leaflet map (`/api/devices` joins Device.lat / Device.lng into
+  // the map's marker roster). Nullable so the forward migration is
+  // safe for any rows that predate Story 2.7; the seed backfills the
+  // six canonical device rows idempotently.
+  lat        Float?
+  lng        Float?
   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
   // matches the FK constraint in the migration; a removed Device
   // does not leave orphan Reading rows behind.

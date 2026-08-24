@@ -144,3 +144,124 @@ export const placeholderSeverity = (
   }
   return "healthy";
 };
+
+/**
+ * Dashboard-facing severity including the `offline` bucket.
+ *
+ * Story 2.7 expands the placeholder severity from the reading-only
+ * three-bucket enum (`healthy | warning | critical`) to a four-bucket
+ * enum so the map's offline threshold (`OFFLINE_THRESHOLD_MS`) can
+ * surface a device whose `last_reading_at` lapsed as `offline`.
+ *
+ * `placeholderSeverity` keeps the three-bucket shape; the dashboard's
+ * KPI band + map route through this combined enum and resolve
+ * `offline` via `isOffline()`.
+ */
+export type MapSeverity = Severity | "offline";
+
+/**
+ * Per-device staleness threshold (Story 2.7).
+ *
+ * A device whose latest reading is older than this — or has never
+ * emitted — renders with the `offline` severity token. The simulator
+ * ticks every 2 s; 60 s = 30× a normal tick (clearly lapsed). A
+ * real-world device on a 30 s or 60 s tick sits well within the
+ * envelope so the simulator's marker doesn't flip to grey just
+ * because of a slower tick rate.
+ *
+ * Lives here so the KPI band can adopt it later (the KPI band's
+ * `offline` count is currently hard-coded to `0`; see
+ * `useDashboardReadings.summarizeReadings`) without a wire change.
+ */
+export const OFFLINE_THRESHOLD_MS = 60_000;
+
+/**
+ * Wire shape of `GET /api/devices` (Story 2.7).
+ *
+ * One row per Device, joined to `MAX(Reading.serverReceivedAt)` so
+ * the map can render severity by joining the device roster with the
+ * latest-readings cache. Sorted by `id ASC`.
+ *
+ * `last_reading_at` is `null` when a device has never connected —
+ * the map renders these in the `offline` token ("No reading yet").
+ */
+export interface DeviceSummary {
+  readonly id: string;
+  readonly name: string | null;
+  readonly lat: number | null;
+  readonly lng: number | null;
+  readonly last_reading_at: string | null;
+}
+
+export interface DevicesResponse {
+  readonly devices: readonly DeviceSummary[];
+}
+
+/**
+ * Decide whether a device should render with the `offline` severity
+ * token. Returns `true` when:
+ *   - The device has never connected (`last_reading_at === null`),
+ *     OR
+ *   - The most recent reading lapsed more than `OFFLINE_THRESHOLD_MS`
+ *     before `now`.
+ *
+ * Pure: same input → same output. `now` is injected so callers
+ * control the clock (tests pin a fixed `now`; production uses
+ * `Date.now()`).
+ */
+export const isOffline = (
+  device: Pick<DeviceSummary, "last_reading_at">,
+  now: number,
+): boolean => {
+  if (device.last_reading_at === null) return true;
+  const ts = Date.parse(device.last_reading_at);
+  if (!Number.isFinite(ts)) return true;
+  return now - ts > OFFLINE_THRESHOLD_MS;
+};
+
+/**
+ * Resolve a device's map severity from its roster row + latest reading.
+ *
+ * The map's marker colour is driven by this function so the same
+ * "worst-current-bucket" rule the KPI band uses drives the map.
+ * Devices flagged `isOffline()` return `offline` even when their last
+ * reading was within the threshold — a manual "Offline" scenario
+ * override surfaces as grey regardless of telemetry freshness.
+ */
+export const deviceMapSeverity = (
+  device: Pick<DeviceSummary, "last_reading_at">,
+  latestReading:
+    | Pick<LatestReadingPayload, "metrics">
+    | undefined,
+  now: number,
+): MapSeverity => {
+  if (isOffline(device, now)) return "offline";
+  if (latestReading === undefined) return "offline";
+  return placeholderSeverity(latestReading);
+};
+
+/**
+ * Resolve the "breached metric" — the first metric outside its
+ * `PLACEHOLDER_HEALTHY_RANGES` envelope. Returns `null` when every
+ * metric is healthy.
+ *
+ * The map's popup surfaces this so the operator sees at a glance
+ * which telemetry band tripped the critical severity (the
+ * `latestReading.metrics` payload is six values; showing every one
+ * would overflow the popup).
+ */
+export const breachedMetric = (
+  reading: Pick<LatestReadingPayload, "metrics">,
+): { readonly key: keyof TelemetryMetrics; readonly value: number } | null => {
+  const m = reading.metrics;
+  for (const key of Object.keys(PLACEHOLDER_HEALTHY_RANGES) as ReadonlyArray<
+    keyof TelemetryMetrics
+  >) {
+    const value = m[key];
+    const range = PLACEHOLDER_HEALTHY_RANGES[key];
+    if (value < range.min || value > range.max || !Number.isFinite(value)) {
+      return { key, value };
+    }
+  }
+  return null;
+};

@@ -52,3 +52,15 @@
 - **F-2.5-19** — RBAC downgrade handling mid-session (Group 3 verification #11): The page renders generic error when api 403's because token role downgraded; full `<RbacDenied />` re-routing from the page requires tighter coupling between apiClient interceptor and the page. **Defer to RBAC hardening (Epic 7).**
 - **F-2.5-20** — StrictMode double-fire masking (Group 3 edge-hunter #14): Not a production bug; documented behavior. **Defer.**
 - **F-2.5-21** — Status query `refetchInterval` for secret rotation (Group 3 edge-hunter #12): Adding a polling interval to status is a UX trade-off that should be reviewed with the operator. **Defer to operator-triage story (Epic 3).**
+
+## Deferred from: code review of 2-7-map-view (2026-08-24)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-map-view.md`
+  - summary: Production wiring swallows Prisma errors as empty roster instead of 500
+  - evidence: `packages/api/src/index.ts:listDevicesRosterFromPrisma` catches errors with `logger.warn` and returns `[]`. In production this masks DB outages as a successful `200 { devices: [] }` response — visually the dashboard renders the empty state per AC6, but operators never see a 5xx or surface in the audit log. The router's `try/catch` only triggers when the injected `listDevices` THROWS, which the production helper doesn't. **Defer to Story 2.9 (Connection State + Offline UX) or Story 5.3 (Audit Log Surface) — both touch the DB-down observability story.**
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-map-view.md`
+  - summary: Reading-aggregate index missing for the `MAX(serverReceivedAt) GROUP BY device_id` query
+  - evidence: `GET /api/devices` runs `GROUP BY d."id"` with `MAX(r."serverReceivedAt")` from `packages/api/src/index.ts`. Without an index on `Reading("deviceId", "serverReceivedAt")` the query sequentially scans the readings table per request. At simulator volumes this is fine; at real-device volumes (1 device × 1 reading/min × 24 h = 1440 rows; 100 devices × 30 days = 4.3 M rows; that's a seq-scan-per-request pattern). **Defer to Story 5.4 (ReadingAggregate Table) or a perf-focused Epic 6 story.**
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-7-map-view.md`
+  - summary: KPI band's `offline` count remains hard-coded at `0`
+  - evidence: `packages/web/src/dashboard/useDashboardReadings.ts:summarizeReadings` hard-codes `offline: 0`. The new shared `isOffline()` helper is the canonical source-of-truth (already exported from `@surakkha/shared/dashboard`). The Story 2.7 spec explicitly deferred this adoption: "the KPI band's `offline` count (currently hard-coded `0`) can adopt it later without a wire change." Cross-reference F-2.7-track. **Defer to a Story 2.x follow-up once operators request the offline count in the band.**

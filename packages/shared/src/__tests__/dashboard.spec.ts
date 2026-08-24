@@ -18,7 +18,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  breachedMetric,
+  deviceMapSeverity,
+  isOffline,
   type LatestReadingPayload,
+  OFFLINE_THRESHOLD_MS,
   placeholderSeverity,
   PLACEHOLDER_HEALTHY_RANGES,
 } from "../index.js";
@@ -132,6 +136,109 @@ describe("PLACEHOLDER_HEALTHY_RANGES pin", () => {
       temp_c: { min: 24, max: 30 },
       chlorine_ppm: { min: 0.5, max: 1.5 },
       water_level_cm: { min: 50, max: 120 },
+    });
+  });
+});
+
+describe("Story 2.7 — OFFLINE_THRESHOLD_MS + isOffline", () => {
+  it("pins the threshold at 60 s", () => {
+    expect(OFFLINE_THRESHOLD_MS).toBe(60_000);
+  });
+
+  it("returns true when last_reading_at is null", () => {
+    expect(isOffline({ last_reading_at: null }, Date.now())).toBe(true);
+  });
+
+  it("returns true when last_reading_at is older than the threshold", () => {
+    const now = Date.now();
+    const stale = new Date(now - OFFLINE_THRESHOLD_MS - 1_000).toISOString();
+    expect(isOffline({ last_reading_at: stale }, now)).toBe(true);
+  });
+
+  it("returns false when last_reading_at is within the threshold", () => {
+    const now = Date.now();
+    const fresh = new Date(now - 5_000).toISOString();
+    expect(isOffline({ last_reading_at: fresh }, now)).toBe(false);
+  });
+
+  it("treats malformed timestamps as offline", () => {
+    expect(isOffline({ last_reading_at: "not-a-date" }, Date.now())).toBe(true);
+  });
+});
+
+describe("Story 2.7 — deviceMapSeverity", () => {
+  const now = Date.now();
+  const fresh = new Date(now - 5_000).toISOString();
+  const stale = new Date(now - OFFLINE_THRESHOLD_MS - 1_000).toISOString();
+
+  it("returns offline when last_reading_at is null even with a healthy reading", () => {
+    expect(
+      deviceMapSeverity(
+        { last_reading_at: null },
+        buildReading(),
+        now,
+      ),
+    ).toBe("offline");
+  });
+
+  it("returns offline when the reading lapsed beyond the threshold", () => {
+    expect(
+      deviceMapSeverity(
+        { last_reading_at: stale },
+        buildReading(),
+        now,
+      ),
+    ).toBe("offline");
+  });
+
+  it("returns offline when no reading is provided but the device is fresh", () => {
+    expect(
+      deviceMapSeverity({ last_reading_at: fresh }, undefined, now),
+    ).toBe("offline");
+  });
+
+  it("returns the placeholder severity when fresh + a reading exists", () => {
+    expect(
+      deviceMapSeverity(
+        { last_reading_at: fresh },
+        buildReading(),
+        now,
+      ),
+    ).toBe("healthy");
+    expect(
+      deviceMapSeverity(
+        { last_reading_at: fresh },
+        buildReading({ ph: 9.1 }),
+        now,
+      ),
+    ).toBe("critical");
+  });
+});
+
+describe("Story 2.7 — breachedMetric", () => {
+  it("returns null when every metric is in range", () => {
+    expect(breachedMetric(buildReading())).toBeNull();
+  });
+
+  it("returns the first metric outside the band", () => {
+    const reading = buildReading({ ph: 9.1 });
+    expect(breachedMetric(reading)).toEqual({ key: "ph", value: 9.1 });
+  });
+
+  it("returns the metric earlier in PLACEHOLDER_HEALTHY_RANGES order when multiple are out of band", () => {
+    // `ph` precedes `tds_ppm` in the source-order of
+    // PLACEHOLDER_HEALTHY_RANGES; even with both out of range, the
+    // first one by insertion order wins. The popup's "what tipped"
+    // answer is therefore deterministic.
+    const reading = buildReading({ ph: 9.1, tds_ppm: 1500 });
+    expect(breachedMetric(reading)).toEqual({ key: "ph", value: 9.1 });
+  });
+
+  it("flags a NaN metric as the breached metric", () => {
+    const reading = buildReading({ chlorine_ppm: Number.NaN });
+    expect(breachedMetric(reading)).toEqual({
+      key: "chlorine_ppm",
+      value: Number.NaN,
     });
   });
 });

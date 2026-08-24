@@ -223,6 +223,9 @@ describe("Story 2.6 — AC1: DOM order and four-region layout", () => {
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
       }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+      }
       return new Response("{}", { status: 404 });
     });
 
@@ -265,6 +268,9 @@ describe("Story 2.6 — AC1: DOM order and four-region layout", () => {
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
       }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+      }
       return new Response("{}", { status: 404 });
     });
 
@@ -283,6 +289,9 @@ describe("Story 2.6 — AC1: DOM order and four-region layout", () => {
       }
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
       }
       return new Response("{}", { status: 404 });
     });
@@ -309,6 +318,9 @@ describe("Story 2.6 — AC3: zero readings → empty 0/0/0/0 band", () => {
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
       }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+      }
       return new Response("{}", { status: 404 });
     });
 
@@ -322,9 +334,15 @@ describe("Story 2.6 — AC3: zero readings → empty 0/0/0/0 band", () => {
     expect(screen.getByTestId("dashboard-live-readings-empty")).toHaveTextContent(
       "No readings yet",
     );
-    expect(screen.getByTestId("dashboard-map-empty")).toHaveTextContent(
-      "No devices",
-    );
+    // Story 2.7: the devices query has its own loading state; the
+    // map region first renders the "Loading map…" overlay, then
+    // resolves to "No devices" once `/api/devices` returns 200.
+    // `waitFor` because the assertion crosses an async boundary.
+    await waitFor(() => {
+      expect(screen.getByTestId("dashboard-map-empty")).toHaveTextContent(
+        "No devices",
+      );
+    });
   });
 });
 
@@ -336,6 +354,9 @@ describe("Story 2.6 — AC4: empty incidents feed renders the documented copy", 
       }
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
       }
       return new Response("{}", { status: 404 });
     });
@@ -359,6 +380,9 @@ describe("Story 2.6 — AC2: reading:new invalidates the cache key", () => {
       }
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
       }
       return new Response("{}", { status: 404 });
     });
@@ -417,6 +441,9 @@ describe("Story 2.6 — AC2: reading:new invalidates the cache key", () => {
       }
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
       }
       return new Response("{}", { status: 404 });
     });
@@ -500,6 +527,9 @@ describe("Story 2.6 — AC5: socket disconnect/reconnect does not unmount", () =
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
       }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+      }
       return new Response("{}", { status: 404 });
     });
 
@@ -569,6 +599,9 @@ describe("Story 2.6 — AC7: /api/readings/latest 500 → empty states, no blank
       if (url.endsWith("/api/incidents/recent?limit=10")) {
         return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
       }
+      if (url.endsWith("/api/devices")) {
+        return new Response(JSON.stringify({ devices: [] }), { status: 200 });
+      }
       return new Response("{}", { status: 404 });
     });
 
@@ -588,9 +621,15 @@ describe("Story 2.6 — AC7: /api/readings/latest 500 → empty states, no blank
     expect(screen.getByTestId("dashboard-live-readings-empty")).toHaveTextContent(
       "No readings yet",
     );
-    expect(screen.getByTestId("dashboard-map-empty")).toHaveTextContent(
-      "No devices",
-    );
+    // Story 2.7: the devices query has its own loading state; the
+    // map region first renders the "Loading map…" overlay, then
+    // resolves to "No devices" once `/api/devices` returns 200.
+    // `waitFor` because the assertion crosses an async boundary.
+    await waitFor(() => {
+      expect(screen.getByTestId("dashboard-map-empty")).toHaveTextContent(
+        "No devices",
+      );
+    });
     const numerals = screen.getAllByTestId("kpi-stat-numeral");
     expect(numerals.map((n) => n.textContent)).toEqual(["0", "0", "0", "0"]);
   });

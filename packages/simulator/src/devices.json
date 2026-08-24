@@ -3,27 +3,39 @@
   "devices": [
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000001",
-      "scenario": "Normal"
+      "scenario": "Normal",
+      "lat": 23.7806,
+      "lng": 90.4074
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000002",
-      "scenario": "RisingTDS"
+      "scenario": "RisingTDS",
+      "lat": 23.7461,
+      "lng": 90.3742
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000003",
-      "scenario": "TurbiditySpike"
+      "scenario": "TurbiditySpike",
+      "lat": 23.8103,
+      "lng": 90.4125
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000004",
-      "scenario": "ChlorineDrop"
+      "scenario": "ChlorineDrop",
+      "lat": 23.7280,
+      "lng": 90.3965
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000005",
-      "scenario": "Offline"
+      "scenario": "Offline",
+      "lat": 23.7920,
+      "lng": 90.4250
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000006",
-      "scenario": "RandomFailure"
+      "scenario": "RandomFailure",
+      "lat": 23.7590,
+      "lng": 90.4480
     }
   ]
 }

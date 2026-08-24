@@ -37,7 +37,11 @@ import { fileURLToPath } from "node:url";
 
 import { PrismaClient } from "@prisma/client";
 
-import { assertValidScenario, deriveName } from "./seedHelpers.js";
+import {
+  assertValidScenario,
+  buildDeviceUpdateFields,
+  deriveName,
+} from "./seedHelpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,6 +60,8 @@ interface DevicesFileShape {
   readonly devices: ReadonlyArray<{
     readonly device_id: string;
     readonly scenario: string;
+    readonly lat?: number;
+    readonly lng?: number;
   }>;
 }
 
@@ -116,16 +122,10 @@ const main = async (): Promise<void> => {
       // tab) is never silently overwritten on re-run.
       const existing = await prisma.device.findUnique({
         where: { id: d.device_id },
-        select: { name: true, scenario: true },
+        select: { name: true, scenario: true, lat: true, lng: true },
       });
 
-      const updateFields: { name?: string; scenario?: string } = {};
-      if (existing?.name === null) {
-        updateFields.name = deriveName(d.device_id);
-      }
-      if (existing?.scenario === null) {
-        updateFields.scenario = d.scenario;
-      }
+      const updateFields = buildDeviceUpdateFields(existing, d, deriveName);
 
       await prisma.device.upsert({
         where: { id: d.device_id },
@@ -134,12 +134,14 @@ const main = async (): Promise<void> => {
           id: d.device_id,
           name: deriveName(d.device_id),
           scenario: d.scenario,
+          lat: d.lat,
+          lng: d.lng,
         },
       });
     }
     // eslint-disable-next-line no-console
     console.log(
-      `seed: upserted ${parsed.devices.length} device rows (name + scenario backfill)`,
+      `seed: upserted ${parsed.devices.length} device rows (name + scenario + lat/lng backfill)`,
     );
   } finally {
     await prisma.$disconnect();

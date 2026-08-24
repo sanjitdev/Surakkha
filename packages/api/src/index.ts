@@ -49,6 +49,7 @@ import {
 import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
+import { buildDevicesRouter } from "./devices/router.js";
 import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
 import { handleSubscriberConnection } from "./ingest/subscriber";
@@ -140,6 +141,57 @@ const listLatestReadingsFromPrisma = async (): Promise<readonly LatestReadingPay
 };
 
 app.use(buildLatestReadingsRouter({ audit, listLatest: listLatestReadingsFromPrisma }));
+
+/**
+ * Story 2.7 — `GET /api/devices`. Returns the device roster joined
+ * to `MAX(Reading.serverReceivedAt)` so the dashboard's map view
+ * can place one marker per device. RBAC: `read Device` — every
+ * authenticated role can read.
+ */
+const listDevicesRosterFromPrisma = async () => {
+  try {
+    const client = await resolvePrismaClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = client as any;
+    const rows = await c.$queryRaw`
+      SELECT d."id",
+             d."name",
+             d."lat",
+             d."lng",
+             MAX(r."serverReceivedAt") AS "lastReadingAt"
+        FROM "Device" d
+        LEFT JOIN "Reading" r ON r."deviceId" = d."id"
+       GROUP BY d."id", d."name", d."lat", d."lng"
+       ORDER BY d."id" ASC
+    `;
+    return (rows as ReadonlyArray<{
+      readonly id: string;
+      readonly name: string | null;
+      readonly lat: number | null;
+      readonly lng: number | null;
+      readonly lastReadingAt: Date | string | null;
+    }>).map((row) => ({
+      id: row.id,
+      name: row.name,
+      lat: row.lat,
+      lng: row.lng,
+      last_reading_at:
+        row.lastReadingAt === null || row.lastReadingAt === undefined
+          ? null
+          : row.lastReadingAt instanceof Date
+            ? row.lastReadingAt.toISOString()
+            : new Date(row.lastReadingAt).toISOString(),
+    }));
+  } catch (err) {
+    logger.warn(
+      { err },
+      "listDevicesRoster: prisma error, returning empty list",
+    );
+    return [];
+  }
+};
+
+app.use(buildDevicesRouter({ audit, listDevices: listDevicesRosterFromPrisma }));
 
 /**
  * Story 2.6 — `/api/incidents/recent`. Returns up to `?limit=10`
