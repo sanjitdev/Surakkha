@@ -9,7 +9,7 @@ COPY tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/api/package.json packages/api/
 COPY packages/db/package.json packages/db/
-RUN pnpm install --frozen-lockfile --filter @surakkha/api... --filter @surakkha/db...
+RUN pnpm install --frozen-lockfile
 
 FROM node:20-alpine AS build
 WORKDIR /repo
