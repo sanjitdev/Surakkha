@@ -4,7 +4,7 @@
 FROM node:20-alpine AS deps
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
-COPY pnpm-workspace.yaml package.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
