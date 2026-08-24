@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-22T23:05:00.000Z
+# last_updated: 2026-08-24T00:30:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-22T23:05:00.000Z
+last_updated: 2026-08-24T00:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -80,7 +80,7 @@ development_status:
   2-3-unknown-missing-field-handling: done
   2-4-simulator-process-six-default-devices-seven-scenarios: done
   2-5-admin-simulator-admin-tab: review
-  2-6-dashboard-shell: backlog
+  2-6-dashboard-shell: ready-for-dev
   2-7-map-view: backlog
   2-8-live-readings-table: backlog
   2-9-connection-state-offline-ux: backlog
@@ -292,35 +292,35 @@ stories:
 
   - id: "2.4"
     title: "Simulator Process + Six Default Devices + Seven Scenarios"
-    status: in-progress
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "6dffb1b"
+    shipped: "2026-08-22"
+    covers: ["FR-9", "FR-33", "FR-34", "FR-35", "AR-12", "I-3", "I-4", "I-12", "NFR-5"]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-4-simulator-process-six-default-devices-seven-scenarios.md"
       review: null
 
   - id: "2.5"
     title: "/admin/simulator Admin Tab"
-    status: backlog
+    status: review
     epic: "2"
-    commit: null
+    commit: "5503b04"
     shipped: null
-    covers: []
+    covers: ["FR-36", "AR-12"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md"
+      review: "_bmad-output/implementation-artifacts/.review-content-2.5-l1.txt"
 
   - id: "2.6"
     title: "Dashboard Shell"
-    status: backlog
+    status: ready-for-dev
     epic: "2"
     commit: null
     shipped: null
-    covers: []
+    covers: ["FR-11", "FR-12", "FR-13", "FR-14", "FR-15", "AR-11", "UX-DR-2", "UX-DR-5", "UX-DR-6", "UX-DR-7"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/2-6-dashboard-shell.md"
       review: null
 
   - id: "2.7"

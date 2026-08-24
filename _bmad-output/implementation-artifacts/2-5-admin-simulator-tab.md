@@ -269,3 +269,42 @@ context:
 **Manual checks (if no CLI):**
 
 - Start simulator with `SIMULATOR_SECRET=test-secret-32-chars-or-more-please-1234` and api with the same value; load `/admin/simulator` as Admin; click Switch to `RisingTDS`; confirm frames start climbing TDS within 5 s; restart simulator with `SIMULATOR_SECRET` unset; reload page; confirm disabled banner and no controls clickable.
+
+## Review Findings
+
+> Group 1 only (Shared + DB). Groups 2 (API + Simulator control) and 3 (Web) reviewed separately.
+> Sources: blind-hunter + edge-case-hunter + verification-gap + acceptance-auditor.
+
+### Decision-Resolved (by user: A — accept spec two-step)
+
+- [x] [Review][Defer] G1-22 — Migration vs split seed atomicity — deferred, spec intent. Migration adds nullable columns only; `prisma/seed.ts` is a separate step owned by the spec Tasks.
+
+### Patch
+
+- [ ] [Review][Patch] G1-02 — `simulatorRouter.spec.ts` asserts only `device_id`; `name` and `scenario` regression-untested [`packages/api/src/admin/simulatorRouter.spec.ts:139-145`] *(out of Group 1 surface; flag for Group 2 review)*
+- [x] [Review][Patch] G1-03 — Seed has zero test coverage; `deriveName` and path math untested [`packages/db/prisma/seed.ts`, `packages/db/prisma/seedHelpers.ts`, `packages/db/prisma/seed.spec.ts`]
+- [x] [Review][Patch] G1-06/G1-07/G1-13 — Seed `update` branch is destructive; split into `create` + null-guarded `update` (only fill `name` / `scenario` when null) [`packages/db/prisma/seed.ts`]
+- [x] [Review][Patch] G1-10 — `deriveName` collision risk; use last 4 hex digits [`packages/db/prisma/seedHelpers.ts`]
+- [x] [Review][Patch] G1-12 — `devices.json` parsed with unchecked cast; validate against `SCENARIO_NAMES` before upsert [`packages/db/prisma/seed.ts`, `seedHelpers.ts:assertValidScenario`]
+- [x] [Review][Patch] G1-14/15/16 — Seed error handling: try/catch around `readFileSync` + `JSON.parse` + `Array.isArray`; descriptive error + exit 1 [`packages/db/prisma/seed.ts:loadDevicesFile`]
+- [x] [Review][Patch] G1-17 — `deriveName("")` produces `"DEVICE-"` with no guard [`packages/db/prisma/seedHelpers.ts:UUID_V4_PATTERN`]
+- [ ] [Review][Patch] G1-19 — Pre-Story-2.5 Device rows have NULL `name`/`scenario`; api rendering must handle null fallback *(out of Group 1 surface; flag for Group 2 review)* [`packages/db/prisma/schema.prisma:24-31`]
+- [x] [Review][Patch] G1-24 — Migration comment claims "back-fills" but SQL has no UPDATE; rewrite comment [`packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql:3-13`]
+- [x] [Review][Patch] G1-25 — `packages/shared/src/index.ts` missing trailing newline [`packages/shared/src/index.ts:14`] *(was already correctly terminated; verified, no change)*
+- [x] [Review][Patch] G1-28 — Add `// @ts-expect-error` exhaustiveness test for `ScenarioName` type [`packages/shared/src/simulator.spec.ts`]
+- [x] [Review][Patch] G1-01 — Seed doc-comment says "no cross-package dependency" but the file does read `devices.json` at runtime; rewrite comment to acknowledge the runtime read [`packages/db/prisma/seed.ts:1-32`]
+
+### Out of Group 1 scope (flagged for Group 2 review)
+
+- G1-02 — `simulatorRouter.spec.ts` does not assert `name` / `scenario` fields. Will be addressed in Group 2 review of API changes.
+- G1-19 — Pre-Story-2.5 Device rows have NULL `name` / `scenario`; api surface must handle null fallback. Will be addressed in Group 2 review.
+
+### Defer
+
+- [x] [Review][Defer] G1-04 — Shared ↔ Simulator `SCENARIO_NAMES` drift has no cross-package test — deferred, pre-existing. Already tracked as F-2.5-1 in `deferred-work.md`.
+- [x] [Review][Defer] G1-11 — `deriveName` placeholder contradicts spec example `DHAKA-SCHOOL-023` — deferred, pre-existing. Canonical school labels land in Story 2.3; v1 placeholder is the deliberate fallback the spec accepts.
+- [x] [Review][Defer] G1-27 — `Device.name` has no length cap — deferred, pre-existing. Admin-only input; production-hardening concern.
+
+### Dismissed (15)
+
+G1-05 (ScenarioNameSchema not adopted — out of Group 1 scope), G1-08 (migration timestamp predates commit), G1-09 (no DB CHECK constraint — by design), G1-18 (duplicate device_id in devices.json — defense-in-depth, Story 2.4 owns), G1-20 (seed wiring present — reviewer missed line 13), G1-21 (two import paths — consistent with existing subpath exports), G1-23 (nullable mismatch — spec explicit), G1-26 (export order — alphabetical not a stated convention), G1-29 (redundant `""` test — coverage is good), G1-30 (zod re-bundle bloat — consistent with existing modules), G1-31 (schema vs type-only ambiguity — both exported), G1-32 (non-string types — zod default rejection).

@@ -26,3 +26,10 @@
 - **F-2.5-2** — `UUID_V4_REGEX` and HTTP status constants (`400`, `403`, `409`, `502`, `503`) are duplicated between `packages/api/src/admin/simulatorRouter.ts` and `packages/simulator/src/control/server.ts`. Drift risk if either package's values change. **Defer to the next shared-constants refactor (post-Epic 2).**
 - **F-2.5-3** — `packages/db/prisma/seed.ts` derives device names from `deviceId.slice(-1).toUpperCase()`. The current six device IDs end in `1, 2, 3, 4, 5, 6` (digits), so names are stable, but a future seeded device ending in `8, 9, a, b` (valid UUIDv4 last-hex ranges) would yield a letter-prefixed name. Fragile for future backfill. **Defer to the next seed-refactor story.**
 - **F-2.5-4** — API admin endpoint status-code constants are inline in `simulatorRouter.ts` (no shared constants module). The web app has its own copies of the same codes (in `useSimulatorDevices.ts`). Drift risk if a code changes. **Defer to the next shared-constants refactor (same as F-2.5-2).**
+
+## Deferred from: code review of 2-5-admin-simulator-tab (2026-08-24 Group 1 — Shared + DB)
+
+- **F-2.5-5** — `SCENARIO_NAMES` drift detection: shared ↔ simulator parity has no cross-package test. Already tracked as F-2.5-1 above; cross-referencing here for the Group 1 review pass.
+- **F-2.5-6** — `deriveName` placeholder (`DEVICE-<last-hex>`) contradicts spec example `DHAKA-SCHOOL-023`. Canonical school labels land in Story 2.3 (school/facility seed); v1 placeholder is the deliberate fallback the spec accepts. **Owned by Story 2.3 (Device.name canonicalization).**
+- **F-2.5-7** — `Device.name` column has no length cap (`migration.sql:10`). Admin-only input; production-hardening concern. **Defer to production hardening (Epic 7).**
+- **F-2.5-8** — Migration adds nullable `name` / `scenario` columns only; backfill is a separate `pnpm seed` step (atomic migration rejected — see Group 1 review decision A). Owner documents the two-step order in `README.md`. **Owned by Story 6.1 (Docker Compose + README quickstart).**
