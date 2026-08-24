@@ -1,0 +1,285 @@
+diff --git a/packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql b/packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql
+new file mode 100644
+index 0000000..7afe6d5
+--- /dev/null
++++ b/packages/db/prisma/migrations/20260822000000_device_name_scenario/migration.sql
+@@ -0,0 +1,12 @@
++-- Story 2.5 — Device name + scenario columns.
++--
++-- Adds two nullable columns to the `Device` table so the api can
++-- serve the `/admin/simulator/devices` listing without re-reading
++-- the simulator's local `devices.json`. Nullable to keep the
++-- forward migration safe for any rows that already exist from the
++-- Story 2.2 placeholder. A separate seed step (prisma/seed.ts) back-
++-- fills the six default devices with their canonical names + scenarios.
++
++-- AlterTable
++ALTER TABLE "Device" ADD COLUMN "name" TEXT;
++ALTER TABLE "Device" ADD COLUMN "scenario" TEXT;
+diff --git a/packages/db/prisma/schema.prisma b/packages/db/prisma/schema.prisma
+index 18c1053..b4190e7 100644
+--- a/packages/db/prisma/schema.prisma
++++ b/packages/db/prisma/schema.prisma
+@@ -16,14 +16,23 @@ datasource db {
+ }
+ 
+ /**
+- * Device — Story 2.2 placeholder. The full model (school_id, label,
+- * fw_version, status, etc.) lands in Story 2.3. v1 ingest only needs
+- * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` so the admin device-
+- * status view can render "last contact" without a separate query.
++ * Device — Story 2.2 placeholder, extended in Story 2.5.
++ *
++ * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` were the v1.0 placeholders.
++ * Story 2.5 adds `name` and `scenario` so the `/admin/simulator` tab can
++ * list the six devices and their current scenario without re-reading the
++ * simulator's local `devices.json`. Both columns are nullable to keep the
++ * forward migration safe for any rows already in the table.
+  */
+ model Device {
+   id         String    @id
+   lastSeenAt DateTime?
++  // Story 2.5: human-readable label (e.g. "DHAKA-SCHOOL-023") + the
++  // currently assigned scenario. Nullable so an existing row that
++  // predates Story 2.5 (only `id` + `lastSeenAt`) survives the
++  // forward migration without a manual backfill step.
++  name       String?
++  scenario   String?
+   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
+   // matches the FK constraint in the migration; a removed Device
+   // does not leave orphan Reading rows behind.
+diff --git a/packages/db/prisma/seed.ts b/packages/db/prisma/seed.ts
+new file mode 100644
+index 0000000..c8dc435
+--- /dev/null
++++ b/packages/db/prisma/seed.ts
+@@ -0,0 +1,99 @@
++/**
++ * Surakkha database seed — Story 2.5.
++ *
++ * Backfills the six default devices from
++ * `packages/simulator/src/devices.json` into the `Device` table with
++ * human-readable `name` + canonical `scenario`. Idempotent: uses
++ * `upsert` keyed on `id` so re-running the seed never duplicates a
++ * row.
++ *
++ * Run via:
++ *   pnpm --filter @surakkha/db seed
++ *
++ * The canonical UUIDv4 device IDs are the wire-contract identity
++ * (architecture §3.1) — both the simulator's `devices.json` and this
++ * seed reference the same six IDs so the api's
++ * `GET /admin/simulator/devices` listing matches the simulator's
++ * in-memory client registry.
++ *
++ * `name` is a v1 placeholder derived from the device_id's last hex
++ * digit; the Story 2.3 school/facility metadata (the canonical human
++ * label) is a later story that fills `School.label`. v1 only needs
++ * something stable for the admin tab to render.
++ */
++import { readFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++import { fileURLToPath } from "node:url";
++
++import { PrismaClient } from "@prisma/client";
++
++const __filename = fileURLToPath(import.meta.url);
++const __dirname = dirname(__filename);
++
++/**
++ * Canonical six-device list mirrored from
++ * `packages/simulator/src/devices.json`. The seed re-declares the
++ * list rather than reading the simulator's file at runtime so the
++ * seed has no cross-package dependency.
++ */
++const DEVICES_JSON_PATH = resolve(
++  __dirname,
++  "..",
++  "..",
++  "simulator",
++  "src",
++  "devices.json",
++);
++
++interface DevicesFileShape {
++  readonly tick_interval_ms: number;
++  readonly devices: ReadonlyArray<{
++    readonly device_id: string;
++    readonly scenario: string;
++  }>;
++}
++
++/**
++ * Derive a stable v1 placeholder name from the UUID's last hex
++ * digit. The Story 2.3 school-facility seed replaces this with the
++ * canonical school label; for v1, "DEVICE-N" is enough to render the
++ * admin tab row.
++ */
++const deriveName = (deviceId: string): string => {
++  const tail = deviceId.slice(-1).toUpperCase();
++  return `DEVICE-${tail}`;
++};
++
++const main = async (): Promise<void> => {
++  const raw = readFileSync(DEVICES_JSON_PATH, "utf8");
++  const parsed = JSON.parse(raw) as DevicesFileShape;
++  const prisma = new PrismaClient();
++  try {
++    for (const d of parsed.devices) {
++      await prisma.device.upsert({
++        where: { id: d.device_id },
++        update: {
++          name: deriveName(d.device_id),
++          scenario: d.scenario,
++        },
++        create: {
++          id: d.device_id,
++          name: deriveName(d.device_id),
++          scenario: d.scenario,
++        },
++      });
++    }
++    // eslint-disable-next-line no-console
++    console.log(
++      `seed: upserted ${parsed.devices.length} device rows (name + scenario backfill)`,
++    );
++  } finally {
++    await prisma.$disconnect();
++  }
++};
++
++main().catch((err: unknown) => {
++  console.error("seed: failed", err);
++  // eslint-disable-next-line no-restricted-properties
++  process.exit(1);
++});
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index e1e8071..6faa954 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -34,6 +34,10 @@
+     "./logger": {
+       "types": "./dist/logger.d.ts",
+       "import": "./dist/logger.js"
++    },
++    "./simulator": {
++      "types": "./dist/simulator.d.ts",
++      "import": "./dist/simulator.js"
+     }
+   },
+   "scripts": {
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index 4f678cd..85c93e4 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -10,4 +10,5 @@ export * from "./auth.js";
+ export * from "./events.js";
+ export * from "./incident.js";
+ export * from "./rbac.js";
+-export * from "./logger.js";
+\ No newline at end of file
++export * from "./logger.js";
++export * from "./simulator.js";
+\ No newline at end of file
+diff --git a/packages/shared/src/simulator.spec.ts b/packages/shared/src/simulator.spec.ts
+new file mode 100644
+index 0000000..7664e87
+--- /dev/null
++++ b/packages/shared/src/simulator.spec.ts
+@@ -0,0 +1,50 @@
++/**
++ * Story 2.5 — shared simulator contract tests.
++ *
++ * Pins the closed enum of scenario names so the api and the simulator
++ * stay in lockstep. The seven names mirror
++ * `packages/simulator/src/scenarios.ts:35-44` (`SCENARIO_NAMES`); a
++ * drift between the two files would let the api accept a name the
++ * simulator would later reject (or vice versa).
++ */
++import { describe, expect, it } from "vitest";
++
++import { SCENARIO_NAMES, ScenarioNameSchema } from "./simulator.js";
++
++describe("Story 2.5 — shared SCENARIO_NAMES (closed enum)", () => {
++  it("contains exactly seven names in the documented order", () => {
++    expect(SCENARIO_NAMES).toEqual([
++      "Normal",
++      "RisingTDS",
++      "TurbiditySpike",
++      "ChlorineDrop",
++      "Offline",
++      "BatteryLow",
++      "RandomFailure",
++    ]);
++  });
++
++  it("contains seven names (length pin)", () => {
++    expect(SCENARIO_NAMES).toHaveLength(7);
++  });
++
++  it("has no duplicate entries", () => {
++    const set = new Set(SCENARIO_NAMES);
++    expect(set.size).toBe(SCENARIO_NAMES.length);
++  });
++
++  it("accepts every documented name via Zod parse", () => {
++    for (const name of SCENARIO_NAMES) {
++      expect(ScenarioNameSchema.safeParse(name).success).toBe(true);
++    }
++  });
++
++  it("rejects unknown names with a Zod failure", () => {
++    const result = ScenarioNameSchema.safeParse("Bogus");
++    expect(result.success).toBe(false);
++  });
++
++  it("rejects the empty string", () => {
++    expect(ScenarioNameSchema.safeParse("").success).toBe(false);
++  });
++});
+diff --git a/packages/shared/src/simulator.ts b/packages/shared/src/simulator.ts
+new file mode 100644
+index 0000000..20fb569
+--- /dev/null
++++ b/packages/shared/src/simulator.ts
+@@ -0,0 +1,40 @@
++/**
++ * Simulator contract types — Surakkha shared (Story 2.5).
++ *
++ * Re-declared here (rather than imported from `@surakkha/simulator`) so
++ * the api can validate inbound scenario names without taking a
++ * dependency on the simulator package. The simulator is a separate
++ * process; packages other than itself may not import it.
++ *
++ * The names MUST stay in lockstep with
++ * `packages/simulator/src/scenarios.ts:35-44` (`SCENARIO_NAMES`). The
++ * spec at `_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md`
++ * pins a closed enum of seven scenario names; the api uses this enum
++ * to validate `POST /admin/simulator/:device_id/scenario` bodies.
++ *
++ * Adding a scenario is a wire-contract-adjacent change. Bump both
++ * files in lockstep.
++ */
++import { z } from "zod";
++
++/**
++ * Closed enum of scenario names — mirrored from
++ * `packages/simulator/src/scenarios.ts:SCENARIO_NAMES`.
++ */
++export const SCENARIO_NAMES = [
++  "Normal",
++  "RisingTDS",
++  "TurbiditySpike",
++  "ChlorineDrop",
++  "Offline",
++  "BatteryLow",
++  "RandomFailure",
++] as const;
++export type ScenarioName = (typeof SCENARIO_NAMES)[number];
++
++/**
++ * Zod schema mirroring the closed enum above. Use this on inbound
++ * request bodies so an unknown name rejects with a 400 validation
++ * error rather than being silently dropped.
++ */
++export const ScenarioNameSchema = z.enum(SCENARIO_NAMES);
