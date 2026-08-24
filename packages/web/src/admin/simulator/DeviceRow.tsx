@@ -11,9 +11,15 @@
  * The row is read-only on the `enabled === false` path; the parent
  * (`SimulatorPage`) instead renders the disabled banner above the
  * list and the rows are not rendered at all in that case.
+ *
+ * F-2.5-17 (deferred): the api's `/devices` listing does not currently
+ * expose `paused` per device. The row keeps a local `paused` state
+ * initialized to `false`. A future story that extends the device
+ * surface with `paused` should seed `paused` from the server value
+ * to remove the local-truth drift.
  */
 import { SCENARIO_NAMES } from "@surakkha/shared/simulator";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   type SimulatorDevice,
@@ -34,12 +40,21 @@ export interface DeviceRowProps {
 
 export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
   const [selected, setSelected] = useState<string>(
-    device.scenario ?? "Normal",
+    () => device.scenario ?? "Normal",
   );
   const [paused, setPaused] = useState(false);
   const mutation = useSwitchScenario();
 
   const { isPending } = mutation;
+
+  // G3-16: re-sync `selected` to the device's authoritative
+  // scenario when the parent invalidates the device list. Without
+  // this, a stale `selected` ("TurbiditySpike") could disagree with
+  // the badge ("RisingTDS") after a successful Switch from another
+  // admin tab, and a Switch click would re-POST a no-op scenario.
+  useEffect(() => {
+    setSelected(device.scenario ?? "Normal");
+  }, [device.device_id, device.scenario]);
 
   const submit = (
     body: { scenario?: string; paused?: boolean },
@@ -48,8 +63,27 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
       readonly onError?: (err: SwitchScenarioError) => void;
     },
   ): void => {
+    // G3-14: bundle `paused` with a scenario switch so the device
+    // can't end up "stuck paused" after a scenario change.
+    // Previously the Switch button only posted `{ scenario }`,
+    // leaving the prior `paused` value authoritative.
+    const merged: { scenario?: string; paused?: boolean } = { ...body };
+    if (body.scenario !== undefined && body.paused === undefined) {
+      merged.paused = paused;
+    }
+    // No-op short-circuit: if both scenario and paused match the
+    // current state, skip the POST (audit-log noise + a useless
+    // 200 round trip).
+    const noChange =
+      (merged.scenario === undefined || merged.scenario === device.scenario) &&
+      (merged.paused === undefined ||
+        (merged.paused === false && paused === false) ||
+        (merged.paused === true && paused === true));
+    if (noChange) {
+      return;
+    }
     mutation.mutate(
-      { deviceId: device.device_id, ...body },
+      { deviceId: device.device_id, ...merged },
       {
         onSuccess: () => {
           if (body.scenario !== undefined) {
@@ -88,9 +122,10 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
             {device.name ?? "Unnamed device"}
           </h2>
           <p
-            className="text-sm"
+            className="truncate text-sm"
             style={{ color: "#475569" }}
             data-testid={`simulator-row-id-${device.device_id}`}
+            title={device.device_id}
           >
             {device.device_id}
           </p>

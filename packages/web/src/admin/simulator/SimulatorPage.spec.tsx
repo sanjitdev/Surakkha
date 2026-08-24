@@ -224,6 +224,14 @@ describe("Story 2.5 — Switch happy path", () => {
       expect(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`)).toBeInTheDocument();
     });
 
+    // DEVICE_B's current scenario is "RisingTDS"; pick a DIFFERENT
+    // scenario so the row's no-change short-circuit (G3-14) doesn't
+    // suppress the POST. Verify the body matches the user-driven
+    // choice, not the row's initial value.
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_B}`),
+      "TurbiditySpike",
+    );
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`));
 
     await waitFor(() => {
@@ -231,8 +239,12 @@ describe("Story 2.5 — Switch happy path", () => {
     });
     expect(posted).toHaveLength(1);
     expect(posted[0]?.url).toContain(DEVICE_B);
+    // G3-14: the Switch submit bundles the row's local `paused`
+    // state so a scenario change can't leave the device stuck
+    // paused. Initial paused is false, so the body includes it.
     expect(JSON.parse(posted[0]?.body ?? "{}")).toEqual({
-      scenario: "RisingTDS",
+      scenario: "TurbiditySpike",
+      paused: false,
     });
   });
 });
@@ -267,6 +279,12 @@ describe("Story 2.5 — Switch failure path", () => {
       screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent,
     ).toBe("Normal");
 
+    // Change the select first so the no-change short-circuit
+    // (G3-14) doesn't suppress the POST.
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_A}`),
+      "TurbiditySpike",
+    );
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
 
     await waitFor(() => {
@@ -386,10 +404,315 @@ describe("Story 2.5 — 409 switch_in_progress surfaces as an error toast", () =
       expect(screen.getByTestId(`simulator-row-switch-${DEVICE_D}`)).toBeInTheDocument();
     });
 
+    // Change the select first so the no-change short-circuit
+    // (G3-14) doesn't suppress the POST. DEVICE_D's current
+    // scenario is "ChlorineDrop".
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_D}`),
+      "Normal",
+    );
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_D}`));
 
     await waitFor(() => {
       expect(screen.getByTestId("simulator-toast-error")).toBeInTheDocument();
+    });
+    // AC matrix: pin the user-facing copy.
+    expect(screen.getByTestId("simulator-toast-error").textContent).toBe(
+      "Another switch is in progress.",
+    );
+  });
+});
+
+describe("Story 2.5 — Switch happy-path toast text (G3-07)", () => {
+  it("renders 'Switched to <scenario>.' with the user-selected scenario", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ applied: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`)).toBeInTheDocument();
+    });
+
+    // DEVICE_B's current scenario is "RisingTDS"; switch to a
+    // DIFFERENT scenario so the user-driven change is observable.
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_B}`),
+      "ChlorineDrop",
+    );
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_B}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-success")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("simulator-toast-success").textContent).toBe(
+      "Switched to ChlorineDrop.",
+    );
+  });
+});
+
+describe("Story 2.5 — 400 invalid_scenario (AC5)", () => {
+  it("shows 'Switch failed: invalid input.' toast", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ error: "invalid_scenario" }), {
+          status: 400,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`)).toBeInTheDocument();
+    });
+
+    // Change the select first so the no-change short-circuit
+    // (G3-14) doesn't suppress the POST. DEVICE_A's current
+    // scenario is "Normal".
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_A}`),
+      "RisingTDS",
+    );
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-error")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("simulator-toast-error").textContent).toBe(
+      "Switch failed: invalid input.",
+    );
+  });
+});
+
+describe("Story 2.5 — 403 secret_mismatch (AC8) transitions to disabled banner", () => {
+  it("shows the disabled banner and the same toast copy as the missing-secret case", async () => {
+    // First /status fetch returns enabled: true (operator was just
+    // authenticated); the Switch click returns 403 secret_mismatch
+    // (operator's secret in the api is missing); the page-level
+    // mutation handler (G3-04) invalidates the status query, which
+    // re-fetches /status — second time around the api reports
+    // 503 { disabled: true } matching production behavior where the
+    // secret was missing at click time but stale-cached at first
+    // load.
+    let statusCalls = 0;
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        statusCalls += 1;
+        if (statusCalls === 1) {
+          return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ disabled: true, reason: "missing" }), {
+          status: 503,
+        });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ error: "secret_mismatch" }), {
+          status: 403,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`)).toBeInTheDocument();
+    });
+
+    // Change the select first so the no-change short-circuit
+    // (G3-14) doesn't suppress the POST. DEVICE_A's current
+    // scenario is "Normal".
+    await user.selectOptions(
+      screen.getByTestId(`simulator-row-select-${DEVICE_A}`),
+      "RisingTDS",
+    );
+    await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
+
+    // G3-04: the 403 transitions the page into the disabled-banner
+    // state via status-query invalidation. The disabled banner is
+    // the persistent operator-facing signal; the toast is a
+    // transient confirmation.
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-disabled-banner")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("Story 2.5 — Devices query 5xx surfaces the page-error banner with Retry (G3-12)", () => {
+  it("renders the error banner and a Retry button when /devices 500s", async () => {
+    let devicesAttempts = 0;
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        devicesAttempts += 1;
+        // First attempt 500; subsequent attempts succeed.
+        if (devicesAttempts === 1) {
+          return new Response("internal", { status: 500 });
+        }
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-page-error")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("simulator-page-retry")).toBeInTheDocument();
+
+    // Click Retry — the devices query refetches and the page
+    // transitions into the success branch.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("simulator-page-retry"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("simulator-page-error")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-${DEVICE_A}`)).toBeInTheDocument();
+    });
+  });
+});
+
+describe("Story 2.5 — Loading state visible before queries settle (G3-07)", () => {
+  it("renders simulator-page-loading on initial mount", async () => {
+    let resolveStatus: ((v: Response) => void) | undefined;
+    const statusPromise = new Promise<Response>((resolve) => {
+      resolveStatus = resolve;
+    });
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return statusPromise;
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    // Synchronously after render, the page should be in loading.
+    expect(screen.getByTestId("simulator-page-loading")).toBeInTheDocument();
+    // Resolve so cleanup runs cleanly.
+    resolveStatus?.(new Response(JSON.stringify({ enabled: true }), { status: 200 }));
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-${DEVICE_A}`)).toBeInTheDocument();
+    });
+  });
+});
+
+describe("Story 2.5 — Status query 500 surfaces as page-status-error (G3-01)", () => {
+  it("renders simulator-page-status-error when /status 500s", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response("internal", { status: 500 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-page-status-error")).toBeInTheDocument();
+    });
+    // Disabled banner MUST NOT surface on a 5xx — that would be
+    // misleading (the secret might be set; the api is just down).
+    expect(screen.queryByTestId("simulator-disabled-banner")).toBeNull();
+  });
+});
+
+describe("Story 2.5 — Disabled-banner accepts { disabled: true } wire shape (G3-11)", () => {
+  it("renders the disabled banner when /status returns 503 { disabled: true }", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ disabled: true, reason: "missing" }), {
+          status: 503,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    renderAdminSimulator();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-page-disabled")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("simulator-disabled-banner")).toBeInTheDocument();
+  });
+});
+
+describe("Story 2.5 — Pause success transitions label to 'Resume' (G3-07)", () => {
+  it("changes the Pause button label to 'Resume' after a successful pause", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/admin/simulator/status")) {
+        return new Response(JSON.stringify({ enabled: true }), { status: 200 });
+      }
+      if (url.endsWith("/admin/simulator/devices")) {
+        return new Response(JSON.stringify({ devices: DEVICE_LIST }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/admin/simulator/") && url.endsWith("/scenario")) {
+        return new Response(JSON.stringify({ applied: true }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderAdminSimulator();
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`)).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent,
+    ).toBe("Pause");
+
+    await user.click(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulator-toast-success")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent,
+      ).toBe("Resume");
     });
   });
 });

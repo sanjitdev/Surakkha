@@ -340,3 +340,38 @@ G1-05 (ScenarioNameSchema not adopted — out of Group 1 scope), G1-08 (migratio
 - Test-harness nits (env save/restore, vitest worker parallelism).
 - Already-implemented verification (intentional design choices: `setScenario` mutates `currentScenario` per loopback-1, `setPaused` is pause-the-tick semantics, `/status` mounted twice for safety, etc.).
 - Pre-existing concerns already tracked as F-2.5-1..8 from Group 1.
+
+### Group 3 (Web) — 2026-08-24
+
+> Sources: blind-hunter + edge-case-hunter + verification-gap + acceptance-auditor.
+> Consolidated triage: `_bmad-output/implementation-artifacts/.review-2.5-group3/TRIAGE.md`.
+
+### Decision-Resolved (by user: apply all 18 patches)
+
+- [x] [Review][Patch] G3-01 — `useSimulatorStatus` collapsed ALL non-200 into "disabled" — masks real outages. Branched the status query on the actual HTTP code: 200 → enabled, 503 → disabled, anything else → throw so TanStack Query surfaces `isError`. [`packages/web/src/admin/simulator/useSimulatorDevices.ts`]
+- [x] [Review][Patch] G3-02 — `useSwitchScenario` mutation error type didn't extend the declared discriminated union (wrapper class made `err.kind` undefined → empty toasts). Dropped the wrapper class; throw the discriminated union directly with `Error`-shape compatibility for TanStack-Query. [`useSimulatorDevices.ts`]
+- [x] [Review][Patch] G3-03 / G3-04 — 503-disabled and 403-secret_mismatch Switch responses now transition the page into the disabled-banner branch (via `statusQuery.refetch()`), not a transient toast. Matches AC2 / AC8 narrative. [`useSimulatorDevices.ts`, `SimulatorPage.tsx`]
+- [x] [Review][Patch] G3-06 — `useSimulatorDevices` parsed the response without validating shape — silent zero-devices on wire drift. Added a Zod schema (`DevicesResponseSchema`) at the wire boundary; throws on `safeParse` failure. [`useSimulatorDevices.ts`]
+- [x] [Review][Patch] G3-07 — Added 8 missing tests: 400 invalid_scenario toast text, 403 secret_mismatch → disabled banner transition, 409 toast text, 502 toast text, success-toast text, Pause→Resume label transition, devices 5xx with Retry button, loading state visibility, status 5xx → status-error banner, `{ disabled: true }` wire shape acceptance. [`SimulatorPage.spec.tsx`]
+- [x] [Review][Patch] G3-08 / G3-09 — Toast `id` and TTL timer leak: replaced `Date.now() + Math.random()` with a monotonic `useRef` counter; tracked TTL timers in a `useRef<Set>` and cleared them on unmount. [`SimulatorPage.tsx`]
+- [x] [Review][Patch] G3-10 — `errorMessage` no longer references an unused `assertNever`; the exhaustive switch returns a string for all five `SwitchScenarioError` kinds. [`SimulatorPage.tsx`]
+- [x] [Review][Patch] G3-11 — Disabled-banner accepts `{ disabled: true, reason }` wire shape (the api's documented 503 body) — pass through verbatim instead of synthesizing a fresh object. [`useSimulatorDevices.ts`]
+- [x] [Review][Patch] G3-12 — Devices-error branch renders a Retry button calling `devicesQuery.refetch()`. [`SimulatorPage.tsx`]
+- [x] [Review][Patch] G3-13 — `.env.example` rewritten to document the actual proxy model: SPA always uses same-origin `/api`; no `VITE_API_BASE_URL` knob. Removes dead documentation. [`packages/web/.env.example`]
+- [x] [Review][Patch] G3-14 — Switch submit bundles the row's local `paused` state so a scenario change can't leave the device "stuck paused". Added a no-op short-circuit (don't POST when scenario+paused both match) to avoid audit-log noise. [`DeviceRow.tsx`]
+- [x] [Review][Patch] G3-15 — Documented token-refresh navigate + TanStack-Query retry interaction; no special-case here (apiClient handles the navigate; the new error type uses `Error`-shape so the mutation's `retry: 0` won't replay). [`useSimulatorDevices.ts`]
+- [x] [Review][Patch] G3-16 — `<select>` re-syncs to `device.scenario` when the device list invalidates (via `useEffect`). [`DeviceRow.tsx`]
+- [x] [Review][Patch] G3-17 — Disabled-banner test mock now returns `{ disabled: true, reason: "missing" }` matching the api wire shape. [`SimulatorPage.spec.tsx`]
+- [x] [Review][Patch] G3-18 — UUID `<p>` renders with `truncate` + `title` for narrow viewports. [`DeviceRow.tsx`]
+
+### Defer (Group 3)
+
+- [x] [Review][Defer] F-2.5-17 — `paused` server-truthful state in `SimulatorDevice` (api doesn't expose it yet; v1 ships local state).
+- [x] [Review][Defer] F-2.5-18 — Start button vs Pause/Resume semantic collapse (spec amendment).
+- [x] [Review][Defer] F-2.5-19 — RBAC downgrade mid-session (full `<RbacDenied />` re-routing).
+- [x] [Review][Defer] F-2.5-20 — StrictMode double-fire masking.
+- [x] [Review][Defer] F-2.5-21 — Status query `refetchInterval` for secret rotation.
+
+### Dismissed (Group 3, 9)
+
+G3-D1 (test viewport setup — cosmetic), G3-D2 (`vi` imports — false alarm), G3-D3 (naming inconsistency), G3-D4 (`aria-live` redundancy), G3-D5 (`<select>` label wrapping — correct), G3-D6 (`DISABLED_BANNER_COPY` export — intentional pin), G3-D7 (singleton-vs-test-builder), G3-D8 (`endsWith` path matching — sufficient), G3-D9 (`overrides.onError` future-proofing).

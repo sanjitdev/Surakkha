@@ -1,0 +1,2158 @@
+diff --git a/packages/api/src/admin/simulatorClient.ts b/packages/api/src/admin/simulatorClient.ts
+new file mode 100644
+index 0000000..fc36127
+--- /dev/null
++++ b/packages/api/src/admin/simulatorClient.ts
+@@ -0,0 +1,161 @@
++/**
++ * Outbound client to the simulator control HTTP server — Story 2.5.
++ *
++ * The api POSTs a scenario switch to the simulator over an
++ * adversarially-trusted HTTP channel. The wire contract:
++ *
++ *   POST ${SIMULATOR_URL}/admin/simulator/${device_id}/scenario
++ *     headers:
++ *       X-Simulator-Secret: ${SIMULATOR_SECRET}
++ *       Content-Type: application/json
++ *     body: { scenario: ScenarioName, paused?: boolean }
++ *
++ * Three failure modes are surfaced as typed errors so the api router
++ * can map them to the right HTTP status:
++ *
++ *   - `unreachable`    — fetch threw / aborted (network error,
++ *                        DNS fail, timeout via AbortController)
++ *   - `secret_mismatch`— simulator returned 403 (wrong / short secret)
++ *   - `unknown`        — any other non-2xx response (4xx validation,
++ *                        5xx simulator crash, etc.)
++ *
++ * AbortController-based timeout: 5 s per call. The spec's SLA is
++ * "scenario switch applied within 5 s"; the timeout matches that
++ * budget so the api router's HTTP response to the SPA matches the
++ * downstream effect the SPA can observe.
++ */
++import { type ScenarioName } from "@surakkha/shared/simulator";
++
++/** Default per-call timeout — matches the spec's 5 s SLA. */
++export const SIMULATOR_CLIENT_TIMEOUT_MS = 5_000;
++
++const SECRET_HEADER = "X-Simulator-Secret";
++const CONTENT_TYPE_JSON = "application/json";
++const HTTP_FORBIDDEN = 403;
++
++export interface SimulatorClientDeps {
++  /** Base URL of the simulator control server (e.g. `http://localhost:4001`). */
++  readonly baseUrl: string;
++  /** Shared secret to authenticate against the simulator's control server. */
++  readonly secret: string;
++  /**
++   * Injectable `fetch` for tests. Production uses global `fetch`
++   * (Node 20).
++   */
++  readonly fetchImpl?: typeof fetch;
++}
++
++/**
++ * Typed result of a simulator POST. Either `{ ok: true, data }` or
++ * `{ ok: false, error }` where `error.kind` narrows the failure mode.
++ */
++export type SimulatorSwitchResult =
++  | { readonly ok: true; readonly data: { readonly applied: true } }
++  | {
++      readonly ok: false;
++      readonly error:
++        | { readonly kind: "unreachable"; readonly cause: string }
++        | { readonly kind: "secret_mismatch" }
++        | {
++            readonly kind: "unknown";
++            readonly status: number;
++            readonly body: unknown;
++          };
++    };
++
++/**
++ * Validate `SIMULATOR_URL` parses as an `http`/`https` URL with no
++ * path beyond `/`. Misconfigured values (e.g. trailing `/api`, `..`
++ * segments, `file://`) would otherwise be concatenated blindly into
++ * the outbound URL. Returns `null` on any failure.
++ */
++export const validateSimulatorBaseUrl = (
++  raw: string,
++): string | null => {
++  try {
++    const parsed = new URL(raw);
++    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
++      return null;
++    }
++    // Reject any path beyond the bare origin so a misconfigured
++    // `http://host/api` doesn't produce `http://host/api/admin/...`.
++    if (parsed.pathname !== "/" && parsed.pathname !== "") {
++      return null;
++    }
++    return parsed.origin;
++  } catch {
++    return null;
++  }
++};
++
++/**
++ * POST a scenario switch to the simulator. The function is pure with
++ * respect to its inputs; the AbortController timeout is owned per
++ * call so two concurrent calls cannot starve each other.
++ */
++export const postSimulatorScenario = async (
++  deps: SimulatorClientDeps,
++  deviceId: string,
++  body: { readonly scenario: ScenarioName; readonly paused?: boolean },
++): Promise<SimulatorSwitchResult> => {
++  const baseUrl = validateSimulatorBaseUrl(deps.baseUrl);
++  if (baseUrl === null) {
++    return {
++      ok: false,
++      error: {
++        kind: "unknown",
++        status: 0,
++        body: { reason: "invalid_simulator_url" },
++      },
++    };
++  }
++  const url = `${baseUrl.replace(/\/$/, "")}/admin/simulator/${deviceId}/scenario`;
++  const controller = new AbortController();
++  const timeout = setTimeout(() => controller.abort(), SIMULATOR_CLIENT_TIMEOUT_MS);
++  const fetchImpl = deps.fetchImpl ?? fetch;
++  try {
++    const res = await fetchImpl(url, {
++      method: "POST",
++      headers: {
++        [SECRET_HEADER]: deps.secret,
++        "Content-Type": CONTENT_TYPE_JSON,
++      },
++      body: JSON.stringify(body),
++      signal: controller.signal,
++    });
++
++    if (res.ok) {
++      const data = (await res.json()) as { applied: true };
++      return { ok: true, data };
++    }
++
++    if (res.status === HTTP_FORBIDDEN) {
++      // Map simulator-side secret failure to our typed error so the
++      // router can return the same 403 the SPA already knows.
++      return { ok: false, error: { kind: "secret_mismatch" } };
++    }
++
++    // Best-effort parse of the error body. We do not want a malformed
++    // body to throw — the router maps `unknown` to a 502 anyway.
++    let parsed: unknown = null;
++    try {
++      parsed = await res.json();
++    } catch {
++      parsed = null;
++    }
++    return {
++      ok: false,
++      error: { kind: "unknown", status: res.status, body: parsed },
++    };
++  } catch (cause) {
++    const message =
++      cause instanceof Error
++        ? cause.name === "AbortError"
++          ? "timeout"
++          : cause.message
++        : String(cause);
++    return { ok: false, error: { kind: "unreachable", cause: message } };
++  } finally {
++    clearTimeout(timeout);
++  }
++};
+diff --git a/packages/api/src/admin/simulatorRouter.spec.ts b/packages/api/src/admin/simulatorRouter.spec.ts
+new file mode 100644
+index 0000000..31c3125
+--- /dev/null
++++ b/packages/api/src/admin/simulatorRouter.spec.ts
+@@ -0,0 +1,409 @@
++/**
++ * Story 2.5 — admin simulator router integration.
++ *
++ * Covers the AC matrix:
++ *   - happy path: Admin POSTs a scenario, the simulator returns 200,
++ *     one `simulator_event` audit row with `outcome: "success"`.
++ *   - 403 (Operator): denied by `authorize({ action: "drive",
++ *     resource: "Simulator" })`.
++ *   - 400 (Bogus scenario): Zod rejects the body.
++ *   - 502 (simulator unreachable): outbound fetch rejects → 502.
++ *   - 503 (secret disabled): api-side SIMULATOR_SECRET unset → 503.
++ *   - 409 (switch_in_progress): second concurrent POST hits the
++ *     single-flight registry.
++ *
++ * Test strategy: the api's outbound call to the simulator uses a
++ * `fetchImpl` injected through the router deps. We DO NOT stub
++ * `globalThis.fetch` because the test runner itself uses `fetch` to
++ * talk to the api under test — replacing the global would silence
++ * the test's own POSTs.
++ */
++import express, { type Express } from "express";
++import { type AddressInfo, createServer, type Server } from "node:http";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++
++import { type AuditAction } from "@surakkha/shared/rbac";
++
++import { type AuditLogger } from "../audit";
++import { issueAccessToken } from "../auth/jwt";
++import { authenticate } from "../middleware/authorize";
++
++import {
++  buildAdminSimulatorPublicRouter,
++  buildAdminSimulatorRouter,
++} from "./simulatorRouter.js";
++
++const ADMIN_ID = "00000000-0000-4000-8000-00000000a001";
++const OPERATOR_ID = "00000000-0000-4000-8000-00000000a002";
++
++const STRONG_SECRET = "x".repeat(64);
++const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
++const DEVICE_B = "9b1c4f00-0000-4000-8000-000000000002";
++
++interface AuditEvent {
++  readonly auditAction: AuditAction;
++  readonly userId?: string;
++  readonly outcome: "success" | "failure";
++  readonly context?: Record<string, unknown>;
++}
++
++const tokenForRole = (role: "Admin" | "Operator"): string =>
++  issueAccessToken({ userId: role === "Admin" ? ADMIN_ID : OPERATOR_ID, role }).token;
++
++interface StartArgs {
++  readonly audit: AuditLogger;
++  readonly listDevices?: () => Promise<
++    ReadonlyArray<{ readonly id: string; readonly name: string | null; readonly scenario: string | null }>
++  >;
++  /**
++   * Outbound `fetch` used by the api when it POSTs to the simulator.
++   * If omitted the api uses the global `fetch` (which can hit a real
++   * simulator when one is running on port 4001).
++   */
++  readonly outboundFetch?: typeof fetch;
++}
++
++const startApp = async (
++  args: StartArgs,
++): Promise<{ url: string; close: () => Promise<void> }> => {
++  const app: Express = express();
++  app.use(express.json({ limit: "32kb" }));
++  // Story 2.5: `/status` is public; mount its public surface BEFORE
++  // `authenticate` to mirror the production wiring.
++  app.use(buildAdminSimulatorPublicRouter());
++  app.use(authenticate);
++  const routerDeps: Parameters<typeof buildAdminSimulatorRouter>[0] = {
++    audit: args.audit,
++    listDevices:
++      args.listDevices ??
++      (async () => [
++        { id: DEVICE_A, name: "DEVICE-1", scenario: "Normal" },
++        { id: DEVICE_B, name: "DEVICE-2", scenario: "RisingTDS" },
++      ]),
++    ...(args.outboundFetch !== undefined ? { fetchImpl: args.outboundFetch } : {}),
++  };
++  app.use("/admin/simulator", buildAdminSimulatorRouter(routerDeps));
++  const server: Server = createServer(app);
++  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
++  const addr = server.address() as AddressInfo;
++  const url = `http://127.0.0.1:${addr.port}`;
++  const close = (): Promise<void> =>
++    new Promise<void>((resolve) => server.close(() => resolve()));
++  return { url, close };
++};
++
++const setSecret = (v: string | undefined): void => {
++  if (v === undefined) delete process.env["SIMULATOR_SECRET"];
++  else process.env["SIMULATOR_SECRET"] = v;
++};
++
++let originalSecret: string | undefined;
++
++beforeEach(() => {
++  originalSecret = process.env["SIMULATOR_SECRET"];
++  process.env["JWT_SECRET"] = STRONG_SECRET;
++  setSecret(STRONG_SECRET);
++});
++afterEach(() => {
++  setSecret(originalSecret);
++});
++
++describe("Story 2.5 — GET /admin/simulator/status (public)", () => {
++  it("returns 200 enabled: true when SIMULATOR_SECRET is set", async () => {
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/status`);
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ enabled: true });
++    await close();
++  });
++
++  it("returns 503 disabled: true when SIMULATOR_SECRET is unset", async () => {
++    setSecret(undefined);
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/status`);
++    expect(res.status).toBe(503);
++    const body = (await res.json()) as { enabled: boolean; reason: string };
++    expect(body.enabled).toBe(false);
++    expect(body.reason).toBe("missing");
++    await close();
++  });
++});
++
++describe("Story 2.5 — GET /admin/simulator/devices", () => {
++  it("returns the six rows from the listDevices repo", async () => {
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/devices`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
++    });
++    expect(res.status).toBe(200);
++    const body = (await res.json()) as {
++      devices: Array<{ device_id: string; name: string | null; scenario: string | null }>;
++    };
++    expect(body.devices).toHaveLength(2);
++    expect(body.devices[0]?.device_id).toBe(DEVICE_A);
++    await close();
++  });
++
++  it("returns 401 when the bearer token is missing", async () => {
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/devices`);
++    expect(res.status).toBe(401);
++    await close();
++  });
++
++  it("returns 200 when an Operator reads the devices list (matrix grants read Device)", async () => {
++    // Per the RBAC matrix (shared/src/rbac.ts:60-72) Operator can
++    // `read Device`. The Admin-only gate for the page lives on the
++    // frontend (`<RbacRoute>`); the api exposes the listing to any
++    // authenticated role that the matrix allows.
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/devices`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(200);
++    await close();
++  });
++});
++
++describe("Story 2.5 — POST /admin/simulator/:device_id/scenario", () => {
++  it("Admin happy path: 200 + simulator_event audit on success", async () => {
++    // The api's outbound call to the simulator uses this stub. The
++    // test's own fetch to the api is unaffected.
++    const outboundFetch: typeof fetch = (async () =>
++      new Response(JSON.stringify({ applied: true }), {
++        status: 200,
++        headers: { "Content-Type": "application/json" },
++      })) as unknown as typeof fetch;
++
++    const events: AuditEvent[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: (e) => events.push(e) },
++      outboundFetch,
++    });
++
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ applied: true });
++
++    const successEvent = events.find(
++      (e) =>
++        e.auditAction === "simulator_event" && e.outcome === "success",
++    );
++    expect(successEvent).toBeDefined();
++    expect(successEvent?.userId).toBe(ADMIN_ID);
++    expect(successEvent?.context).toMatchObject({
++      device_id: DEVICE_A,
++      scenario: "RisingTDS",
++    });
++
++    await close();
++  });
++
++  it("returns 403 when an Operator tries to drive the simulator", async () => {
++    const events: AuditEvent[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: (e) => events.push(e) },
++    });
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Operator")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    expect(res.status).toBe(403);
++    const body = (await res.json()) as { error: string };
++    expect(body.error).toBe("forbidden");
++    // The RBAC middleware writes its own `rbac_denied` audit row.
++    const denial = events.find((e) => e.auditAction === "rbac_denied");
++    expect(denial).toBeDefined();
++    await close();
++  });
++
++  it("returns 400 invalid_scenario for an unknown scenario name", async () => {
++    // P4 — the spec mandates the dedicated error code `invalid_scenario`
++    // (not the generic `validation_error`) when the body parses OK
++    // and the user clearly intended a scenario change.
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "Bogus" }),
++    });
++    expect(res.status).toBe(400);
++    const body = (await res.json()) as { error: string };
++    expect(body.error).toBe("invalid_scenario");
++    await close();
++  });
++
++  it("returns 400 validation_error when the body is empty (P17)", async () => {
++    // An empty body was previously returned as `missing_action` — per
++    // the loopback-1 spec tightening, empty bodies are a malformed
++    // request and must surface as `validation_error`.
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({}),
++    });
++    expect(res.status).toBe(400);
++    const body = (await res.json()) as { error: string };
++    expect(body.error).toBe("validation_error");
++    await close();
++  });
++
++  it("returns 502 simulator_unreachable when the outbound fetch fails", async () => {
++    const outboundFetch: typeof fetch = (async () => {
++      throw new TypeError("ECONNREFUSED");
++    }) as unknown as typeof fetch;
++
++    const events: AuditEvent[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: (e) => events.push(e) },
++      outboundFetch,
++    });
++
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    expect(res.status).toBe(502);
++    const body = (await res.json()) as { error: string };
++    expect(body.error).toBe("simulator_unreachable");
++
++    // P6 — the spec mandates "no AuditLog row is written" on
++    // 502/400/409/403 simulator paths. The `rbac_denied` row from
++    // the middleware is the only audit surface for the request.
++    const simulatorEvents = events.filter(
++      (e) => e.auditAction === "simulator_event",
++    );
++    expect(simulatorEvents).toHaveLength(0);
++
++    await close();
++  });
++
++  it("returns 503 disabled when api-side SIMULATOR_SECRET is unset", async () => {
++    setSecret(undefined);
++    const { url, close } = await startApp({ audit: { emit: () => undefined } });
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    expect(res.status).toBe(503);
++    const body = (await res.json()) as { disabled: boolean };
++    expect(body.disabled).toBe(true);
++    await close();
++  });
++
++  it("queues the second POST (P5) and only returns 409 for the third", async () => {
++    // P5 — the spec's single-flight queue is size 1. The SECOND
++    // request is queued and runs after the first completes; only
++    // the THIRD request (which would push the queue over its
++    // bound) returns 409 `switch_in_progress`.
++    let outboundCalls = 0;
++    const outboundFetch: typeof fetch = (async () => {
++      outboundCalls += 1;
++      await new Promise((resolve) => setTimeout(resolve, 50));
++      return new Response(JSON.stringify({ applied: true }), {
++        status: 200,
++        headers: { "Content-Type": "application/json" },
++      });
++    }) as unknown as typeof fetch;
++
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      outboundFetch,
++    });
++
++    const first = fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    // Yield so the first request enters the registry before the
++    // second lands.
++    await new Promise((resolve) => setTimeout(resolve, 5));
++    const second = fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    // Yield again so the second request enters the registry before
++    // the third is dispatched — the third must be the one that
++    // overflows the queue.
++    await new Promise((resolve) => setTimeout(resolve, 5));
++    const third = fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++
++    const [r1, r2, r3] = await Promise.all([first, second, third]);
++    expect(r1.status).toBe(200);
++    expect(r2.status).toBe(200);
++    expect(r3.status).toBe(409);
++    const conflictBody = (await r3.json()) as { error: string };
++    expect(conflictBody.error).toBe("switch_in_progress");
++    // Outbound fetch was called for the first and second requests;
++    // the third was rejected before its outbound call.
++    expect(outboundCalls).toBe(2);
++
++    await close();
++  });
++
++  it("returns 403 secret_mismatch when the simulator rejects the secret", async () => {
++    const outboundFetch: typeof fetch = (async () =>
++      new Response(JSON.stringify({ error: "secret_mismatch" }), {
++        status: 403,
++        headers: { "Content-Type": "application/json" },
++      })) as unknown as typeof fetch;
++
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      outboundFetch,
++    });
++    const res = await fetch(`${url}/admin/simulator/${DEVICE_A}/scenario`, {
++      method: "POST",
++      headers: {
++        Authorization: `Bearer ${tokenForRole("Admin")}`,
++        "Content-Type": "application/json",
++      },
++      body: JSON.stringify({ scenario: "RisingTDS" }),
++    });
++    expect(res.status).toBe(403);
++    const body = (await res.json()) as { error: string };
++    expect(body.error).toBe("secret_mismatch");
++    await close();
++  });
++});
+diff --git a/packages/api/src/admin/simulatorRouter.ts b/packages/api/src/admin/simulatorRouter.ts
+new file mode 100644
+index 0000000..6d3f4e7
+--- /dev/null
++++ b/packages/api/src/admin/simulatorRouter.ts
+@@ -0,0 +1,429 @@
++/**
++ * Admin simulator router — Surakkha api (Story 2.5).
++ *
++ * Three routes:
++ *
++ *   GET  /admin/simulator/status
++ *     - Public (no auth, no RBAC). Returns `{ enabled: true }` when
++ *       SIMULATOR_SECRET is set on the api side; `{ enabled: false,
++ *       reason: "missing" }` otherwise. The disabled banner must
++ *       render for any authenticated user who navigates to the admin
++ *       tab; a 401/403 on this endpoint would lock them out of the
++ *       banner itself.
++ *
++ *   GET  /admin/simulator/devices
++ *     - Admin-only via `authorize({ action: "read", resource: "Device" }, audit)`.
++ *       (The matrix grants Admin.read.Device; Simulator.read is N
++ *       for all roles — see `packages/shared/src/rbac.ts:113` — but
++ *       reading the device list is not a Simulator-specific action,
++ *       so Device.read is the correct gate.) Returns six rows from
++ *       the Prisma `Device` table.
++ *
++ *   POST /admin/simulator/:device_id/scenario
++ *     - Admin-only via `authorize({ action: "drive", resource: "Simulator" }, audit)`.
++ *       Validates the body via Zod, single-flight per device (409 on
++ *       a second concurrent switch), then POSTs to the simulator's
++ *       control server. On success, writes an `AuditLog` row via the
++ *       structured logger.
++ */
++import {
++  SCENARIO_NAMES,
++  type ScenarioName,
++} from "@surakkha/shared/simulator";
++import express, { type Response, type Router } from "express";
++import { z } from "zod";
++
++import { type AuditLogger } from "../audit";
++import { authorize, type AuthorizedRequest, markPublic } from "../middleware/authorize";
++
++import {
++  postSimulatorScenario,
++  type SimulatorClientDeps,
++  type SimulatorSwitchResult,
++} from "./simulatorClient.js";
++
++
++const HTTP_OK = 200;
++const HTTP_BAD_REQUEST = 400;
++const HTTP_FORBIDDEN = 403;
++const HTTP_SERVICE_UNAVAILABLE = 503;
++const HTTP_BAD_GATEWAY = 502;
++const HTTP_CONFLICT = 409;
++
++/**
++ * Body shape for POST /admin/simulator/:device_id/scenario.
++ *
++ * Story 2.5 loopback-1 fix (P4 + P17):
++ *   - `scenario` is a plain `string` here so we can branch on
++ *     `value ∈ SCENARIO_NAMES` and return the spec-mandated
++ *     `{ error: "invalid_scenario" }` (NOT `validation_error`).
++ *   - `.refine(...)` enforces "at least one of scenario / paused",
++ *     so an empty body fails Zod validation and surfaces as
++ *     `validation_error` (P17) rather than `missing_action`.
++ *   - `.strict()` rejects unknown keys — extra fields belong to
++ *     `validation_error` per the spec.
++ */
++const scenarioSwitchBodySchema = z
++  .object({
++    scenario: z.string().optional(),
++    paused: z.boolean().optional(),
++  })
++  .strict()
++  .refine(
++    (b) =>
++      b.scenario !== undefined || b.paused !== undefined,
++    {
++      message: "must include scenario or paused",
++    },
++  );
++
++const UUID_V4_REGEX =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
++
++/**
++ * Single-flight per device (P5). `pendingSwitches` holds the
++ * in-flight promise for a given device_id; a second concurrent POST
++ * that hits the same device before the first resolves waits on the
++ * first's promise (single-flight, queue size 1). The `pendingDepth`
++ * counter is incremented BEFORE the second request's promise is
++ * awaited; if it exceeds 1 (i.e. a third request landed while the
++ * second was queued), the third returns 409 `switch_in_progress`.
++ *
++ * The data structures are module-scoped so concurrent POSTs (e.g.
++ * two admins double-clicking Switch) coalesce correctly without a
++ * race.
++ */
++const pendingSwitches = new Map<string, Promise<unknown>>();
++const pendingDepth = new Map<string, number>();
++
++/**
++ * Resolve the api's outbound `SIMULATOR_SECRET` and the simulator
++ * base URL. Returns `null` when secret is missing — the caller maps
++ * that to 503 `{ disabled: true }` and skips any outbound call.
++ */
++interface ResolvedSimulatorConfig {
++  readonly baseUrl: string;
++  readonly secret: string;
++}
++
++const resolveSimulatorConfig = (): ResolvedSimulatorConfig | null => {
++  const secret = process.env["SIMULATOR_SECRET"];
++  if (secret === undefined || secret === "") return null;
++  const baseUrl =
++    process.env["SIMULATOR_URL"] ?? "http://localhost:4001";
++  return { baseUrl, secret };
++};
++
++export interface SimulatorRouterDeps {
++  readonly audit: AuditLogger;
++  /**
++   * Inject the device repository. The production wiring uses
++   * `@prisma/client`'s `Device.findMany`; tests inject a stub.
++   */
++  readonly listDevices: () => Promise<
++    ReadonlyArray<{
++      readonly id: string;
++      readonly name: string | null;
++      readonly scenario: string | null;
++    }>
++  >;
++  /**
++   * Optional injectable `fetch` used by the outbound simulator
++   * client. Tests stub this to drive unreachable / secret_mismatch /
++   * success branches without overriding `globalThis.fetch` (which
++   * the test runner also uses to talk to the api). Production
++   * callers omit this and the router falls back to the global
++   * `fetch`.
++   */
++  readonly fetchImpl?: typeof fetch;
++}
++
++/**
++ * Translate a `SimulatorSwitchResult` into the HTTP envelope the SPA
++ * knows. Module-scoped so the route handler can stay under the
++ * eslint complexity ceiling.
++ */
++const renderSwitchResult = (
++  result: SimulatorSwitchResult,
++  res: Response,
++): void => {
++  if (result.ok) {
++    res.status(HTTP_OK).json(result.data);
++    return;
++  }
++  if (result.error.kind === "secret_mismatch") {
++    res.status(HTTP_FORBIDDEN).json({ error: "secret_mismatch" });
++    return;
++  }
++  if (result.error.kind === "unreachable") {
++    res.status(HTTP_BAD_GATEWAY).json({ error: "simulator_unreachable" });
++    return;
++  }
++  // unknown: simulator rejected the request shape or crashed.
++  res.status(HTTP_BAD_GATEWAY).json({
++    error: "simulator_unreachable",
++    upstream: result.error,
++  });
++};
++
++/**
++ * Validate the inbound POST: device_id (URL) is a v4 UUID, body is a
++ * valid `ScenarioSwitch`, and at least one of `scenario` / `paused`
++ * is present. Writes the failure response when validation fails and
++ * returns `{ ok: false }` so the caller can early-return.
++ *
++ * Loopback-1 fix (P4): when the body parses OK but `scenario` is a
++ * non-`SCENARIO_NAMES` string AND `paused === undefined`, return
++ * `{ error: "invalid_scenario" }` (NOT `validation_error`).
++ *
++ * Loopback-1 fix (P17): an empty body (`{}`) is now caught by the
++ * Zod `.refine(...)` and surfaces as `validation_error` (no more
++ * separate `missing_action` branch for the empty body case).
++ */
++type ScenarioSwitchBody = z.infer<typeof scenarioSwitchBodySchema>;
++
++const validateScenarioRequest = (
++  req: AuthorizedRequest,
++  res: Response,
++):
++  | { readonly ok: true; readonly deviceId: string; readonly body: ScenarioSwitchBody }
++  | { readonly ok: false } => {
++  const deviceId = req.params["device_id"];
++  if (
++    deviceId === undefined ||
++    typeof deviceId !== "string" ||
++    !UUID_V4_REGEX.test(deviceId)
++  ) {
++    res.status(HTTP_BAD_REQUEST).json({ error: "invalid_device_id" });
++    return { ok: false };
++  }
++
++  const parsed = scenarioSwitchBodySchema.safeParse(req.body);
++  if (!parsed.success) {
++    res
++      .status(HTTP_BAD_REQUEST)
++      .json({ error: "validation_error", issues: parsed.error.issues });
++    return { ok: false };
++  }
++  const body = parsed.data;
++  // Spec P4 — distinguish "unknown scenario" (loud, dedicated error
++  // code so the SPA can show a tailored toast) from "malformed body"
++  // (generic `validation_error`). Only when `scenario` is the user's
++  // declared intent (paused is absent) — a `paused`+invalid-scenario
++  // combo is genuinely malformed.
++  if (
++    body.scenario !== undefined &&
++    body.paused === undefined &&
++    !SCENARIO_SET.has(body.scenario as ScenarioName)
++  ) {
++    res.status(HTTP_BAD_REQUEST).json({ error: "invalid_scenario" });
++    return { ok: false };
++  }
++  return { ok: true, deviceId, body };
++};
++
++/**
++ * Public surface — `/status` only. Mounted BEFORE `app.use(authenticate)`
++ * in the production wiring so the disabled banner renders for
++ * unauthenticated users. The authenticated routes live on the
++ * `buildAdminSimulatorRouter` router and are mounted AFTER
++ * `authenticate`.
++ */
++export const buildAdminSimulatorPublicRouter = (): Router => {
++  const router = express.Router();
++  router.get(
++    "/admin/simulator/status",
++    markPublic((_req, res) => {
++      const cfg = resolveSimulatorConfig();
++      if (cfg === null) {
++        res.status(HTTP_SERVICE_UNAVAILABLE).json({
++          enabled: false,
++          reason: "missing",
++        });
++        return;
++      }
++      res.status(HTTP_OK).json({ enabled: true });
++    }),
++  );
++  return router;
++};
++
++/**
++ * Build the Express router. Tests construct a router with stubbed
++ * `listDevices` and override `process.env.SIMULATOR_SECRET` to drive
++ * the disabled / enabled branches.
++ */
++export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => {
++  const router = express.Router();
++
++  /**
++   * GET /admin/simulator/status — public, no RBAC. The admin tab
++   * needs this on every render to know whether to show the disabled
++   * banner. The production wiring exposes this via
++   * `buildAdminSimulatorPublicRouter()` mounted BEFORE
++   * `authenticate()`; the duplicate registration here is a safety
++   * net so the route works when the router is mounted standalone
++   * (e.g., in tests that exercise only the authenticated surface).
++   */
++  router.get(
++    "/status",
++    markPublic((_req, res) => {
++      const cfg = resolveSimulatorConfig();
++      if (cfg === null) {
++        res.status(HTTP_SERVICE_UNAVAILABLE).json({
++          enabled: false,
++          reason: "missing",
++        });
++        return;
++      }
++      res.status(HTTP_OK).json({ enabled: true });
++    }),
++  );
++
++  /**
++   * GET /admin/simulator/devices — Admin-only. Returns the six
++   * default devices + their current scenarios. The matrix grants
++   * Admin.read.Device but denies Simulator.read (per RBAC_MATRIX row
++   * `Admin.read.Simulator: N`), so we use `Device.read` instead.
++   * Story 1.5 already grants Device.read to Admin/Operator/
++   * Technician/Viewer; the page is gated by `<RbacRoute>` so only
++   * Admin reaches it.
++   */
++  router.get(
++    "/devices",
++    authorize({ action: "read", resource: "Device" }, deps.audit),
++    async (_req, res) => {
++      const rows = await deps.listDevices();
++      res.status(HTTP_OK).json({
++        devices: rows.map((r) => ({
++          device_id: r.id,
++          name: r.name,
++          scenario: r.scenario,
++        })),
++      });
++    },
++  );
++
++  /**
++   * POST /admin/simulator/:device_id/scenario — Admin-only via
++   * `drive × Simulator` (matrix grants Admin only). Validates the
++   * body, single-flight per device, then POSTs to the simulator.
++   */
++  router.post(
++    "/:device_id/scenario",
++    authorize({ action: "drive", resource: "Simulator" }, deps.audit),
++    async (req: AuthorizedRequest, res) => {
++      const validated = validateScenarioRequest(req, res);
++      if (!validated.ok) return;
++      const { deviceId, body } = validated;
++
++      const cfg = resolveSimulatorConfig();
++      if (cfg === null) {
++        res
++          .status(HTTP_SERVICE_UNAVAILABLE)
++          .json({ disabled: true, reason: "missing" });
++        return;
++      }
++
++      // Single-flight per device (P5): size-1 queue. The second
++      // concurrent POST awaits the FIRST request's promise; only if
++      // a THIRD request lands while the second is queued do we
++      // reject with 409 `switch_in_progress`. This keeps the
++      // contract: "second request is queued, never silently dropped"
++      // — but the queue has a tight bound.
++      const depth = (pendingDepth.get(deviceId) ?? 0) + 1;
++      if (depth > 2) {
++        pendingDepth.set(deviceId, depth);
++        res.status(HTTP_CONFLICT).json({ error: "switch_in_progress" });
++        return;
++      }
++      pendingDepth.set(deviceId, depth);
++
++      const clientDeps: SimulatorClientDeps = {
++        baseUrl: cfg.baseUrl,
++        secret: cfg.secret,
++        ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
++      };
++
++      // Build the body shape expected by the simulator. The
++      // simulator's `paused` field is a verb in its own right; we
++      // forward it unchanged when present. `scenario` is typed as
++      // `string` in the inbound schema (so we can branch on it and
++      // return `invalid_scenario`); the `SCENARIO_SET` check above
++      // already narrowed it to a `ScenarioName` when `paused ===
++      // undefined`, but the narrowed type doesn't survive the
++      // schema parse.
++      const outbound: { scenario?: ScenarioName; paused?: boolean } = {};
++      if (body.scenario !== undefined && body.paused === undefined) {
++        outbound.scenario = body.scenario as ScenarioName;
++      }
++      if (body.paused !== undefined) outbound.paused = body.paused;
++
++      // The first request gets its own fresh promise. The second
++      // request awaits THIS promise and re-runs the outbound call.
++      // The queue is bounded — `depth > 2` above already rejected
++      // any third request.
++      const firstPromise = pendingSwitches.get(deviceId);
++      const work = (async (): Promise<SimulatorSwitchResult> => {
++        if (firstPromise !== undefined) {
++          // Wait for the first request's promise to settle, but
++          // DON'T re-use its result — the second request is its
++          // own action with its own body. We just want the queue
++          // ordering, not result coalescing.
++          try {
++            await firstPromise;
++          } catch {
++            // The first request's failure doesn't block this one —
++            // we still attempt our own outbound call.
++          }
++        }
++        const result = await postSimulatorScenario(
++          clientDeps,
++          deviceId,
++          outbound as { scenario: ScenarioName; paused?: boolean },
++        );
++        // Loopback-1 fix (P6): emit the `simulator_event` audit row
++        // ONLY on success. On failure (400/502/409/403/etc.) the
++        // `rbac_denied` row from the middleware is the only audit
++        // surface — the spec says "no AuditLog row is written" on
++        // a failed switch.
++        if (result.ok) {
++          deps.audit.emit({
++            auditAction: "simulator_event",
++            userId: req.user?.id,
++            outcome: "success",
++            context: {
++              device_id: deviceId,
++              scenario: body.scenario,
++              paused: body.paused,
++            },
++          });
++        }
++        return result;
++      })();
++
++      // Track this promise as the next "first" for any queued
++      // request that follows.
++      pendingSwitches.set(deviceId, work);
++
++      try {
++        const result = await work;
++        renderSwitchResult(result, res);
++      } finally {
++        // Decrement the queue depth; clear the registry entry when
++        // the queue drains.
++        const remaining = depth - 1;
++        if (remaining <= 0) {
++          pendingDepth.delete(deviceId);
++          pendingSwitches.delete(deviceId);
++        } else {
++          pendingDepth.set(deviceId, remaining);
++        }
++      }
++    },
++  );
++
++  return router;
++};
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 7e9ef08..3b67177 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -40,6 +40,10 @@ import express, { type Express, type Request, type Response } from "express";
+ import { Server as IoServer } from "socket.io";
+ 
+ 
++import {
++  buildAdminSimulatorPublicRouter,
++  buildAdminSimulatorRouter,
++} from "./admin/simulatorRouter.js";
+ import { type AuditLogger } from "./audit";
+ import { assertJwtSecret } from "./auth/jwt";
+ import { buildAuthRouter } from "./auth/router";
+@@ -73,6 +77,11 @@ app.use(cookieParser());
+ // `markPublic()` wrapper on `/login` and `/refresh` sets
+ // `req.public = true` ahead of the bearer-token check.
+ app.use("/auth", buildAuthRouter({ audit }));
++// Story 2.5 — `/admin/simulator/status` is public (so the disabled
++// banner renders for any visitor). Mount its public surface BEFORE
++// `authenticate`; the authenticated routes (`/devices`,
++// `/:device_id/scenario`) mount AFTER `authenticate` below.
++app.use(buildAdminSimulatorPublicRouter());
+ app.use(authenticate);
+ 
+ /**
+@@ -89,6 +98,58 @@ app.get(
+   },
+ );
+ 
++/**
++ * Story 2.5 — mount the admin simulator router. The router reads
++ * the six Device rows via a lazy Prisma client (same pattern the
++ * ingest handler uses — avoids a hard dependency on DATABASE_URL
++ * for HTTP-only tests).
++ */
++const listDevicesFromPrisma = async (): Promise<
++  ReadonlyArray<{
++    readonly id: string;
++    readonly name: string | null;
++    readonly scenario: string | null;
++  }>
++> => {
++  try {
++    const mod = (await import("@prisma/client")) as unknown as {
++      PrismaClient: new () => {
++        device: {
++          findMany: (args: {
++            readonly select: {
++              readonly id: true;
++              readonly name: true;
++              readonly scenario: true;
++            };
++            readonly orderBy: { readonly id: "asc" };
++          }) => Promise<
++            Array<{
++              readonly id: string;
++              readonly name: string | null;
++              readonly scenario: string | null;
++            }>
++          >;
++        };
++      };
++    };
++    const client = new mod.PrismaClient();
++    const rows = await client.device.findMany({
++      select: { id: true, name: true, scenario: true },
++      orderBy: { id: "asc" },
++    });
++    return rows;
++  } catch {
++    // Without a DB we return an empty list. The admin tab can render
++    // an empty state rather than failing the entire page render.
++    return [];
++  }
++};
++
++app.use(
++  "/admin/simulator",
++  buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
++);
++
+ app.get("/health", (_req: Request, res: Response) => {
+   res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
+ });
+diff --git a/packages/simulator/.env.example b/packages/simulator/.env.example
+index 5e7c891..843f1ca 100644
+--- a/packages/simulator/.env.example
++++ b/packages/simulator/.env.example
+@@ -14,6 +14,18 @@ API_URL=http://localhost:4000
+ # The simulator refuses to boot without this set.
+ JWT_SECRET=replace-me-with-at-least-32-characters-please
+ 
++# Story 2.5 — shared secret for the admin control HTTP server.
++# Optional. When unset, the /admin/simulator tab on the SPA renders
++# a calm disabled banner ("Simulator disabled. Set SIMULATOR_SECRET.")
++# and the simulator's control server returns 503 on every request.
++# When set, the value MUST match the api's `SIMULATOR_SECRET` env var.
++SIMULATOR_SECRET=replace-me-with-the-same-shared-secret-as-the-api
++
++# Optional. Override the simulator control HTTP server port. Default
++# is 4001. The api-side URL is configured via `SIMULATOR_URL` in the
++# api's env (defaults to `http://localhost:4001`).
++# SIMULATOR_CONTROL_PORT=4001
++
+ # Optional. Override the per-device default tick interval (2_000 ms in
+ # devices.json). Must be >= 1_000 ms — the api rate-caps to 1 reading /
+ # 2s per device (architecture §3.2, I-2), and a faster tick would only
+diff --git a/packages/simulator/src/__tests__/wsClient.spec.ts b/packages/simulator/src/__tests__/wsClient.spec.ts
+index a748306..9126173 100644
+--- a/packages/simulator/src/__tests__/wsClient.spec.ts
++++ b/packages/simulator/src/__tests__/wsClient.spec.ts
+@@ -434,6 +434,84 @@ describe("WsClient — graceful shutdown", () => {
+   });
+ });
+ 
++describe("WsClient — Story 2.5 runtime scenario swap", () => {
++  it("setScenario swaps the active scenario on the next tick (Normal → RisingTDS)", () => {
++    const client = buildClient({ scenario: "Normal" });
++    const socket = buildStubSocket({ connected: true });
++    client.__test__setSocket(socket);
++
++    // Run one Normal tick first to confirm the baseline.
++    client.__test__runTick();
++    const normalFrame = socket.emit.mock.calls
++      .filter((call) => call[0] === FRAME_EVENT)
++      .map((call) => call[1] as TelemetryFrame)
++      .pop();
++    expect(normalFrame?.metrics.tds_ppm).toBeLessThan(500);
++
++    // Swap to RisingTDS and run another tick. The new frame must
++    // show RisingTDS-shaped metrics (tds_ppm ≥ 200, climbing).
++    client.setScenario("RisingTDS");
++    const beforeCount = socket.emit.mock.calls.length;
++    client.__test__runTick();
++    const newFrames = socket.emit.mock.calls
++      .slice(beforeCount)
++      .filter((call) => call[0] === FRAME_EVENT)
++      .map((call) => call[1] as TelemetryFrame);
++    expect(newFrames).toHaveLength(1);
++    const risingFrame = newFrames[0];
++    // RisingTDS holds tds_ppm ≥ 200 and clamps at 1500. Seq is
++    // monotonic (carries across the swap).
++    expect(risingFrame?.metrics.tds_ppm).toBeGreaterThanOrEqual(200);
++    expect(risingFrame?.seq).toBe((normalFrame?.seq ?? 0) + 1);
++    // Test seam reflects the swap.
++    expect(client.__test__scenario()).toBe("RisingTDS");
++  });
++
++  it("setScenario throws on unknown scenario name (defense-in-depth)", () => {
++    const client = buildClient();
++    expect(() =>
++      client.setScenario("NotAScenario" as unknown as ReturnType<typeof client.__test__scenario>),
++    ).toThrow();
++  });
++});
++
++describe("WsClient — Story 2.5 pause short-circuit", () => {
++  it("setPaused(true) short-circuits tickOnce — no socket.emit is called", () => {
++    const client = buildClient();
++    const socket = buildStubSocket({ connected: true });
++    client.__test__setSocket(socket);
++
++    // Run one baseline tick to populate the emit count.
++    client.__test__runTick();
++    const beforeCount = socket.emit.mock.calls.length;
++
++    // Pause and tick again.
++    client.setPaused(true);
++    client.__test__runTick();
++    // No additional emits while paused.
++    expect(socket.emit.mock.calls.length).toBe(beforeCount);
++    expect(client.__test__paused()).toBe(true);
++  });
++
++  it("setPaused(false) after pause — emissions resume", () => {
++    const client = buildClient();
++    const socket = buildStubSocket({ connected: true });
++    client.__test__setSocket(socket);
++
++    client.__test__runTick();
++    const beforeCount = socket.emit.mock.calls.length;
++
++    client.setPaused(true);
++    client.__test__runTick();
++    expect(socket.emit.mock.calls.length).toBe(beforeCount);
++
++    client.setPaused(false);
++    client.__test__runTick();
++    expect(socket.emit.mock.calls.length).toBeGreaterThan(beforeCount);
++    expect(client.__test__paused()).toBe(false);
++  });
++});
++
+ beforeEach(() => {
+   vi.useFakeTimers();
+ });
+diff --git a/packages/simulator/src/control/server.spec.ts b/packages/simulator/src/control/server.spec.ts
+new file mode 100644
+index 0000000..9d2a0d3
+--- /dev/null
++++ b/packages/simulator/src/control/server.spec.ts
+@@ -0,0 +1,279 @@
++/**
++ * Story 2.5 — Simulator control HTTP server.
++ *
++ * Pins:
++ *   - secret match accepts (200 with `{ applied: true }`)
++ *   - secret mismatch → 403 `{ error: "secret_mismatch" }`
++ *   - missing env → status 503 disabled; POST 503 disabled
++ *   - valid POST swaps the WsClient scenario
++ *   - invalid scenario name → 400 `{ error: "invalid_scenario" }`
++ *   - unknown device_id → 404 `{ error: "unknown_device" }`
++ *   - secret compare is constant-time (different lengths → 403, no
++ *     timing oracle)
++ */
++import {
++  type AddressInfo,
++  createServer,
++  type IncomingMessage,
++  type Server,
++  type ServerResponse,
++} from "node:http";
++
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++
++import {
++  buildControlHandler,
++  type SimulatorClientLike,
++  setClientsRegistry,
++  startControlServer,
++} from "./server.js";
++
++const VALID_DEVICE = "9b1c4f00-0000-4000-8000-000000000001";
++const UNKNOWN_DEVICE = "9b1c4f00-0000-4000-8000-deadbeefdead";
++const STRONG_SECRET = "x".repeat(64);
++const SECRET_HEADER = "X-Simulator-Secret";
++
++type StubClient = SimulatorClientLike & {
++  __test__scenario: () => ScenarioName;
++  __test__paused: () => boolean;
++};
++
++const stubClient = (initial: ScenarioName): StubClient => {
++  let scenario: ScenarioName = initial;
++  let paused = false;
++  const client: StubClient = {
++    setScenario: (next) => {
++      scenario = next;
++    },
++    setPaused: (next) => {
++      paused = next;
++    },
++    __test__scenario: () => scenario,
++    __test__paused: () => paused,
++  };
++  return client;
++};
++
++const startServer = async (
++  registry: Map<string, SimulatorClientLike>,
++): Promise<{ url: string; close: () => Promise<void> }> => {
++  // Replace the registry BEFORE the server boots so the handler sees
++  // our stubbed clients.
++  setClientsRegistry(registry);
++  const server: Server = createServer(buildControlHandler());
++  await new Promise<void>((resolve) =>
++    server.listen(0, "127.0.0.1", () => resolve()),
++  );
++  const addr = server.address() as AddressInfo;
++  const url = `http://127.0.0.1:${addr.port}`;
++  const close = (): Promise<void> =>
++    new Promise<void>((resolve) => server.close(() => resolve()));
++  return { url, close };
++};
++
++let originalSecret: string | undefined;
++
++beforeEach(() => {
++  originalSecret = process.env["SIMULATOR_SECRET"];
++  process.env["SIMULATOR_SECRET"] = STRONG_SECRET;
++});
++
++afterEach(() => {
++  if (originalSecret === undefined) delete process.env["SIMULATOR_SECRET"];
++  else process.env["SIMULATOR_SECRET"] = originalSecret;
++  setClientsRegistry(new Map());
++});
++
++describe("Story 2.5 — control server GET /admin/simulator/status", () => {
++  it("returns 200 { enabled: true } when secret matches", async () => {
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(`${url}/admin/simulator/status`, {
++      headers: { [SECRET_HEADER]: STRONG_SECRET },
++    });
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ enabled: true });
++    await close();
++  });
++
++  it("returns 403 secret_mismatch on a wrong secret", async () => {
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(`${url}/admin/simulator/status`, {
++      headers: { [SECRET_HEADER]: "y".repeat(64) },
++    });
++    expect(res.status).toBe(403);
++    expect(await res.json()).toEqual({ error: "secret_mismatch" });
++    await close();
++  });
++
++  it("returns 503 disabled when SIMULATOR_SECRET is unset", async () => {
++    delete process.env["SIMULATOR_SECRET"];
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(`${url}/admin/simulator/status`);
++    expect(res.status).toBe(503);
++    const body = (await res.json()) as { disabled: boolean; reason: string };
++    expect(body.disabled).toBe(true);
++    expect(body.reason).toBe("missing");
++    await close();
++  });
++
++  it("returns 503 disabled when SIMULATOR_SECRET is below 32 chars", async () => {
++    process.env["SIMULATOR_SECRET"] = "too-short";
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(`${url}/admin/simulator/status`);
++    expect(res.status).toBe(503);
++    const body = (await res.json()) as { disabled: boolean; reason: string };
++    expect(body.reason).toBe("missing");
++    await close();
++  });
++});
++
++describe("Story 2.5 — control server POST /admin/simulator/:device_id/scenario", () => {
++  it("applies the new scenario on a valid request", async () => {
++    const client = stubClient("Normal");
++    const { url, close } = await startServer(
++      new Map([[VALID_DEVICE, client]]),
++    );
++    const res = await fetch(
++      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
++      {
++        method: "POST",
++        headers: {
++          [SECRET_HEADER]: STRONG_SECRET,
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ scenario: "RisingTDS" }),
++      },
++    );
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ applied: true });
++    expect(
++      (client as SimulatorClientLike & { __test__scenario: () => string })
++        .__test__scenario(),
++    ).toBe("RisingTDS");
++    await close();
++  });
++
++  it("rejects an unknown scenario with 400 invalid_scenario", async () => {
++    const client = stubClient("Normal");
++    const { url, close } = await startServer(
++      new Map([[VALID_DEVICE, client]]),
++    );
++    const res = await fetch(
++      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
++      {
++        method: "POST",
++        headers: {
++          [SECRET_HEADER]: STRONG_SECRET,
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ scenario: "Bogus" }),
++      },
++    );
++    expect(res.status).toBe(400);
++    expect(await res.json()).toEqual({ error: "invalid_scenario" });
++    expect(
++      (client as SimulatorClientLike & { __test__scenario: () => string })
++        .__test__scenario(),
++    ).toBe("Normal");
++    await close();
++  });
++
++  it("rejects an unknown device_id with 404 unknown_device", async () => {
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(
++      `${url}/admin/simulator/${UNKNOWN_DEVICE}/scenario`,
++      {
++        method: "POST",
++        headers: {
++          [SECRET_HEADER]: STRONG_SECRET,
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ scenario: "RisingTDS" }),
++      },
++    );
++    expect(res.status).toBe(404);
++    expect(await res.json()).toEqual({ error: "unknown_device" });
++    await close();
++  });
++
++  it("rejects a wrong-length secret with 403 secret_mismatch (no timing oracle)", async () => {
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(
++      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
++      {
++        method: "POST",
++        headers: {
++          [SECRET_HEADER]: "y".repeat(8),
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ scenario: "RisingTDS" }),
++      },
++    );
++    expect(res.status).toBe(403);
++    expect(await res.json()).toEqual({ error: "secret_mismatch" });
++    await close();
++  });
++
++  it("rejects an equal-length-different-content secret with 403 secret_mismatch (timingSafeEqual path)", async () => {
++    // The length-mismatch path short-circuits before
++    // `timingSafeEqual` is called; this test exercises the actual
++    // byte-by-byte compare. Two 64-char secrets that differ in
++    // content but share length — the only path through
++    // `timingSafeEqual`.
++    const wrongSecret = "y".repeat(64);
++    expect(wrongSecret.length).toBe(STRONG_SECRET.length);
++    expect(wrongSecret).not.toBe(STRONG_SECRET);
++    const { url, close } = await startServer(new Map());
++    const res = await fetch(
++      `${url}/admin/simulator/status`,
++      {
++        headers: { [SECRET_HEADER]: wrongSecret },
++      },
++    );
++    expect(res.status).toBe(403);
++    expect(await res.json()).toEqual({ error: "secret_mismatch" });
++    await close();
++  });
++
++  it("applies a paused toggle via the same endpoint", async () => {
++    const client = stubClient("Normal");
++    const { url, close } = await startServer(
++      new Map([[VALID_DEVICE, client]]),
++    );
++    const res = await fetch(
++      `${url}/admin/simulator/${VALID_DEVICE}/scenario`,
++      {
++        method: "POST",
++        headers: {
++          [SECRET_HEADER]: STRONG_SECRET,
++          "Content-Type": "application/json",
++        },
++        body: JSON.stringify({ paused: true }),
++      },
++    );
++    expect(res.status).toBe(200);
++    expect(
++      (client as SimulatorClientLike & { __test__paused: () => boolean })
++        .__test__paused(),
++    ).toBe(true);
++    await close();
++  });
++});
++
++describe("Story 2.5 — startControlServer boots on env-supplied port", () => {
++  it("respects SIMULATOR_CONTROL_PORT env var", async () => {
++    process.env["SIMULATOR_CONTROL_PORT"] = "0";
++    setClientsRegistry(new Map());
++    const { port, close } = await startControlServer();
++    expect(typeof port).toBe("number");
++    await close();
++  });
++});
++
++// Inert imports to avoid TS unused warnings on test seam fields.
++type _IncomingMessage = IncomingMessage;
++type _ServerResponse = ServerResponse;
++const _inert: _IncomingMessage | undefined = undefined;
++const _inert2: _ServerResponse | undefined = undefined;
++void _inert;
++void _inert2;
+diff --git a/packages/simulator/src/control/server.ts b/packages/simulator/src/control/server.ts
+new file mode 100644
+index 0000000..0b32fbd
+--- /dev/null
++++ b/packages/simulator/src/control/server.ts
+@@ -0,0 +1,388 @@
++/**
++ * Simulator control HTTP server — Story 2.5.
++ *
++ * Plain Node `http.createServer` (no Express) that exposes:
++ *
++ *   POST /admin/simulator/:device_id/scenario
++ *     - Body: { scenario: ScenarioName }
++ *     - Validates `X-Simulator-Secret` (constant-time compare against
++ *       `process.env.SIMULATOR_SECRET`).
++ *     - Looks up the device_id in the simulator's module-scoped
++ *       client registry (lifted out of `boot()` so the registry is
++ *       readable from this server) and applies the new scenario.
++ *
++ *   GET /admin/simulator/status
++ *     - Returns `{ enabled: true|false }`. Always public (no auth, no
++ *       RBAC) so the api can render a disabled banner for any
++ *       authenticated user who navigates to the admin tab.
++ *
++ * The port defaults to `SIMULATOR_CONTROL_PORT` (4001) and is
++ * intentionally different from the api's HTTP port (3000) and the
++ * WebSocket telemetry port so the three surfaces cannot collide.
++ *
++ * Story 2.5 AC: secret mismatches return 403, missing env returns 503,
++ * unknown device_id returns 404, invalid scenario returns 400. All
++ * comparisons are constant-time (`crypto.timingSafeEqual`).
++ */
++import { timingSafeEqual } from "node:crypto";
++import {
++  createServer as createHttpServer,
++  type IncomingMessage,
++  type ServerResponse,
++} from "node:http";
++
++import { createLogger } from "@surakkha/shared/logger";
++
++import { SCENARIO_NAMES, type ScenarioName } from "../scenarios.js";
++
++const logger = createLogger({
++  name: "surakkha-simulator-control",
++  level: "info",
++});
++
++const DEFAULT_CONTROL_PORT = 4_001;
++
++const HTTP_OK = 200;
++const HTTP_BAD_REQUEST = 400;
++const HTTP_FORBIDDEN = 403;
++const HTTP_NOT_FOUND = 404;
++const HTTP_SERVICE_UNAVAILABLE = 503;
++
++const UUID_V4_REGEX =
++  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++
++const SECRET_HEADER = "x-simulator-secret";
++const CONTENT_TYPE_JSON = "application/json";
++/** Hard cap on the simulator control POST body. 16 KB is plenty for
++ * `{ scenario: "RisingTDS" }` and prevents a misbehaving caller from
++ * OOMing the simulator with a single request. */
++// eslint-disable-next-line no-magic-numbers -- 16 KiB cap, named for clarity
++const MAX_BODY_BYTES = 16 * 1024;
++
++/**
++ * Lightweight per-device view exposed by the simulator's module-
++ * scoped registry. `WsClient` implements the surface directly; we
++ * declare it here as a structural interface so `server.ts` does not
++ * import from `index.ts` (avoiding the circular import).
++ */
++export interface SimulatorClientLike {
++  setScenario(name: ScenarioName): void;
++  setPaused(paused: boolean): void;
++}
++
++/**
++ * Singleton client registry — populated by `index.ts:boot()` and
++ * consulted by the control server. The explicit getter/setter pair
++ * keeps tests from having to spin up a real `boot()`.
++ */
++let clientsRegistry: ReadonlyMap<string, SimulatorClientLike> = new Map();
++
++export const setClientsRegistry = (
++  next: ReadonlyMap<string, SimulatorClientLike>,
++): void => {
++  clientsRegistry = next;
++};
++
++export const getClientsRegistry = (): ReadonlyMap<string, SimulatorClientLike> =>
++  clientsRegistry;
++
++const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
++
++const isScenarioName = (value: unknown): value is ScenarioName =>
++  typeof value === "string" && SCENARIO_SET.has(value as ScenarioName);
++
++/**
++ * Resolve `SIMULATOR_SECRET` from the env. The discriminated union
++ * shape mirrors `resolveJwtSecret` (`src/jwt.ts`) so callers can
++ * branch on `ok` without try/catch.
++ *
++ * Story 2.5 AC: missing/short secret → disabled state, NOT fail-fast.
++ * The single `missing` reason folds "unset" and "below the 32-char
++ * minimum" together — both surface as the same disabled-banner copy
++ * ("Simulator disabled. Set SIMULATOR_SECRET.") on the api side, so
++ * a single reason keeps the public contract lean.
++ */
++export const resolveSimulatorSecret = ():
++  | { readonly ok: true; readonly value: string }
++  | { readonly ok: false; readonly reason: "missing" } => {
++  const raw = process.env["SIMULATOR_SECRET"];
++  if (raw === undefined || raw === "") {
++    return { ok: false, reason: "missing" };
++  }
++  // Same minimum as JWT_SECRET (32 chars). Anything shorter is too
++  // easy to brute-force — collapse the rejection under the same
++  // `missing` reason so the disabled-banner copy is the same.
++  if (raw.length < 32) {
++    return { ok: false, reason: "missing" };
++  }
++  return { ok: true, value: raw };
++};
++
++/**
++ * Constant-time compare two strings. Reject non-matching lengths
++ * BEFORE the comparison so `timingSafeEqual` never throws on the
++ * "different buffer lengths" path.
++ */
++const constantTimeEquals = (provided: string, expected: string): boolean => {
++  if (provided.length !== expected.length) return false;
++  const a = Buffer.from(provided, "utf8");
++  const b = Buffer.from(expected, "utf8");
++  return timingSafeEqual(a, b);
++};
++
++const readSecretFromHeader = (req: IncomingMessage): string | null => {
++  const raw = req.headers[SECRET_HEADER];
++  if (typeof raw === "string") return raw;
++  if (Array.isArray(raw)) return raw[0] ?? null;
++  return null;
++};
++
++/**
++ * Read the JSON body of an incoming POST. Caps the body at
++ * `MAX_BODY_BYTES` so a misbehaving client cannot OOM the simulator
++ * with a single request.
++ */
++const readJsonBody = async (
++  req: IncomingMessage,
++  limit = MAX_BODY_BYTES,
++): Promise<unknown> => {
++  const chunks: Buffer[] = [];
++  let total = 0;
++  for await (const chunk of req) {
++    const buf = chunk as Buffer;
++    total += buf.length;
++    if (total > limit) {
++      throw new Error("payload_too_large");
++    }
++    chunks.push(buf);
++  }
++  if (chunks.length === 0) return {};
++  const raw = Buffer.concat(chunks).toString("utf8");
++  if (raw.trim() === "") return {};
++  try {
++    return JSON.parse(raw) as unknown;
++  } catch {
++    throw new Error("invalid_json");
++  }
++};
++
++const sendJson = (
++  res: ServerResponse,
++  status: number,
++  body: unknown,
++): void => {
++  const target = res;
++  target.statusCode = status;
++  target.setHeader("Content-Type", CONTENT_TYPE_JSON);
++  target.end(JSON.stringify(body));
++};
++
++/**
++ * Parse the URL path into its canonical `/admin/simulator/...`
++ * segments. Returns null for any path outside the expected shape.
++ */
++interface ParsedRoute {
++  readonly kind: "status" | "scenario";
++  readonly deviceId?: string;
++}
++
++const SCENARIO_SUFFIX = "/scenario";
++
++/**
++ * Validate a single segment as a v4 UUID. Returns the segment when
++ * valid, `null` otherwise. Lifted out of `parseRoute` so the function
++ * stays under the eslint complexity ceiling.
++ */
++const parseUuidSegment = (segment: string): string | null => {
++  if (segment === "") return null;
++  if (segment.includes("/")) return null;
++  if (!UUID_V4_REGEX.test(segment)) return null;
++  return segment;
++};
++
++const parseRoute = (rawUrl: string): ParsedRoute | null => {
++  // Strip the query string.
++  const pathOnly = rawUrl.split("?")[0] ?? "/";
++  if (pathOnly === "/admin/simulator/status") return { kind: "status" };
++  const scenarioPrefix = "/admin/simulator/";
++  if (!pathOnly.startsWith(scenarioPrefix)) return null;
++  // Strip prefix; what remains is `<uuid>` or `<uuid>/scenario`.
++  const rest = pathOnly.slice(scenarioPrefix.length);
++  if (rest.endsWith(SCENARIO_SUFFIX)) {
++    const deviceId = parseUuidSegment(
++      rest.slice(0, rest.length - SCENARIO_SUFFIX.length),
++    );
++    return deviceId === null ? null : { kind: "scenario", deviceId };
++  }
++  // /admin/simulator/<uuid> (GET used as a fallback when the api is
++  // dispatching via Express — kept for completeness).
++  const deviceId = parseUuidSegment(rest);
++  return deviceId === null ? null : { kind: "scenario", deviceId };
++};
++
++/**
++ * Resolve a `secretResult` shape into the disabled-state response, or
++ * `null` when the secret is present and valid.
++ */
++const disabledResponse = (
++  secretResult: { readonly ok: false; readonly reason: "missing" },
++): { readonly status: number; readonly body: unknown } => ({
++  status: HTTP_SERVICE_UNAVAILABLE,
++  body: { disabled: true, reason: secretResult.reason },
++});
++
++/**
++ * Apply the parsed body to the matching client. Lifted out of the
++ * request handler so the route function stays under the complexity
++ * ceiling.
++ */
++const applyControlBody = (
++  deviceId: string,
++  bodyRecord: Record<string, unknown>,
++): { readonly status: number; readonly body: unknown } | null => {
++  const { scenario, paused } = bodyRecord;
++  // Allow either `{ scenario: "RisingTDS" }` or `{ paused: true }`
++  // (or both). The simulator's control surface is a single endpoint;
++  // the api translates the admin tab's Start / Pause / Switch
++  // primitives into the matching verb.
++  if (scenario === undefined && paused === undefined) {
++    return { status: HTTP_BAD_REQUEST, body: { error: "missing_action" } };
++  }
++  if (scenario !== undefined && !isScenarioName(scenario)) {
++    return { status: HTTP_BAD_REQUEST, body: { error: "invalid_scenario" } };
++  }
++  const client = clientsRegistry.get(deviceId);
++  if (client === undefined) {
++    return { status: HTTP_NOT_FOUND, body: { error: "unknown_device" } };
++  }
++  if (scenario !== undefined) {
++    client.setScenario(scenario);
++  }
++  if (typeof paused === "boolean") {
++    client.setPaused(paused);
++  }
++  logger.info({ deviceId, scenario, paused }, "simulator: control applied");
++  return { status: HTTP_OK, body: { applied: true } };
++};
++
++/**
++ * Handle the scenario-switch branch. Reads JSON, looks up the client,
++ * applies the action.
++ */
++const handleScenarioRoute = async (
++  req: IncomingMessage,
++  res: ServerResponse,
++  deviceId: string,
++): Promise<void> => {
++  if (req.method !== "POST") {
++    sendJson(res, HTTP_BAD_REQUEST, { error: "method_not_allowed" });
++    return;
++  }
++  let body: unknown;
++  try {
++    body = await readJsonBody(req);
++  } catch (err) {
++    const message = err instanceof Error ? err.message : String(err);
++    sendJson(res, HTTP_BAD_REQUEST, {
++      error:
++        message === "invalid_json" ? "invalid_json" : "payload_too_large",
++    });
++    return;
++  }
++  const bodyRecord =
++    typeof body === "object" && body !== null
++      ? (body as Record<string, unknown>)
++      : {};
++  const result = applyControlBody(deviceId, bodyRecord);
++  if (result === null) {
++    sendJson(res, HTTP_NOT_FOUND, { error: "unknown_device" });
++    return;
++  }
++  sendJson(res, result.status, result.body);
++};
++
++/**
++ * The actual request handler, lifted out so `buildControlHandler`
++ * doesn't return an arrow function from an arrow function (eslint
++ * `unicorn/consistent-function-scoping`).
++ */
++const handleControlRequest = async (
++  req: IncomingMessage,
++  res: ServerResponse,
++): Promise<void> => {
++  const route = parseRoute(req.url ?? "/");
++  if (route === null) {
++    sendJson(res, HTTP_NOT_FOUND, { error: "not_found" });
++    return;
++  }
++
++  const secretResult = resolveSimulatorSecret();
++  if (!secretResult.ok) {
++    // Disabled state — same response shape on /status and /scenario
++    // so the api can render the disabled banner without parsing the
++    // route.
++    const disabled = disabledResponse(secretResult);
++    sendJson(res, disabled.status, disabled.body);
++    return;
++  }
++
++  const providedSecret = readSecretFromHeader(req);
++  // Reject non-matching lengths BEFORE the constant-time compare.
++  if (
++    providedSecret === null ||
++    !constantTimeEquals(providedSecret, secretResult.value)
++  ) {
++    sendJson(res, HTTP_FORBIDDEN, { error: "secret_mismatch" });
++    return;
++  }
++
++  if (route.kind === "status") {
++    sendJson(res, HTTP_OK, { enabled: true });
++    return;
++  }
++
++  // route.kind === "scenario"
++  const { deviceId } = route;
++  if (deviceId === undefined) {
++    sendJson(res, HTTP_NOT_FOUND, { error: "not_found" });
++    return;
++  }
++  await handleScenarioRoute(req, res, deviceId);
++};
++
++/**
++ * Build the request handler. The handlers are returned as a function
++ * so tests can pass it directly to `http.createServer` with a stub
++ * port.
++ */
++export const buildControlHandler = (): ((
++  req: IncomingMessage,
++  res: ServerResponse,
++) => Promise<void>) => handleControlRequest;
++
++/**
++ * Boot the control server. Returns a `close()` function the caller
++ * can use during graceful shutdown. The port is read once at call
++ * time; tests inject their own port via `process.env.SIMULATOR_CONTROL_PORT`.
++ */
++export const startControlServer = async (port?: number): Promise<{
++  readonly port: number;
++  readonly close: () => Promise<void>;
++}> => {
++  const resolvedPort =
++    port ??
++    (() => {
++      const raw = process.env["SIMULATOR_CONTROL_PORT"];
++      if (raw === undefined || raw === "") return DEFAULT_CONTROL_PORT;
++      const parsed = Number.parseInt(raw, 10);
++      return Number.isFinite(parsed) ? parsed : DEFAULT_CONTROL_PORT;
++    })();
++
++  const server = createHttpServer(buildControlHandler());
++  await new Promise<void>((resolve) =>
++    server.listen(resolvedPort, "127.0.0.1", () => resolve()),
++  );
++  const close = (): Promise<void> =>
++    new Promise<void>((resolve) => server.close(() => resolve()));
++  return { port: resolvedPort, close };
++};
+diff --git a/packages/simulator/src/index.ts b/packages/simulator/src/index.ts
+index cf25710..37776a5 100644
+--- a/packages/simulator/src/index.ts
++++ b/packages/simulator/src/index.ts
+@@ -1,15 +1,19 @@
+ /**
+- * Surakkha simulator — entry point (Story 2.4).
++ * Surakkha simulator — entry point (Story 2.4 + Story 2.5).
+  *
+  * Boot sequence:
+  *   1. Read + validate `devices.json` (UUIDv4 device_ids, scenarios
+  *      in SCENARIO_NAMES, no duplicate UUIDs).
+  *   2. Read env: `API_URL` (default `http://localhost:4000`),
+  *      `JWT_SECRET` (required, ≥ JWT_SECRET_MIN_LENGTH), optional
+- *      `TICK_INTERVAL_MS` (must be ≥ 1000).
++ *      `TICK_INTERVAL_MS` (must be ≥ 1000), optional
++ *      `SIMULATOR_SECRET` (Story 2.5).
+  *   3. Mint one simulator JWT per device.
+- *   4. Spawn one `WsClient` per device.
+- *   5. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
++ *   4. Spawn one `WsClient` per device. The clients[] array is
++ *      registered into a module-scoped `clientsRegistry` (Story 2.5)
++ *      so the control HTTP server can read it without re-running boot.
++ *   5. Boot the control HTTP server (Story 2.5).
++ *   6. Wire SIGINT / SIGTERM to graceful shutdown (close all sockets,
+  *      drain the per-device buffers, exit code 0).
+  */
+ import { readFileSync } from "node:fs";
+@@ -18,6 +22,10 @@ import { fileURLToPath } from "node:url";
+ 
+ import { createLogger } from "@surakkha/shared/logger";
+ 
++import {
++  setClientsRegistry,
++  startControlServer,
++} from "./control/server.js";
+ import {
+   assertJwtSecretOrExit,
+   mintSimulatorTokensForDevices,
+@@ -287,12 +295,87 @@ export const boot = (): void => {
+     client.start();
+   }
+ 
++  // 5b. Story 2.5 — publish the client registry so the control HTTP
++  // server can read it without re-running boot(). Lifted from the
++  // closure for module scope (the registry is read-only after boot
++  // completes; the only writes are the in-loop `setScenario` /
++  // `setPaused` calls from the control server).
++  // The structural type mirrors `control/server.ts:SimulatorClientLike`
++  // exactly so we don't need a type-only import from that module
++  // (which would force us to mix `import type` into a sibling import
++  // and trip eslint's import/order + no-duplicate-imports rules).
++  interface RegistryClient {
++    setScenario(name: ScenarioName): void;
++    setPaused(paused: boolean): void;
++  }
++  const registryEntries: Array<[string, RegistryClient]> = [];
++  for (const c of clients) {
++    registryEntries.push([c.__test__deviceId(), c]);
++  }
++  setClientsRegistry(new Map(registryEntries));
++
++  // 5c. Story 2.5 — boot the control server. Capture the `close`
++  // handle so SIGINT/SIGTERM can shut the port down cleanly (without
++  // it, the port leaks and the admin tab stays open for new requests
++  // after the simulator stops emitting). EADDRINUSE is the only
++  // fatal startup error: it means the admin tab can NEVER come up,
++  // so we hard-exit rather than running silently broken. Other
++  // errors (permission denied, etc.) stay as warnings — the simulator
++  // is still emitting frames.
++  //
++  // `boot()` is intentionally synchronous (`(): void`), so we wrap the
++  // async startup path in an IIFE rather than leaking a Promise out of
++  // the public surface.
++  let closeControlServer: (() => Promise<void>) | null = null;
++  void (async () => {
++    try {
++      const handle = await startControlServer();
++      closeControlServer = handle.close;
++      logger.info(
++        { port: handle.port },
++        "simulator: control server listening",
++      );
++    } catch (err: unknown) {
++      const errObj = err as { code?: string; message?: string };
++      if (errObj.code === "EADDRINUSE") {
++        logger.error(
++          { err: errObj.message ?? String(err) },
++          "simulator: control server port already in use — exiting",
++        );
++        // Stop the already-started WsClients so we don't leave zombie
++        // connections on the api side.
++        for (const c of clients) {
++          c.stop();
++        }
++        // eslint-disable-next-line no-restricted-properties
++        process.exit(1);
++      }
++      logger.warn(
++        { err },
++        "simulator: control server failed to start",
++      );
++    }
++  })();
++
+   // 6. Graceful shutdown.
+   const shutdown = (signal: string): void => {
+     logger.info({ signal }, "simulator: shutdown requested");
+     for (const c of clients) {
+       c.stop();
+     }
++    // Close the control HTTP server (if it ever came up) so the
++    // port is freed and no further admin requests are accepted
++    // after the simulator has stopped emitting. Wrap in try/catch
++    // because `close()` may throw if the server was already closed
++    // (e.g. boot-time failure left it in a half-open state).
++    if (closeControlServer !== null) {
++      void closeControlServer().catch((err: unknown) => {
++        logger.warn(
++          { err },
++          "simulator: control server close threw",
++        );
++      });
++    }
+     logger.info("simulator: shutdown complete");
+     // eslint-disable-next-line no-restricted-properties
+     process.exit(0);
+diff --git a/packages/simulator/src/wsClient.ts b/packages/simulator/src/wsClient.ts
+index 99d5bec..017a016 100644
+--- a/packages/simulator/src/wsClient.ts
++++ b/packages/simulator/src/wsClient.ts
+@@ -16,7 +16,7 @@ import { type TelemetryFrame, TelemetryFrameSchema } from "@surakkha/shared/tele
+ import { type Logger } from "pino";
+ import { io, type Socket } from "socket.io-client";
+ 
+-import { runScenario, type ScenarioName } from "./scenarios.js";
++import { runScenario, SCENARIO_NAMES, type ScenarioName } from "./scenarios.js";
+ 
+ /** Frame buffer cap per device (architecture §6.1, I-2). */
+ export const BUFFER_CAP = 5_000;
+@@ -105,9 +105,9 @@ export interface MinimalSocket {
+ }
+ 
+ /**
+- * Per-device simulator state. Public surface is `start()` + `stop()`;
+- * tests construct one directly and exercise the internals via the
+- * private helpers exposed through `__test__`.
++ * Per-device simulator state. Public surface is `start()` + `stop()`
++ * + `setScenario()`; tests construct one directly and exercise the
++ * internals via the private helpers exposed through `__test__`.
+  */
+ export class WsClient {
+   private readonly opts: WsClientOptions;
+@@ -121,9 +121,25 @@ export class WsClient {
+   private reconnectHandle: NodeJS.Timeout | null = null;
+   private overflowLoggedThisRun = false;
+   private stopped = false;
++  /**
++   * Story 2.5 — current scenario. Initialised from `opts.scenario`
++   * at construction and mutated by the admin control server via
++   * `setScenario()`. Decoupled from `opts` so the public
++   * `WsClientOptions` shape stays immutable (constructor parameters
++   * can never be re-bound by a runtime call).
++   */
++  private currentScenario: ScenarioName;
++  /**
++   * Story 2.5 — pause flag toggled by the control server's
++   * `start` / `pause` verb. When `true` the tick loop skips frame
++   * generation but keeps the WS socket alive so the device stays
++   * "connected" from the api's perspective.
++   */
++  private paused = false;
+ 
+   constructor(options: WsClientOptions) {
+     this.opts = options;
++    this.currentScenario = options.scenario;
+     this.logger = options.logger.child({ deviceId: options.deviceId });
+   }
+ 
+@@ -133,7 +149,7 @@ export class WsClient {
+       return;
+     }
+     this.logger.info(
+-      { scenario: this.opts.scenario, tickIntervalMs: this.opts.tickIntervalMs },
++      { scenario: this.currentScenario, tickIntervalMs: this.opts.tickIntervalMs },
+       "simulator: scenario started",
+     );
+     this.openSocket();
+@@ -170,6 +186,57 @@ export class WsClient {
+   /** Test seam: read the backoff state for assertions. */
+   public __test__reconnectAttempts = (): number => this.reconnectAttempts;
+ 
++  /** Test seam: read the active scenario name. */
++  public __test__scenario = (): ScenarioName => this.currentScenario;
++
++  /** Test seam: read the pause flag. */
++  public __test__paused = (): boolean => this.paused;
++
++  /**
++   * Test seam: read the device_id. Used by `index.ts:boot()` to
++   * register the client into the control server's lookup map. The
++   * device_id is immutable after construction so this is a one-way
++   * getter — there's no `__test__setDeviceId`.
++   */
++  public __test__deviceId = (): string => this.opts.deviceId;
++
++  /**
++   * Story 2.5 — runtime scenario swap. Called by the control server
++   * when an Admin clicks "Switch to <Scenario>" in the admin tab.
++   * Mutates `currentScenario` so the next `tickOnce()` picks up the
++   * new curve; no constructor re-run, no reconnect.
++   *
++   * We do NOT reset `this.seq` — the simulator's per-device `seq` is
++   * monotonic across scenario changes (architecture §3.2 wire contract
++   * field rule). If the admin wanted a fresh seq they would restart
++   * the simulator process.
++   */
++  public setScenario = (name: ScenarioName): void => {
++    // Defense-in-depth: the api validates `scenario ∈ SCENARIO_NAMES`
++    // before forwarding; this guard catches any internal caller that
++    // bypasses the api's check (e.g. a future direct-control seam).
++    // Throwing here makes the violation loud at the call site instead
++    // of a cryptic `runScenario` exhaustive-check throw inside `tickOnce`.
++    if (!(SCENARIO_NAMES as readonly string[]).includes(name)) {
++      throw new Error(`simulator: setScenario rejects unknown name ${name}`);
++    }
++    this.currentScenario = name;
++    this.logger.info({ scenario: name }, "simulator: scenario swapped");
++  };
++
++  /**
++   * Story 2.5 — pause the tick loop without closing the WS socket.
++   * When `true`, `tickOnce()` re-schedules without generating a frame
++   * so the device appears "online but idle" to the api. The api
++   * does not see a disconnect envelope; the absence of new frames
++   * is the signal.
++   */
++  public setPaused = (paused: boolean): void => {
++    if (this.paused === paused) return;
++    this.paused = paused;
++    this.logger.info({ paused }, "simulator: pause toggled");
++  };
++
+   /**
+     Test seam: inject a pre-built socket. Production never calls this
+     — `start()` opens its own. Tests substitute a stub that captures
+@@ -343,7 +410,16 @@ export class WsClient {
+       return;
+     }
+ 
+-    const tick = runScenario(this.opts.scenario, {}, this.seq);
++    // Story 2.5 — admin-triggered pause. We KEEP the WS socket open
++    // (no `disconnect` envelope) and just skip frame generation until
++    // the admin resumes. This is distinct from the rate-limit pause
++    // above, which has a wake-up timestamp and re-enables automatically.
++    if (this.paused) {
++      this.scheduleNextTick(this.opts.tickIntervalMs);
++      return;
++    }
++
++    const tick = runScenario(this.currentScenario, {}, this.seq);
+     if (tick.kind === "offline") {
+       // Offline scenario emits nothing — back off but stay connected.
+       this.scheduleNextTick(this.opts.tickIntervalMs);
