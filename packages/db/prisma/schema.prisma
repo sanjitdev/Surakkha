@@ -1,11 +1,8 @@
-/**
- * Prisma schema — Surakkha (Story 2.2 + Story 2.3 seed).
- *
- * v1.0 entity set. The `Reading` and `Device` placeholders land here in
- * Story 2.2 (architecture §5). The remaining entities land in their own
- * stories. Adding/removing a model is a wire-contract-adjacent change;
- * reviewers should re-read `docs/architecture.md` §5 before merging.
- */
+// Prisma schema — Surakkha (Story 2.2 + Story 2.3 seed).
+// v1.0 entity set. The `Reading` and `Device` placeholders land here in
+// Story 2.2 (architecture §5). The remaining entities land in their own
+// stories. Adding/removing a model is a wire-contract-adjacent change;
+// reviewers should re-read `docs/architecture.md` §5 before merging.
 generator client {
   provider = "prisma-client-js"
 }
@@ -15,15 +12,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * Device — Story 2.2 placeholder, extended in Story 2.5.
- *
- * `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` were the v1.0 placeholders.
- * Story 2.5 adds `name` and `scenario` so the `/admin/simulator` tab can
- * list the six devices and their current scenario without re-reading the
- * simulator's local `devices.json`. Both columns are nullable to keep the
- * forward migration safe for any rows already in the table.
- */
+// Device — Story 2.2 placeholder, extended in Story 2.5.
+// `id` (UUIDv4, the JWT `sub`) and `lastSeenAt` were the v1.0 placeholders.
+// Story 2.5 adds `name` and `scenario` so the `/admin/simulator` tab can
+// list the six devices and their current scenario without re-reading the
+// simulator's local `devices.json`. Both columns are nullable to keep the
+// forward migration safe for any rows already in the table.
 model Device {
   id         String    @id
   lastSeenAt DateTime?
@@ -51,22 +45,17 @@ model Device {
   incidents  Incident[] @relation("DeviceIncidents")
 }
 
-/**
- * Reading — Story 2.2 (architecture §3.2 step 7 + §5).
- *
- * `serverReceivedAt` is the source of truth for ordering; device clock
- * skew must not corrupt the timeline. `metrics` is JSON (Prisma maps
- * to `jsonb`) so the v1 schema does not impose a metric shape on the
- * database — the wire-contract Zod schema is the shape authority.
- *
- * `flags` is a Postgres text[] so the Story 2.2 flags (`out_of_order`,
- * future `rate_limited`, `clock_skew_detected`) round-trip without a
- * separate join table.
- *
- * Indexes:
- *   - (deviceId, ts DESC) — primary chart query.
- *   - (deviceId, seq DESC) — replay / dedup.
- */
+// Reading — Story 2.2 (architecture §3.2 step 7 + §5).
+// `serverReceivedAt` is the source of truth for ordering; device clock
+// skew must not corrupt the timeline. `metrics` is JSON (Prisma maps
+// to `jsonb`) so the v1 schema does not impose a metric shape on the
+// database — the wire-contract Zod schema is the shape authority.
+// `flags` is a Postgres text[] so the Story 2.2 flags (`out_of_order`,
+// future `rate_limited`, `clock_skew_detected`) round-trip without a
+// separate join table.
+// Indexes:
+//   - (deviceId, ts DESC) — primary chart query.
+//   - (deviceId, seq DESC) — replay / dedup.
 model Reading {
   id               String   @id @default(uuid())
   deviceId         String
@@ -85,29 +74,24 @@ model Reading {
   @@index([deviceId, seq])
 }
 
-/**
- * Incident — Story 2.6 placeholder (real model lands in Story 4.2).
- *
- * The dashboard's Recent Incidents preview needs a queryable Incident
- * table so `GET /api/incidents/recent` can return a non-empty shape
- * once rule-firing lands in Epic 3. Story 4.2 expands the full state
- * machine (architecture §5.1) — that story owns the OPEN /
- * ACKNOWLEDGED / INSPECTING / SAFE / UNSAFE / MONITORING / RESOLVED
- * column additions, the actor FK, the IncidentEvent audit table,
- * etc. This model is intentionally minimal: the minimum columns the
- * 2.6 wire shape needs (`id`, `device_id`, `severity`, `metric`,
- * `value`, `opened_at`).
- *
- * `deviceId` references the canonical `Device.id` (UUIDv4). `severity`
- * is a free-form string here (NOT a Prisma enum) because Story 4.2
- * may pivot to a different canonical set; pinning the enum at the
- * Story 2.6 boundary would force a migration that Epic 4 then has
- * to undo. The api validates `severity ∈ {"info","warning","critical"}`
- * at the boundary (see `incidents/recentRouter`).
- *
- * Index:
- *   - (deviceId, openedAt DESC) — primary dashboard query path.
- */
+// Incident — Story 2.6 placeholder (real model lands in Story 4.2).
+// The dashboard's Recent Incidents preview needs a queryable Incident
+// table so `GET /api/incidents/recent` can return a non-empty shape
+// once rule-firing lands in Epic 3. Story 4.2 expands the full state
+// machine (architecture §5.1) — that story owns the OPEN /
+// ACKNOWLEDGED / INSPECTING / SAFE / UNSAFE / MONITORING / RESOLVED
+// column additions, the actor FK, the IncidentEvent audit table,
+// etc. This model is intentionally minimal: the minimum columns the
+// 2.6 wire shape needs (`id`, `device_id`, `severity`, `metric`,
+// `value`, `opened_at`).
+// `deviceId` references the canonical `Device.id` (UUIDv4). `severity`
+// is a free-form string here (NOT a Prisma enum) because Story 4.2
+// may pivot to a different canonical set; pinning the enum at the
+// Story 2.6 boundary would force a migration that Epic 4 then has
+// to undo. The api validates `severity ∈ {"info","warning","critical"}`
+// at the boundary (see `incidents/recentRouter`).
+// Index:
+//   - (deviceId, openedAt DESC) — primary dashboard query path.
 model Incident {
   id        String   @id @default(uuid())
   deviceId  String

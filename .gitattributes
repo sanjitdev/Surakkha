@@ -1,0 +1,31 @@
+# Surakkha — git line-ending rules.
+#
+# Force LF for files where CRLF would break the toolchain:
+#   - *.prisma — Prisma 5.20.0's wasm validator rejects CRLF.
+#   - *.sql    — Postgres runs the migration as written; CRLF in
+#                .psql scripts is harmless but LF is conventional.
+#   - Dockerfile, *.dockerfile — multi-stage builds assume LF;
+#                Windows CRLF in COPY heredocs has been known to break.
+#   - *.sh, *.bash — shell scripts that may run in Linux containers.
+#
+# Default everything else to LF (so a Windows dev clone stays
+# canonical) but allow text files to be checked out as CRLF if the
+# developer's `core.autocrlf=true` says so. The `text` attribute is
+# the default; `text eol=lf` overrides it.
+*               text=auto eol=lf
+
+# Files where CRLF would break parsing or runtime behaviour.
+*.prisma        text eol=lf
+*.sql           text eol=lf
+Dockerfile      text eol=lf
+*.dockerfile    text eol=lf
+*.sh            text eol=lf
+*.bash          text eol=lf
+
+# Binary files.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
