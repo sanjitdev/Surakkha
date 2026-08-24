@@ -36,5 +36,8 @@ _bmad/
 # BMAD UX working/staging area (drafts land in .working/ then promote to mockups/)
 _bmad-output/**/.working/
 
+# BMAD review working files (per-run reviewer content; regenerable)
+_bmad-output/**/.review-content-*/
+
 # Docker volumes
 postgres-data/

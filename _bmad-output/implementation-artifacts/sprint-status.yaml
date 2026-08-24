@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-24T18:00:00.000Z
+last_updated: 2026-08-24T20:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -81,8 +81,8 @@ development_status:
   2-4-simulator-process-six-default-devices-seven-scenarios: done
   2-5-admin-simulator-admin-tab: done
   2-6-dashboard-shell: done
-  2-7-map-view: review
-  2-8-live-readings-table: backlog
+  2-7-map-view: done
+  2-8-live-readings-table: review
   2-9-connection-state-offline-ux: backlog
 
   # ===== Epic 3 — Rules & Alerts =====
@@ -303,10 +303,10 @@ stories:
 
   - id: "2.5"
     title: "/admin/simulator Admin Tab"
-    status: review
+    status: done
     epic: "2"
     commit: "5503b04"
-    shipped: null
+    shipped: "2026-08-24"
     covers: ["FR-36", "AR-12"]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md"
@@ -314,10 +314,10 @@ stories:
 
   - id: "2.6"
     title: "Dashboard Shell"
-    status: ready-for-dev
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
+    commit: "eea8dee"
+    shipped: "2026-08-24"
     covers: ["FR-11", "FR-12", "FR-13", "FR-14", "FR-15", "AR-11", "UX-DR-2", "UX-DR-5", "UX-DR-6", "UX-DR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-6-dashboard-shell.md"
@@ -325,24 +325,24 @@ stories:
 
   - id: "2.7"
     title: "Map View"
-    status: backlog
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "252b081"
+    shipped: "2026-08-24"
+    covers: ["FR-13", "UX-DR-2", "UX-DR-11"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-2-7-map-view.md"
       review: null
 
   - id: "2.8"
     title: "Live Readings Table"
-    status: backlog
+    status: review
     epic: "2"
     commit: null
     shipped: null
-    covers: []
+    covers: ["PRD-F-7", "UX-DR-2", "UX-DR-6"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-2-8-live-readings-table.md"
       review: null
 
   - id: "2.9"

@@ -52,6 +52,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo, useRef } from "react";
 
+import { SEVERITY_CLASS, SEVERITY_GLYPH } from "./severityTokens";
+
 // Map fit constants. Lifted from the Epic 2 §UX default map
 // dimensions — the map view sits inside the dashboard's left
 // column at 420 px tall; the operators centre on Dhaka and zoom
@@ -71,31 +73,11 @@ const MINUTES_PER_MS = 60_000;
  * the saturated `value` slot (the `fill` token collides with the
  * CSS `background-color: fill` shorthand at the Tailwind utility
  * layer; the `value` slot is the same literal `#16A34A` / etc.
- * and avoids the ambiguity).
+ * and avoids the ambiguity). Story 2.8 extracts the lookup into
+ * `severityTokens.ts` so the live-readings row uses the same
+ * literals — see that file for the canonical reference.
  */
-const SEVERITY_CLASS: Record<MapSeverity, string> = {
-  healthy: "bg-severity-healthy-value",
-  warning: "bg-severity-warning-value",
-  critical: "bg-severity-critical-value",
-  offline: "bg-severity-offline-value",
-};
-
-/**
- * Static severity icon glyph. The Epic 2 context spec calls for
- * "a severity icon" on every marker; the four-glyph pack below is
- * the smallest one that distinguishes the four buckets without
- * needing a colour blind user to read the colour.
- *   - healthy   ✓ (U+2713)
- *   - warning   ▲ (U+25B2, the deprecated "caution" shape)
- *   - critical  ● (U+25CF, the "hot" shape)
- *   - offline   — (U+2014, the "no signal" shape)
- */
-const SEVERITY_GLYPH: Record<MapSeverity, string> = {
-  healthy: "\u2713",
-  warning: "\u25B2",
-  critical: "\u25CF",
-  offline: "\u2014",
-};
+// SEVERITY_CLASS + SEVERITY_GLYPH now live in `./severityTokens.ts` (Story 2.8).
 
 /**
  * Build the divIcon HTML — a 14px circle with the severity fill, a
