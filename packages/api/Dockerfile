@@ -15,17 +15,12 @@ FROM node:20-alpine AS build
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 COPY --from=deps /repo/ ./
-# Copy source trees EXCLUDING `node_modules/` so we don't
-# overwrite the symlinked tree that the deps stage populated.
-# Without the explicit exclusion, Docker's COPY would replace
-# `packages/shared/node_modules/` with a host-side directory
-# that has no node_modules (the host ignores it via .gitignore)
-# — and pnpm would lose track of shared's devDeps (typescript,
-# vitest, etc.) just before the `pnpm -F @surakkha/shared build`
-# step runs.
-COPY --exclude=node_modules packages/shared/ packages/shared/
-COPY --exclude=node_modules packages/api/ packages/api/
-COPY --exclude=node_modules packages/db/ packages/db/
+# `node_modules/` is excluded from the build context via the repo
+# `.dockerignore`, so these COPY lines bring in source trees
+# without clobbering the deps stage's symlink farm.
+COPY packages/shared/ packages/shared/
+COPY packages/api/ packages/api/
+COPY packages/db/ packages/db/
 RUN pnpm -F @surakkha/shared build && pnpm -F @surakkha/api build
 
 FROM node:20-alpine AS runtime

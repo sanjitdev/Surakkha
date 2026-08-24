@@ -14,9 +14,11 @@ FROM node:20-alpine AS build
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 COPY --from=deps /repo/ ./
-# See api/Dockerfile for the `--exclude=node_modules` rationale.
-COPY --exclude=node_modules packages/shared/ packages/shared/
-COPY --exclude=node_modules packages/simulator/ packages/simulator/
+# `node_modules/` is excluded from the build context via the repo
+# `.dockerignore`, so these COPY lines bring in source trees
+# without clobbering the deps stage's symlink farm.
+COPY packages/shared/ packages/shared/
+COPY packages/simulator/ packages/simulator/
 RUN pnpm -F @surakkha/shared build && pnpm -F @surakkha/simulator build
 
 FROM node:20-alpine AS runtime
