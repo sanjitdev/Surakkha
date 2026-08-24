@@ -349,7 +349,7 @@ stories:
     title: "Connection State + Offline UX"
     status: review
     epic: "2"
-    commit: null
+    commit: "bcf7c81"
     shipped: null
     covers: ["UX-DR-11"]
     ledger:
