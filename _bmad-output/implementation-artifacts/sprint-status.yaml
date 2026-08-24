@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-24T20:00:00.000Z
+last_updated: 2026-08-24T20:15:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -82,7 +82,7 @@ development_status:
   2-5-admin-simulator-admin-tab: done
   2-6-dashboard-shell: done
   2-7-map-view: done
-  2-8-live-readings-table: review
+  2-8-live-readings-table: done
   2-9-connection-state-offline-ux: backlog
 
   # ===== Epic 3 — Rules & Alerts =====
@@ -336,10 +336,10 @@ stories:
 
   - id: "2.8"
     title: "Live Readings Table"
-    status: review
+    status: done
     epic: "2"
-    commit: null
-    shipped: null
+    commit: "256dae1"
+    shipped: "2026-08-24"
     covers: ["PRD-F-7", "UX-DR-2", "UX-DR-6"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-2-8-live-readings-table.md"
