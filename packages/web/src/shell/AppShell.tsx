@@ -22,6 +22,7 @@ import { type PropsWithChildren, useEffect, useState } from "react";
 
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 
+import { ConnectionStateBanner } from "./ConnectionStateBanner";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -72,6 +73,17 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
 
   return (
     <div data-testid="app-shell" className="min-h-screen bg-neutral-page">
+      {/* ConnectionStateBanner slot — Story 2.9. Renders the
+          Reconnecting banner while `isConnected === false`. The
+          slot mounts ABOVE the severity-banner-slot so the realtime
+          signal gets operator priority when both are visible (Epic 4
+          future). `ConnectionStateBanner` is the direct child of the
+          slot — no wrapper elements — so the DOM-tree position test
+          stays a simple slot-vs-slot comparison. */}
+      <div data-testid="connection-state-banner-slot">
+        <ConnectionStateBanner />
+      </div>
+
       {/* SeverityBanner slot — Story 1.8 / Epic 4 wires the real
           sticky banner here. Empty slot today. */}
       <div data-testid="severity-banner-slot" />

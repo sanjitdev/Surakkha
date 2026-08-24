@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-24T20:15:00.000Z
+last_updated: 2026-08-24T20:45:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -83,7 +83,7 @@ development_status:
   2-6-dashboard-shell: done
   2-7-map-view: done
   2-8-live-readings-table: done
-  2-9-connection-state-offline-ux: backlog
+  2-9-connection-state-offline-ux: review
 
   # ===== Epic 3 — Rules & Alerts =====
   epic-3: backlog
@@ -347,13 +347,13 @@ stories:
 
   - id: "2.9"
     title: "Connection State + Offline UX"
-    status: backlog
+    status: review
     epic: "2"
     commit: null
     shipped: null
-    covers: []
+    covers: ["UX-DR-11"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-2-9-connection-state-offline-ux.md"
       review: null
 
   # ===== Epic 3 — Rules & Alerts (backlog) =====
