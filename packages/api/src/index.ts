@@ -445,12 +445,30 @@ io.on("connection", (socket) => {
  * until Postgres + schema are both healthy. We invoke the script
  * via a dynamic import so a sibling package boundary in the
  * workspace is preserved without bundling.
+ *
+ * F-W1 escape hatch: setting `SKIP_MIGRATIONS=true` short-circuits
+ * the import + run when the api container's runtime image does not
+ * carry the db package's `tsx`/`prisma` toolchain (the production
+ * runtime stage in `packages/api/Dockerfile` only copies `dist/` +
+ * `node_modules` of `@surakkha/api`, not the db package). Production
+ * deploys run migrations as a separate CI step before the api
+ * container starts, so the escape hatch is the right default for
+ * compose-driven dev with a host-side Postgres too.
  */
+const SKIP_MIGRATIONS = process.env.SKIP_MIGRATIONS === "true";
+
 const boot = async (): Promise<void> => {
-  const migrateModule = (await import(
-    /* webpackIgnore: true */ "@surakkha/db/scripts/migrate"
-  )) as { runMigrations: () => Promise<void> | void };
-  await Promise.resolve(migrateModule.runMigrations());
+  if (SKIP_MIGRATIONS) {
+    logger.info(
+      "api: skipping migrations (SKIP_MIGRATIONS=true); " +
+        "ensure `prisma migrate deploy` ran before this container started",
+    );
+  } else {
+    const migrateModule = (await import(
+      /* webpackIgnore: true */ "@surakkha/db/scripts/migrate"
+    )) as { runMigrations: () => Promise<void> | void };
+    await Promise.resolve(migrateModule.runMigrations());
+  }
   httpServer.listen(PORT, () => {
     logger.info({ port: PORT }, "api: listening");
   });
