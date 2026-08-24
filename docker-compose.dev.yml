@@ -1,0 +1,94 @@
+# Surakkha — dev-only compose file for hosts with Postgres already
+# running on 5432 (e.g. a native install on Windows/macOS, or a
+# Postgres container that survived a previous bring-down).
+#
+# Unlike `docker-compose.override.yml`, this file is a self-contained
+# compose project that defines ONLY the three services we need (api,
+# web, simulator). It does NOT merge with the base compose — call it
+# directly:
+#
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   docker compose -f docker-compose.dev.yml down
+#
+# The db service from the base compose is intentionally omitted.
+# Migrations are run from the host BEFORE bringing the stack up
+# (the api runtime image doesn't carry the db package's toolchain,
+# so it cannot run migrations in-container — F-W1; the api boot
+# path honours `SKIP_MIGRATIONS=true` to no-op its `runMigrations()`
+# call).
+#
+# Required env (set in the shell that runs `docker compose ...`):
+#   JWT_SECRET                — 32+ char random string
+#   POSTGRES_USER             — local Postgres username
+#   POSTGRES_PASSWORD         — local Postgres password
+#   POSTGRES_DB               — local Postgres database name
+#
+# The api + simulator connect to host-side Postgres via
+# `host.docker.internal:5432`. On Linux, `host-gateway` is wired
+# below; on macOS / Windows Docker Desktop it is wired
+# automatically.
+
+name: surakkha-dev
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: surakkha-api
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@host.docker.internal:5432/${POSTGRES_DB:?POSTGRES_DB required}
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
+      # F-W1: api runtime image lacks the db package's prisma/tsx
+      # toolchain; migrations are run from the host before this
+      # stack is brought up, so the boot path's runMigrations()
+      # call must be a no-op here.
+      SKIP_MIGRATIONS: "true"
+      NODE_ENV: production
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    container_name: surakkha-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  simulator:
+    build:
+      context: .
+      dockerfile: packages/simulator/Dockerfile
+    container_name: surakkha-simulator
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      SIMULATOR_API_URL: http://api:3000
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      NODE_ENV: production
+      LOG_LEVEL: info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
