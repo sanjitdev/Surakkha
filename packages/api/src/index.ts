@@ -35,6 +35,7 @@
  */
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 
+import { type RuleMetric, type TelemetryFrame } from "@surakkha/shared";
 import { type LatestReadingPayload } from "@surakkha/shared/dashboard";
 import { createLogger } from "@surakkha/shared/logger";
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
@@ -131,14 +132,16 @@ const listLatestReadingsFromPrisma = async (): Promise<readonly LatestReadingPay
         JOIN "Device" d ON d."id" = r."deviceId"
        ORDER BY r."deviceId", r."serverReceivedAt" DESC
     `;
-    return (rows as ReadonlyArray<{
-      readonly deviceId: string;
-      readonly name: string | null;
-      readonly ts: Date;
-      readonly serverReceivedAt: Date;
-      readonly metrics: TelemetryMetrics;
-      readonly flags: string[];
-    }>).map((row) => ({
+    return (
+      rows as ReadonlyArray<{
+        readonly deviceId: string;
+        readonly name: string | null;
+        readonly ts: Date;
+        readonly serverReceivedAt: Date;
+        readonly metrics: TelemetryMetrics;
+        readonly flags: string[];
+      }>
+    ).map((row) => ({
       device_id: row.deviceId,
       name: row.name,
       ts: row.ts instanceof Date ? row.ts.getTime() : Number(row.ts),
@@ -179,13 +182,15 @@ const listDevicesRosterFromPrisma = async () => {
        GROUP BY d."id", d."name", d."lat", d."lng"
        ORDER BY d."id" ASC
     `;
-    return (rows as ReadonlyArray<{
-      readonly id: string;
-      readonly name: string | null;
-      readonly lat: number | null;
-      readonly lng: number | null;
-      readonly lastReadingAt: Date | string | null;
-    }>).map((row) => ({
+    return (
+      rows as ReadonlyArray<{
+        readonly id: string;
+        readonly name: string | null;
+        readonly lat: number | null;
+        readonly lng: number | null;
+        readonly lastReadingAt: Date | string | null;
+      }>
+    ).map((row) => ({
       id: row.id,
       name: row.name,
       lat: row.lat,
@@ -198,10 +203,7 @@ const listDevicesRosterFromPrisma = async () => {
             : new Date(row.lastReadingAt).toISOString(),
     }));
   } catch (err) {
-    logger.warn(
-      { err },
-      "listDevicesRoster: prisma error, returning empty list",
-    );
+    logger.warn({ err }, "listDevicesRoster: prisma error, returning empty list");
     return [];
   }
 };
@@ -236,14 +238,16 @@ const listRecentIncidentsFromPrisma = async (limit: number) => {
       },
     });
     const SEVERITY_BUCKETS = new Set(["info", "warning", "critical"]);
-    return (rows as ReadonlyArray<{
-      readonly id: string;
-      readonly deviceId: string;
-      readonly severity: string;
-      readonly metric: string;
-      readonly value: number;
-      readonly openedAt: Date;
-    }>).map((row) => ({
+    return (
+      rows as ReadonlyArray<{
+        readonly id: string;
+        readonly deviceId: string;
+        readonly severity: string;
+        readonly metric: string;
+        readonly value: number;
+        readonly openedAt: Date;
+      }>
+    ).map((row) => ({
       id: row.id,
       device_id: row.deviceId,
       severity: SEVERITY_BUCKETS.has(row.severity)
@@ -290,10 +294,7 @@ const listDevicesFromPrisma = async (): Promise<
     // Log so an operator can tell the difference between "no devices
     // seeded yet" and "DB unreachable" — a per-request `new
     // PrismaClient()` would have leaked handles under burst load.
-    logger.warn(
-      { err },
-      "listDevices: prisma error, returning empty list",
-    );
+    logger.warn({ err }, "listDevices: prisma error, returning empty list");
     return [];
   }
 };
@@ -406,7 +407,7 @@ interface ReadingDelegate {
     findMany(args: {
       readonly where: {
         readonly deviceId: string;
-        readonly metric: import("@surakkha/shared").RuleMetric;
+        readonly metric: RuleMetric;
         readonly ts: { readonly gte: Date };
       };
       readonly orderBy: { readonly ts: "asc" };
@@ -414,7 +415,7 @@ interface ReadingDelegate {
     }): Promise<
       ReadonlyArray<{
         readonly ts: Date;
-        readonly metrics: import("@surakkha/shared").TelemetryFrame["metrics"];
+        readonly metrics: TelemetryFrame["metrics"];
       }>
     >;
   };
@@ -431,7 +432,7 @@ const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
         c.reading.findMany(args) as Promise<
           ReadonlyArray<{
             readonly ts: Date;
-            readonly metrics: import("@surakkha/shared").TelemetryFrame["metrics"];
+            readonly metrics: TelemetryFrame["metrics"];
           }>
         >,
     },
@@ -464,7 +465,6 @@ const initializeRuleEngine = async (): Promise<void> => {
       }),
     );
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error("[rules] boot: hydrate failed; running with no-op hooks", err);
     setIngestHooks(NOOP_HOOKS);
   }
