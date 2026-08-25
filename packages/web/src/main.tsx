@@ -109,10 +109,20 @@ const SeverityCards = () => (
  * the web container reaches the api over the internal network at
  * `http://api:3000`. In `vite dev` the Vite proxy forwards `/auth/*`
  * and `/api/*` to `http://localhost:3000`; for the browser to see
- * the cookie set with `Path=/auth`, we hit the same origin (Vite
- * proxies it). v1 keeps this single origin — no CORS dance.
+ * the cookie set with `Path=/auth`, the SPA must hit the SAME
+ * origin (Vite / nginx proxies it). v1 keeps this single origin —
+ * no CORS dance.
+ *
+ * Empty string means "same origin". The apiClient then prepends
+ * `""` to call paths like `/auth/login`, `/api/readings/latest`,
+ * `/api/devices`, `/admin/simulator/status`, etc. The previous
+ * value `"/api"` broke `/auth/login` by emitting `/api/auth/login`
+ * (the api has no such route — it lives at `/auth/login`), and
+ * broke the `/api/*` paths by emitting `/api/api/readings/latest`.
+ * The nginx config (web/nginx.conf) proxies `/auth/` and `/api/`
+ * separately to `http://api:3000`.
  */
-const API_ORIGIN = "/api";
+const API_ORIGIN = "";
 const HTTP_UNAUTHORIZED = 401;
 
 /**
