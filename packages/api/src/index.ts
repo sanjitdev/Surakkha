@@ -88,6 +88,17 @@ app.use("/auth", buildAuthRouter({ audit }));
 // `authenticate`; the authenticated routes (`/devices`,
 // `/:device_id/scenario`) mount AFTER `authenticate` below.
 app.use(buildAdminSimulatorPublicRouter());
+
+// Health endpoint — must mount BEFORE `authenticate` so the Docker
+// Compose `depends_on: condition: service_healthy` healthcheck (a
+// bare `fetch('http://localhost:3000/health')` with no Authorization
+// header) returns 200, not 401. Without this ordering the simulator
+// service is blocked from starting (its `depends_on: api: service_healthy`
+// never resolves).
+app.get("/health", (_req: Request, res: Response) => {
+  res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
+});
+
 app.use(authenticate);
 
 /**
@@ -287,10 +298,6 @@ app.use(
   "/admin/simulator",
   buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
 );
-
-app.get("/health", (_req: Request, res: Response) => {
-  res.status(HTTP_OK).json({ status: "ok", service: "surakkha-api" });
-});
 
 // Final 404 — the same shape the Step 0 stub returned, so the Docker
 // healthcheck contract is unchanged.
