@@ -109,9 +109,7 @@ export interface ProcessFrameDeps {
    */
   readonly ruleRepository?: {
     readonly rule: {
-      findMany(args: {
-        readonly where: { readonly isActive: true };
-      }): Promise<ReadonlyArray<unknown>>;
+      findMany(args: { readonly where: { readonly isActive: true } }): Promise<readonly unknown[]>;
     };
   };
 }
@@ -194,7 +192,11 @@ const applyPatch = (state: FrameState, patch: FrameStatePatch | undefined): Fram
  */
 const stepValidate = (
   state: FrameState,
-  deps: { readonly raw: unknown; readonly socket: ProcessFrameDeps["socket"]; readonly now: () => Date },
+  deps: {
+    readonly raw: unknown;
+    readonly socket: ProcessFrameDeps["socket"];
+    readonly now: () => Date;
+  },
 ): StepResult => {
   const result = TelemetryFrameSchema.safeParse(deps.raw);
   if (!result.success) {
@@ -343,9 +345,10 @@ const stepRuleEvaluation = async (
   return { kind: "next" };
 };
 
-const stepAlertEmission = async (
-  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
-): Promise<StepResult> => {
+const stepAlertEmission = async (deps: {
+  readonly deviceId: string;
+  readonly hooks: IngestHooks;
+}): Promise<StepResult> => {
   await deps.hooks.onAlertEmission({
     deviceId: deps.deviceId,
     ruleId: "",
@@ -354,9 +357,10 @@ const stepAlertEmission = async (
   return { kind: "next" };
 };
 
-const stepStateMachineUpdate = async (
-  deps: { readonly deviceId: string; readonly hooks: IngestHooks },
-): Promise<StepResult> => {
+const stepStateMachineUpdate = async (deps: {
+  readonly deviceId: string;
+  readonly hooks: IngestHooks;
+}): Promise<StepResult> => {
   await deps.hooks.onStateMachineUpdate({
     deviceId: deps.deviceId,
     state: "OBSERVING",
@@ -408,9 +412,7 @@ const stepSocketBroadcast = (
  * adjacent pair is a contract violation — `frame.spec.ts` asserts
  * the order against the literal in `PROCESSING_ORDER`.
  */
-export const processFrame = async (
-  deps: ProcessFrameDeps,
-): Promise<ProcessFrameOutcome> => {
+export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrameOutcome> => {
   const { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now = () => new Date() } = deps;
   const hooks = deps.hooks ?? getIngestHooks();
 
@@ -427,7 +429,17 @@ export const processFrame = async (
   };
 
   for (const step of PROCESSING_ORDER) {
-    const result = await dispatchStep(step, state, { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now, hooks });
+    const result = await dispatchStep(step, state, {
+      deviceId,
+      socket,
+      raw,
+      rateLimiter,
+      sequence,
+      prisma,
+      io,
+      now,
+      hooks,
+    });
     if (result.kind === "exit") return result.outcome;
     state = applyPatch(state, result.patch);
   }
@@ -466,11 +478,24 @@ const dispatchStep = async (
     case "auth check":
       return stepAuthCheck();
     case "rate check":
-      return stepRateCheck(state, { deviceId: deps.deviceId, socket: deps.socket, rateLimiter: deps.rateLimiter, hooks: deps.hooks });
+      return stepRateCheck(state, {
+        deviceId: deps.deviceId,
+        socket: deps.socket,
+        rateLimiter: deps.rateLimiter,
+        hooks: deps.hooks,
+      });
     case "seq/drop check":
-      return stepSeqDropCheck(state, { deviceId: deps.deviceId, sequence: deps.sequence, hooks: deps.hooks });
+      return stepSeqDropCheck(state, {
+        deviceId: deps.deviceId,
+        sequence: deps.sequence,
+        hooks: deps.hooks,
+      });
     case "persist":
-      return stepPersist(state, { deviceId: deps.deviceId, prisma: deps.prisma, socket: deps.socket });
+      return stepPersist(state, {
+        deviceId: deps.deviceId,
+        prisma: deps.prisma,
+        socket: deps.socket,
+      });
     case "rule evaluation":
       return stepRuleEvaluation(state, { deviceId: deps.deviceId, hooks: deps.hooks });
     case "alert emission":
