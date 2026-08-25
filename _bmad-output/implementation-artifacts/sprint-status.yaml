@@ -356,17 +356,17 @@ stories:
       context: "_bmad-output/implementation-artifacts/spec-2-9-connection-state-offline-ux.md"
       review: "_bmad-output/implementation-artifacts/.review-content-2.9/review-content.txt"
 
-  # ===== Epic 3 — Rules & Alerts (backlog) =====
+  # ===== Epic 3 — Rules & Alerts =====
   - id: "3.1"
     title: "Rules Table + Prisma Schema"
-    status: backlog
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "0b17f90"
+    shipped: "2026-08-25"
+    covers: ["FR-11"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-3-1-rules-table-prisma-schema.md"
+      review: "_bmad-output/implementation-artifacts/spec-3-1-rules-table-prisma-schema.md"
 
   - id: "3.2"
     title: "Three Rule Types + Evaluation Engine"
