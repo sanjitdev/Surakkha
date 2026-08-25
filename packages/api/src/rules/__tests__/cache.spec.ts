@@ -35,7 +35,9 @@ const makeRow = (overrides: Partial<RuleRow> = {}): RuleRow => ({
   ...overrides,
 });
 
-const buildStubPrisma = (rows: ReadonlyArray<RuleRow>): {
+const buildStubPrisma = (
+  rows: readonly RuleRow[],
+): {
   prisma: PrismaRuleReader;
   findMany: ReturnType<typeof vi.fn>;
 } => {
@@ -77,9 +79,7 @@ describe("Story 3.2 — hydrateActiveRuleCache", () => {
     const rows: RuleRow[] = [makeRow({ id: "active", isActive: true })];
     const { prisma, findMany } = buildStubPrisma(rows);
     const cache = await hydrateActiveRuleCache(prisma);
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { isActive: true } }),
-    );
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isActive: true } }));
     expect(cache.byId.has("active")).toBe(true);
   });
 
