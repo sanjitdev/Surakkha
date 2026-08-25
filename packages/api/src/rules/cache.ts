@@ -19,10 +19,11 @@
  * `console.warn` call and the remaining valid rows still load
  * (per-row rejection, not all-or-nothing).
  */
-import type { RuleMetric } from "@surakkha/shared";
 
 import { type EngineRule, requireRuleType } from "./engine";
 import { type PrismaRuleReader, type RuleRow } from "./prismaReader";
+
+import type { RuleMetric } from "@surakkha/shared";
 
 /**
  * Index key sentinel for a rule whose `deviceId IS NULL` (a global
@@ -129,7 +130,7 @@ export const refreshActiveRuleCache = async (
  * so a future test can pin the exact rejection + index population
  * semantics without going through the Prisma mock.
  */
-const buildCacheFromRows = (rows: ReadonlyArray<RuleRow>): ActiveRuleCache => {
+const buildCacheFromRows = (rows: readonly RuleRow[]): ActiveRuleCache => {
   const byId = new Map<string, EngineRule>();
   const byDeviceMetric = new Map<string, EngineRule[]>();
   for (const row of rows) {
@@ -142,13 +143,11 @@ const buildCacheFromRows = (rows: ReadonlyArray<RuleRow>): ActiveRuleCache => {
     // be explicitly typed" constraint on the row iterator.
     try {
       requireRuleType(row.ruleType as string);
-    } catch (err) {
+    } catch (_err) {
       // The warning carries both `ruleType` and `id` per the cache
       // AC + the spec's per-row rejection contract. We do NOT throw
       // — valid rows in the same batch still load.
-      console.warn(
-        `[rules] hydrate: skipped unsupported ruleType=${row.ruleType} id=${row.id}`,
-      );
+      console.warn(`[rules] hydrate: skipped unsupported ruleType=${row.ruleType} id=${row.id}`);
       continue;
     }
     const engineRule: EngineRule = projectRow(row);
@@ -180,11 +179,7 @@ export const lookupRulesForFrame = (
   deviceId: string,
   metric: RuleMetric,
 ): readonly EngineRule[] => {
-  const globalRules = cache.byDeviceMetric.get(
-    indexKey(null, metric),
-  ) ?? [];
-  const deviceRules = cache.byDeviceMetric.get(
-    indexKey(deviceId, metric),
-  ) ?? [];
+  const globalRules = cache.byDeviceMetric.get(indexKey(null, metric)) ?? [];
+  const deviceRules = cache.byDeviceMetric.get(indexKey(deviceId, metric)) ?? [];
   return [...globalRules, ...deviceRules];
 };
