@@ -56,20 +56,12 @@ import {
   deriveName,
   upsertDefaultRule,
 } from "./seedHelpers.js";
-
 import { THRESHOLD_TABLE } from "./thresholdTable.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const DEVICES_JSON_PATH = resolve(
-  __dirname,
-  "..",
-  "..",
-  "simulator",
-  "src",
-  "devices.json",
-);
+const DEVICES_JSON_PATH = resolve(__dirname, "..", "..", "simulator", "src", "devices.json");
 
 interface DevicesFileShape {
   readonly tick_interval_ms: number;
@@ -91,18 +83,14 @@ const loadDevicesFile = (): DevicesFileShape => {
   try {
     raw = readFileSync(DEVICES_JSON_PATH, "utf8");
   } catch (err) {
-    throw new Error(
-      `seed: failed to read ${DEVICES_JSON_PATH}: ${(err as Error).message}`,
-    );
+    throw new Error(`seed: failed to read ${DEVICES_JSON_PATH}: ${(err as Error).message}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(
-      `seed: malformed JSON in devices.json: ${(err as Error).message}`,
-    );
+    throw new Error(`seed: malformed JSON in devices.json: ${(err as Error).message}`);
   }
 
   if (
@@ -110,9 +98,7 @@ const loadDevicesFile = (): DevicesFileShape => {
     parsed === null ||
     !Array.isArray((parsed as { devices?: unknown }).devices)
   ) {
-    throw new Error(
-      "seed: devices.json must be an object with a `devices` array",
-    );
+    throw new Error("seed: devices.json must be an object with a `devices` array");
   }
   return parsed as DevicesFileShape;
 };
@@ -120,9 +106,7 @@ const loadDevicesFile = (): DevicesFileShape => {
 const main = async (): Promise<void> => {
   const parsed = loadDevicesFile();
   if (parsed.devices.length === 0) {
-    console.warn(
-      "seed: devices.json contains zero devices — nothing to backfill",
-    );
+    console.warn("seed: devices.json contains zero devices — nothing to backfill");
     return;
   }
 
@@ -167,9 +151,7 @@ const main = async (): Promise<void> => {
     let skippedCount = 0;
     if (THRESHOLD_TABLE.length === 0) {
       // eslint-disable-next-line no-console
-      console.log(
-        "seed: THRESHOLD_TABLE is empty — no-op",
-      );
+      console.log("seed: THRESHOLD_TABLE is empty — no-op");
     } else {
       for (const row of THRESHOLD_TABLE) {
         const result = await upsertDefaultRule(prisma, row);

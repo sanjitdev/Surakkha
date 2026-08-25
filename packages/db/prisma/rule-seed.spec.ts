@@ -33,17 +33,9 @@ import { join } from "node:path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  RULE_METRICS,
-  RULE_OPERATORS,
-  RULE_SEVERITIES,
-} from "@surakkha/shared";
+import { RULE_METRICS, RULE_OPERATORS, RULE_SEVERITIES } from "@surakkha/shared";
 
-import {
-  assertValidSeedRow,
-  THRESHOLD_TABLE,
-  WIRE_OPERATOR_TO_PRISMA,
-} from "./thresholdTable.js";
+import { assertValidSeedRow, THRESHOLD_TABLE, WIRE_OPERATOR_TO_PRISMA } from "./thresholdTable.js";
 
 const SEED_TS_PATH = join("prisma", "seed.ts");
 
@@ -123,13 +115,7 @@ describe("Block A — THRESHOLD_TABLE (FR-13 verbatim)", () => {
   });
 
   it("WIRE_OPERATOR_TO_PRISMA is a bijection between the 5 FR-12 wire symbols and RULE_OPERATORS (AC9)", () => {
-    expect(Object.keys(WIRE_OPERATOR_TO_PRISMA).sort()).toEqual([
-      "<",
-      "<=",
-      "==",
-      ">",
-      ">=",
-    ]);
+    expect(Object.keys(WIRE_OPERATOR_TO_PRISMA).sort()).toEqual(["<", "<=", "==", ">", ">="]);
 
     for (const value of Object.values(WIRE_OPERATOR_TO_PRISMA)) {
       expect(RULE_OPERATORS).toContain(value);
@@ -139,9 +125,7 @@ describe("Block A — THRESHOLD_TABLE (FR-13 verbatim)", () => {
     // developer who renames a Prisma enum token (e.g. `gte` → `gt_eq`)
     // trips this assertion because the `gte` value no longer maps back.
     for (const op of RULE_OPERATORS) {
-      const reverseFound = Object.values(WIRE_OPERATOR_TO_PRISMA).includes(
-        op,
-      );
+      const reverseFound = Object.values(WIRE_OPERATOR_TO_PRISMA).includes(op);
       expect(reverseFound).toBe(true);
     }
   });
@@ -163,12 +147,8 @@ describe("Block A — assertValidSeedRow (seven branches)", () => {
     expect(() => assertValidSeedRow("not-an-object")).toThrow(
       /malformed threshold row: not an object/,
     );
-    expect(() => assertValidSeedRow(null)).toThrow(
-      /malformed threshold row: not an object/,
-    );
-    expect(() => assertValidSeedRow([1, 2, 3])).toThrow(
-      /malformed threshold row: not an object/,
-    );
+    expect(() => assertValidSeedRow(null)).toThrow(/malformed threshold row: not an object/);
+    expect(() => assertValidSeedRow([1, 2, 3])).toThrow(/malformed threshold row: not an object/);
   });
 
   it('rejects a row missing the "metric" key', () => {
@@ -390,9 +370,7 @@ const buildMockPrisma = (
         return Promise.reject(upsertReturn);
       }
       return Promise.resolve(
-        options.echoCreate
-          ? { ...upsertReturn, ...args.create }
-          : upsertReturn,
+        options.echoCreate ? { ...upsertReturn, ...args.create } : upsertReturn,
       );
     }),
     update: vi.fn(),
@@ -432,10 +410,9 @@ describe("Block B — upsertDefaultRule (AC2 / AC3 / AC5 / AC6 / P2002)", () => 
     it(`AC2 row ${index} (${row.metric} ${row.operator} ${row.threshold} ${row.severity}) — fresh DB: prisma.rule.upsert called with the documented create payload + returns { status: 'created' }`, async () => {
       const upsertDefaultRule = await importUpsertDefaultRule();
       const ts = new Date("2026-08-25T00:00:00.000Z");
-      const mockPrisma = buildMockPrisma(
-        buildMockRuleRow({ createdAt: ts, updatedAt: ts }),
-        { echoCreate: true },
-      );
+      const mockPrisma = buildMockPrisma(buildMockRuleRow({ createdAt: ts, updatedAt: ts }), {
+        echoCreate: true,
+      });
 
       const result = await upsertDefaultRule(
         mockPrisma as unknown as Parameters<typeof upsertDefaultRule>[0],
@@ -653,10 +630,11 @@ describe("Block B — upsertDefaultRule (AC2 / AC3 / AC5 / AC6 / P2002)", () => 
   it("P2002 race wrap — prisma.rule.upsert rejects with P2002: throws wrapped error matching /seed: rule upsert race for key/ AND preserves the original error in cause", async () => {
     const upsertDefaultRule = await importUpsertDefaultRule();
     // Loopback-2 F36 fix — pin the P2002 catch branch.
-    const prismaError = new Prisma.PrismaClientKnownRequestError(
-      "Unique constraint failed",
-      { code: "P2002", clientVersion: "5.20.0", meta: { target: ["x"] } },
-    );
+    const prismaError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "5.20.0",
+      meta: { target: ["x"] },
+    });
     const mockPrisma = buildMockPrisma(prismaError);
 
     const row = requireRow(0); // ph lt 6.5 critical
@@ -681,7 +659,7 @@ describe("Block B — upsertDefaultRule (AC2 / AC3 / AC5 / AC6 / P2002)", () => 
     // have to inspect `cause` to know it's a unique-constraint race.
     expect(captured!.message).toContain("(P2002)");
     // Original Prisma error preserved in `cause` for debuggability.
-    const cause = (captured as Error & { cause?: unknown }).cause;
+    const { cause } = captured as Error & { cause?: unknown };
     expect(cause).toBe(prismaError);
     // The wrapped error's own code is NOT "P2002" — the seed's wrapped
     // message takes precedence. The original code lives in `cause`.
@@ -706,15 +684,11 @@ describe("Block C — seed.ts adoption pins (AC10 / AC11 + loopback-2 F8/F35)", 
   });
 
   it("loopback-2 F8 — seed.ts iterates THRESHOLD_TABLE in main() (regex /for ... const row ... THRESHOLD_TABLE/)", () => {
-    expect(source).toMatch(
-      /for\s*\(\s*const\s+row\s+of\s*THRESHOLD_TABLE\s*\)/,
-    );
+    expect(source).toMatch(/for\s*\(\s*const\s+row\s+of\s*THRESHOLD_TABLE\s*\)/);
   });
 
   it("loopback-2 F35 — seed.ts calls `await upsertDefaultRule(prisma, row)` inside the for-loop body", () => {
-    expect(source).toMatch(
-      /await\s+upsertDefaultRule\s*\(\s*prisma\s*,\s*row\s*\)/,
-    );
+    expect(source).toMatch(/await\s+upsertDefaultRule\s*\(\s*prisma\s*,\s*row\s*\)/);
   });
 
   it("re-review V2 — seed.ts emits the documented `was deactivated by an admin; preserving as-is` skip-inactive notice (AC6 log format pinned)", () => {
@@ -731,9 +705,7 @@ describe("Block C — seed.ts adoption pins (AC10 / AC11 + loopback-2 F8/F35)", 
     // in source order. Pins that the device-loop success log is the
     // last "all good" line in the seed's stdout so a rule abort shows
     // up before any "all good" device success line.
-    const deviceLogIndex = source.indexOf(
-      "seed: upserted ${parsed.devices.length} device rows",
-    );
+    const deviceLogIndex = source.indexOf("seed: upserted ${parsed.devices.length} device rows");
     const ruleLoopIndex = source.indexOf("for (const row of THRESHOLD_TABLE)");
     expect(deviceLogIndex).toBeGreaterThan(-1);
     expect(ruleLoopIndex).toBeGreaterThan(-1);

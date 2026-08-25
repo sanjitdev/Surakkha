@@ -106,10 +106,7 @@ export const THRESHOLD_TABLE: readonly RuleSeedRow[] = [
  * format can evolve (e.g. adopting a `<>` style negation) without
  * breaking the engine's read path; only this helper changes.
  */
-export const WIRE_OPERATOR_TO_PRISMA: Record<
-  "<" | ">" | "<=" | ">=" | "==",
-  RuleOperator
-> = {
+export const WIRE_OPERATOR_TO_PRISMA: Record<"<" | ">" | "<=" | ">=" | "==", RuleOperator> = {
   "<": "lt",
   ">": "gt",
   "<=": "lte",
@@ -138,59 +135,46 @@ export const assertValidSeedRow = (row: unknown): asserts row is RuleSeedRow => 
   }
   const obj = row as Record<string, unknown>;
   if (!("metric" in obj)) {
-    throw new Error("seed: malformed threshold row: missing field \"metric\"");
+    throw new Error('seed: malformed threshold row: missing field "metric"');
   }
   if (!("operator" in obj)) {
-    throw new Error(
-      "seed: malformed threshold row: missing field \"operator\"",
-    );
+    throw new Error('seed: malformed threshold row: missing field "operator"');
   }
   if (!("severity" in obj)) {
-    throw new Error(
-      "seed: malformed threshold row: missing field \"severity\"",
-    );
+    throw new Error('seed: malformed threshold row: missing field "severity"');
   }
   if (typeof obj.threshold !== "number" || !Number.isFinite(obj.threshold)) {
-    throw new Error(
-      "seed: malformed threshold row: threshold must be a finite number",
-    );
+    throw new Error("seed: malformed threshold row: threshold must be a finite number");
   }
-  // Enum-membership guards. An empty string is NOT in any of the
-  // three enum arrays, so the `.includes` check alone catches it —
-  // but the spec mandates a distinct message for the empty-string
-  // case so the regression is greppable from the test.
-  if (!(RULE_METRICS as readonly string[]).includes(obj.metric as string)) {
-    if (obj.metric === "") {
+  // Enum-membership guards delegated to a helper so this function
+  // stays below the eslint complexity cap. An empty string is NOT in
+  // any of the three enum arrays, so the `.includes` check alone
+  // catches it — but the spec mandates a distinct message for the
+  // empty-string case so the regression is greppable from the test.
+  assertValidEnumValue("metric", obj.metric, RULE_METRICS);
+  assertValidEnumValue("operator", obj.operator, RULE_OPERATORS);
+  assertValidEnumValue("severity", obj.severity, RULE_SEVERITIES);
+};
+
+/**
+ * Per-field enum-membership guard. Throws with a distinct message
+ * for the empty-string case so the regression is greppable from the
+ * test (otherwise both empty and unknown values would surface under
+ * the same `not in [...]` message).
+ */
+const assertValidEnumValue = (
+  field: "metric" | "operator" | "severity",
+  value: unknown,
+  allowed: readonly string[],
+): void => {
+  if (!(allowed as readonly string[]).includes(value as string)) {
+    if (value === "") {
       throw new Error(
-        `seed: malformed threshold row: metric=""; expected one of [${RULE_METRICS.join(", ")}]`,
+        `seed: malformed threshold row: ${field}=""; expected one of [${allowed.join(", ")}]`,
       );
     }
     throw new Error(
-      `seed: malformed threshold row: metric="${String(obj.metric)}" not in [${RULE_METRICS.join(", ")}]`,
-    );
-  }
-  if (
-    !(RULE_OPERATORS as readonly string[]).includes(obj.operator as string)
-  ) {
-    if (obj.operator === "") {
-      throw new Error(
-        `seed: malformed threshold row: operator=""; expected one of [${RULE_OPERATORS.join(", ")}]`,
-      );
-    }
-    throw new Error(
-      `seed: malformed threshold row: operator="${String(obj.operator)}" not in [${RULE_OPERATORS.join(", ")}]`,
-    );
-  }
-  if (
-    !(RULE_SEVERITIES as readonly string[]).includes(obj.severity as string)
-  ) {
-    if (obj.severity === "") {
-      throw new Error(
-        `seed: malformed threshold row: severity=""; expected one of [${RULE_SEVERITIES.join(", ")}]`,
-      );
-    }
-    throw new Error(
-      `seed: malformed threshold row: severity="${String(obj.severity)}" not in [${RULE_SEVERITIES.join(", ")}]`,
+      `seed: malformed threshold row: ${field}="${String(value)}" not in [${allowed.join(", ")}]`,
     );
   }
 };

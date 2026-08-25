@@ -12,8 +12,8 @@
  * the reverse proxy / orchestration layer is responsible for the same
  * routing — see nginx.conf.
  */
-import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
 
 const API_TARGET = "http://localhost:3000";
 
