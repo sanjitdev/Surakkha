@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-25T19:40:00.000Z
+last_updated: 2026-08-25T20:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -89,7 +89,7 @@ development_status:
   epic-3: in-progress
   3-1-rules-table-prisma-schema: done
   3-2-three-rule-types-evaluation-engine: done
-  3-3-default-thresholds-seed-script: review
+  3-3-default-thresholds-seed-script: done
   3-4-de-bouncing: backlog
   3-5-alert-lifecycle: backlog
   3-6-auto-create-incident-from-warning-critical-alert: backlog
@@ -152,7 +152,8 @@ stories:
     epic: "1"
     commit: "3039b88"
     shipped: "2026-08-21"
-    covers: ["UX-DR-1", "UX-DR-2", "UX-DR-3", "UX-DR-4", "UX-DR-15", "UX-DR-17", "UX-DR-18", "NFR-9"]
+    covers:
+      ["UX-DR-1", "UX-DR-2", "UX-DR-3", "UX-DR-4", "UX-DR-15", "UX-DR-17", "UX-DR-18", "NFR-9"]
     ledger:
       context: "_bmad-output/implementation-artifacts/stories/1.2a.context.md"
       review: "_bmad-output/implementation-artifacts/stories/1.2a.review.md"
@@ -318,7 +319,19 @@ stories:
     epic: "2"
     commit: "eea8dee"
     shipped: "2026-08-24"
-    covers: ["FR-11", "FR-12", "FR-13", "FR-14", "FR-15", "AR-11", "UX-DR-2", "UX-DR-5", "UX-DR-6", "UX-DR-7"]
+    covers:
+      [
+        "FR-11",
+        "FR-12",
+        "FR-13",
+        "FR-14",
+        "FR-15",
+        "AR-11",
+        "UX-DR-2",
+        "UX-DR-5",
+        "UX-DR-6",
+        "UX-DR-7",
+      ]
     ledger:
       context: "_bmad-output/implementation-artifacts/2-6-dashboard-shell.md"
       review: null
@@ -381,10 +394,10 @@ stories:
 
   - id: "3.3"
     title: "Default Thresholds Seed Script"
-    status: review
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
+    commit: "7af1269"
+    shipped: "2026-08-25"
     covers: ["FR-11", "FR-13"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-3-3-default-thresholds-seed-script.md"
@@ -782,7 +795,22 @@ epics:
     title: "Incidents & Workflow"
     goal: "Operators and Technicians acknowledge, assign, inspect, and resolve incidents through the 4-column Kanban with RBAC enforcement at every transition."
     status: backlog
-    stories: ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8", "4.9", "4.10", "4.11", "4.12", "4.13"]
+    stories:
+      [
+        "4.1",
+        "4.2",
+        "4.3",
+        "4.4",
+        "4.5",
+        "4.6",
+        "4.7",
+        "4.8",
+        "4.9",
+        "4.10",
+        "4.11",
+        "4.12",
+        "4.13",
+      ]
   - id: "5"
     title: "Reporting & Audit"
     goal: "Admins can review the audit log, export 30 days of readings to CSV, and inspect reading aggregates."
