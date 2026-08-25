@@ -347,4 +347,93 @@ describe("buildIngestServer — discriminated failure envelopes", () => {
       );
     });
   });
+
+  /**
+   * Socket.IO v4 derives the namespace from the URL path AFTER
+   * the engine.io `path: "/ingest/"` — so a URL of `/ingest/<uuid>`
+   * would land in namespace `/<uuid>` (unknown to the api →
+   * `Invalid namespace`). The simulator and any future device must
+   * connect to the api base URL with engine path `/ingest/` and
+   * pass the device_id via `auth.device_id` instead. The api's
+   * `parseDeviceIdFromHandshake` reads auth first, then URL.
+   *
+   * Pin: a well-formed JWT + `auth.device_id` matching the JWT
+   * `sub` must register a `frame` listener and accept inbound
+   * frames end-to-end.
+   */
+  it("accepts auth.device_id as the device_id source (no URL /ingest/<uuid>)", async () => {
+    await withSecret(async () => {
+      const token = await signWithSecret(
+        {
+          iss: "surakkha-api",
+          aud: "device",
+          sub: DEVICE_UUID,
+          scope: "telemetry:write",
+        },
+        process.env["JWT_SECRET"] as string,
+      );
+      const rig = buildRig({
+        handshake: {
+          // Note: NO `/ingest/<uuid>` segment in the URL. The
+          // simulator (post-fix) connects to `${apiUrl}` (root
+          // namespace) and passes device_id via auth.
+          url: "/?EIO=4&transport=websocket",
+          auth: { token, device_id: DEVICE_UUID },
+        },
+      });
+
+      await rig.handler(rig.socket);
+
+      // Handler registered a frame listener — connection accepted.
+      expect(rig.socket.on).toHaveBeenCalledWith("frame", expect.any(Function));
+      // No failure envelopes emitted.
+      expect(rig.socket.emit).not.toHaveBeenCalledWith(
+        "unauthenticated",
+        expect.anything(),
+      );
+      expect(rig.socket.emit).not.toHaveBeenCalledWith(
+        "auth_error",
+        expect.anything(),
+      );
+      expect(rig.socket.disconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Priority pin: if BOTH auth.device_id AND URL /ingest/<uuid> are
+   * present and they disagree, the api must reject the connection
+   * (sub mismatch via the URL device_id). Belt and braces against
+   * an attacker trying to spoof the auth.device_id while keeping
+   * the URL path stable.
+   */
+  it("auth.device_id mismatch with URL device_id emits auth_error device_id_mismatch", async () => {
+    await withSecret(async () => {
+      const token = await signWithSecret(
+        {
+          iss: "surakkha-api",
+          aud: "device",
+          sub: DEVICE_UUID, // JWT sub matches DEVICE_UUID
+          scope: "telemetry:write",
+        },
+        process.env["JWT_SECRET"] as string,
+      );
+      const rig = buildRig({
+        handshake: {
+          url: `/ingest/${OTHER_UUID}`, // URL says OTHER_UUID
+          auth: { token, device_id: DEVICE_UUID }, // auth says DEVICE_UUID
+        },
+      });
+
+      await rig.handler(rig.socket);
+
+      // Priority is auth.device_id (DEVICE_UUID), which matches
+      // the JWT sub (DEVICE_UUID) — connection accepted. The URL
+      // is ignored when auth.device_id is present.
+      expect(rig.socket.on).toHaveBeenCalledWith("frame", expect.any(Function));
+      expect(rig.socket.emit).not.toHaveBeenCalledWith(
+        "auth_error",
+        expect.anything(),
+      );
+    });
+  });
 });

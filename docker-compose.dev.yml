@@ -86,7 +86,11 @@ services:
         condition: service_healthy
     environment:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      SIMULATOR_API_URL: http://api:3000
+      # Simulator reads `API_URL` (packages/simulator/src/index.ts:210),
+      # NOT `SIMULATOR_API_URL`. The compose project's default network
+      # resolves the `api` service name (the `container_name:` override
+      # is for DNS lookups by container name only).
+      API_URL: http://api:3000
       SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
       NODE_ENV: production
       LOG_LEVEL: info

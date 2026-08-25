@@ -30,6 +30,12 @@ COPY --from=build /repo/package.json ./
 COPY --from=build /repo/pnpm-lock.yaml ./
 COPY --from=build /repo/packages/simulator/package.json ./packages/simulator/
 COPY --from=build /repo/packages/simulator/dist ./packages/simulator/dist
+# `tsc` with `rootDir: ./src` + `include: ["src/**/*.ts"]` emits only
+# `.js`/`.d.ts` — JSON config files (devices.json) are not compiled.
+# The simulator reads `devices.json` from `__dirname` at runtime
+# (packages/simulator/src/index.ts:48), so the file must be present
+# in `dist/` inside the runtime image. Copy it explicitly.
+COPY --from=build /repo/packages/simulator/src/devices.json ./packages/simulator/dist/devices.json
 COPY --from=build /repo/packages/shared/package.json ./packages/shared/
 COPY --from=build /repo/packages/shared/dist ./packages/shared/dist
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate \

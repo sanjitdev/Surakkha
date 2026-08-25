@@ -61,13 +61,25 @@ const uuidV4Pattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * Extract the device_id from the connection URL. The socket's
- * `handshake.url` is the path + query of the inbound request, e.g.
- * `/ingest/<uuid>?token=…`. We parse the segment right after
- * `/ingest/` and validate it as a UUIDv4 so a malformed value
- * can't slip through to the auth check.
+ * Extract the device_id from the connection handshake. The wire
+ * contract (architecture §3.4, AR-12, I-3) puts the device_id on the
+ * URL path: `/ingest/<uuid>?token=…`. In practice Socket.IO v4
+ * treats the URL path segment AFTER the engine.io `path` as the
+ * namespace, so `/ingest/<uuid>` would land in namespace `/<uuid>`
+ * (unknown → `Invalid namespace`). The simulator and any future
+ * device must therefore connect to the api base URL with
+ * `path: "/ingest/"` (namespace = root) and pass the device_id
+ * via `auth.device_id` instead. The URL path / query remains a
+ * secondary source for backward compat with older clients that
+ * still hit `/ingest/<uuid>?token=…`.
+ *
+ * Priority: `auth.device_id` → URL path segment after `ingest`.
  */
 const parseDeviceIdFromHandshake = (socket: MinimalSocket): string => {
+  const authDeviceId = socket.handshake.auth?.["device_id"];
+  if (typeof authDeviceId === "string" && authDeviceId !== "") {
+    return authDeviceId;
+  }
   const url = socket.handshake.url ?? "";
   const parsedUrl = new URL(url, "http://localhost");
   const pathSegments = parsedUrl.pathname.split("/").filter(Boolean);

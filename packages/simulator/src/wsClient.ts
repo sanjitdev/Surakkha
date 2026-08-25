@@ -70,7 +70,10 @@ export interface WsClientOptions {
   readonly connect?: (
     url: string,
     opts: {
-      readonly auth: { readonly token: string };
+      readonly auth: {
+        readonly token: string;
+        readonly device_id: string;
+      };
       readonly transports: readonly ["websocket"];
       readonly path: string;
       readonly reconnection: false;
@@ -280,10 +283,18 @@ export class WsClient {
   // ---------------------------------------------------------------------------
 
   private openSocket = (): void => {
-    const url = `${this.opts.apiUrl.replace(/\/$/, "")}/ingest/${this.opts.deviceId}`;
+    // The architecture (§3.4) puts the device_id in the URL. Socket.IO
+    // v4 treats the URL path segment after the engine.io `path` as the
+    // namespace — so a URL of `/ingest/<uuid>` would land in namespace
+    // `/<uuid>` (unknown to the api → `Invalid namespace`). Connect
+    // to the api base URL with engine path `/ingest/` (namespace = `/`)
+    // and pass the device_id via `auth.device_id`; the api's
+    // `extractDeviceIdFromHandshake` reads it back from `auth` and
+    // compares it to the JWT `sub` exactly as before.
+    const url = this.opts.apiUrl.replace(/\/$/, "");
     const connect = this.opts.connect ?? defaultConnect;
     const fresh = connect(url, {
-      auth: { token: this.opts.token },
+      auth: { token: this.opts.token, device_id: this.opts.deviceId },
       transports: ["websocket"],
       path: "/ingest/",
       reconnection: false,
@@ -626,7 +637,7 @@ export class WsClient {
 const defaultConnect = (
   url: string,
   opts: {
-    readonly auth: { readonly token: string };
+    readonly auth: { readonly token: string; readonly device_id: string };
     readonly transports: readonly ["websocket"];
     readonly path: string;
     readonly reconnection: false;
