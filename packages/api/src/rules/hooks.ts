@@ -32,26 +32,24 @@
 import { RULE_METRICS, type RuleMetric } from "@surakkha/shared";
 
 import {
-  EMPTY_BREACH_RESULTS,
-  evaluateRules,
-  type BreachResult,
-  type EngineObservation,
-} from "./engine";
-import {
-  GLOBAL_DEVICE_SENTINEL,
-  lookupRulesForFrame,
-  type ActiveRuleCache,
-} from "./cache";
-import type { ReadingRepository } from "../ingest/frame";
-import {
-  resetIngestHooks,
   type AlertEmissionInput,
   type AuditAppendInput,
   type IngestHooks,
+  resetIngestHooks,
   type RuleEvaluationInput,
   type StateMachineUpdateInput,
 } from "../ingest/hooks";
+
+import { type ActiveRuleCache, GLOBAL_DEVICE_SENTINEL, lookupRulesForFrame } from "./cache";
+import {
+  type BreachResult,
+  EMPTY_BREACH_RESULTS,
+  type EngineObservation,
+  evaluateRules,
+} from "./engine";
+
 import type { PrismaRuleReader } from "./prismaReader";
+import type { ReadingRepository } from "../ingest/frame";
 
 /**
  * Window the hook queries for rate-rule `recentReadings`. Per
@@ -106,8 +104,7 @@ const pickFrameMetric = (
     const typedKey = k as RuleMetric;
     const globalCount =
       cache.byDeviceMetric.get(`${GLOBAL_DEVICE_SENTINEL}::${typedKey}`)?.length ?? 0;
-    const deviceCount =
-      cache.byDeviceMetric.get(`${deviceId}::${typedKey}`)?.length ?? 0;
+    const deviceCount = cache.byDeviceMetric.get(`${deviceId}::${typedKey}`)?.length ?? 0;
     if (globalCount + deviceCount > 0) return typedKey;
   }
   return null;
@@ -125,7 +122,7 @@ const buildRecentReadings = async (
     readonly metric: RuleMetric;
     readonly observedAt: Date;
   },
-): Promise<readonly { readonly ts: Date; readonly value: number }[]> => {
+): Promise<ReadonlyArray<{ readonly ts: Date; readonly value: number }>> => {
   const since = new Date(args.observedAt.getTime() - RATE_WINDOW_MS);
   const rows = await readingRepository.reading.findMany({
     where: { deviceId: args.deviceId, metric: args.metric, ts: { gte: since } },
@@ -133,13 +130,9 @@ const buildRecentReadings = async (
     take: RATE_MAX_POINTS,
   });
   // Sort ascending (defence-in-depth against DB-side ORDER BY drift).
-  const sorted = [...rows].sort(
-    (a, b) => a.ts.getTime() - b.ts.getTime(),
-  );
+  const sorted = [...rows].sort((a, b) => a.ts.getTime() - b.ts.getTime());
   // Drop future-ts (clock-skew guard).
-  const futureDropped = sorted.filter(
-    (r) => r.ts.getTime() <= args.observedAt.getTime(),
-  );
+  const futureDropped = sorted.filter((r) => r.ts.getTime() <= args.observedAt.getTime());
   // Dedupe by ts keeping the latest value (last-write-wins).
   // Defense-in-depth: `Number.isFinite` rejects `NaN`, `Infinity`,
   // and `-Infinity` from a buggy sensor or a corrupted DB row. A
@@ -167,17 +160,9 @@ const buildRecentReadings = async (
  * time. `readingRepository` is the seam the rate/absence rules
  * query through.
  */
-export const installRuleEngineHooks = (
-  deps: InstallRuleEngineHooksDeps,
-): IngestHooks => {
-  const onRuleEvaluation = async (
-    input: RuleEvaluationInput,
-  ): Promise<readonly BreachResult[]> => {
-    const metric = pickFrameMetric(
-      deps.cache,
-      input.deviceId,
-      input.frame.metrics,
-    );
+export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): IngestHooks => {
+  const onRuleEvaluation = async (input: RuleEvaluationInput): Promise<readonly BreachResult[]> => {
+    const metric = pickFrameMetric(deps.cache, input.deviceId, input.frame.metrics);
     if (metric === null) {
       return EMPTY_BREACH_RESULTS;
     }
@@ -187,14 +172,11 @@ export const installRuleEngineHooks = (
       return EMPTY_BREACH_RESULTS;
     }
     // Single window query per frame (covers rate + absence).
-    const recentReadings = await buildRecentReadings(
-      deps.readingRepository,
-      {
-        deviceId: input.deviceId,
-        metric,
-        observedAt,
-      },
-    );
+    const recentReadings = await buildRecentReadings(deps.readingRepository, {
+      deviceId: input.deviceId,
+      metric,
+      observedAt,
+    });
     // Read the metric value off the inbound frame; the engine does
     // not touch the raw frame — this is the seam that pins the
     // frame→observation projection.
