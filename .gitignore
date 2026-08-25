@@ -41,3 +41,6 @@ _bmad-output/**/.review-content-*/
 
 # Docker volumes
 postgres-data/
+
+# Husky's internal cache (re-created on each `pnpm install`)
+.husky/_/

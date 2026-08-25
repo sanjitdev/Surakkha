@@ -2,7 +2,7 @@
 
 Thanks for your interest in Surakkha. This document explains how to set up a development environment, the conventions we follow, and how to submit a change.
 
-Surakkha is a real-time water-safety monitoring and incident-management platform for Bangladeshi government primary schools. The planning artefacts in `docs/` and `_bmad-output/planning-artifacts/` are the source of truth for *what to build*; this document covers *how to build it*.
+Surakkha is a real-time water-safety monitoring and incident-management platform for Bangladeshi government primary schools. The planning artefacts in `docs/` and `_bmad-output/planning-artifacts/` are the source of truth for _what to build_; this document covers _how to build it_.
 
 ---
 
@@ -16,13 +16,13 @@ All participants are expected to follow the [Contributor Covenant](./CODE_OF_CON
 
 ### Prerequisites
 
-| Tool        | Version    | Notes                                                    |
-|-------------|------------|----------------------------------------------------------|
-| Node.js     | 20 LTS     | Required for `api`, `web`, and `simulator` packages.      |
-| pnpm        | 9+         | Workspace-aware install; required for the monorepo.       |
-| Docker      | 24+        | Required for the `db` service and the full Compose stack. |
-| Postgres    | 15         | Runs as a Docker container in dev; bare-metal optional.   |
-| Git         | 2.40+      | For the contribution workflow below.                      |
+| Tool     | Version | Notes                                                     |
+| -------- | ------- | --------------------------------------------------------- |
+| Node.js  | 20 LTS  | Required for `api`, `web`, and `simulator` packages.      |
+| pnpm     | 9+      | Workspace-aware install; required for the monorepo.       |
+| Docker   | 24+     | Required for the `db` service and the full Compose stack. |
+| Postgres | 15      | Runs as a Docker container in dev; bare-metal optional.   |
+| Git      | 2.40+   | For the contribution workflow below.                      |
 
 ### First-time setup
 
@@ -108,12 +108,12 @@ The telemetry frame is `version: 1` and frozen (NFR-14, AR-2). Any change to `pa
 
 ## Branching model
 
-| Branch type | Naming                     | Created from | Merges into   |
-|-------------|----------------------------|--------------|---------------|
-| `main`      | `main`                     | —            | —             |
-| Epic        | `epic/<epic-name>`         | `main`       | `main`        |
-| Story       | `story/<epic>.<n>-<slug>`  | epic branch  | epic branch   |
-| Hotfix      | `hotfix/<short-slug>`      | `main`       | `main`        |
+| Branch type | Naming                    | Created from | Merges into |
+| ----------- | ------------------------- | ------------ | ----------- |
+| `main`      | `main`                    | —            | —           |
+| Epic        | `epic/<epic-name>`        | `main`       | `main`      |
+| Story       | `story/<epic>.<n>-<slug>` | epic branch  | epic branch |
+| Hotfix      | `hotfix/<short-slug>`     | `main`       | `main`      |
 
 Long-running epic branches allow multiple stories to land in parallel within an epic before merging. The main branch is always deployable.
 
@@ -131,16 +131,16 @@ We use **Conventional Commits**. Format:
 <footer — references, breaking notes>
 ```
 
-| Type        | When to use                                                      |
-|-------------|------------------------------------------------------------------|
-| `feat`      | A new user-visible feature or story.                             |
-| `fix`       | A bug fix.                                                       |
-| `docs`      | Documentation only.                                              |
-| `style`     | Formatting, missing semicolons, etc. — no code change.           |
-| `refactor`  | Code change that neither fixes a bug nor adds a feature.         |
-| `test`      | Adding or correcting tests.                                       |
-| `chore`     | Build, CI, dependencies, tooling.                                 |
-| `revert`    | Reverts a previous commit.                                        |
+| Type       | When to use                                              |
+| ---------- | -------------------------------------------------------- |
+| `feat`     | A new user-visible feature or story.                     |
+| `fix`      | A bug fix.                                               |
+| `docs`     | Documentation only.                                      |
+| `style`    | Formatting, missing semicolons, etc. — no code change.   |
+| `refactor` | Code change that neither fixes a bug nor adds a feature. |
+| `test`     | Adding or correcting tests.                              |
+| `chore`    | Build, CI, dependencies, tooling.                        |
+| `revert`   | Reverts a previous commit.                               |
 
 **Scope** is the package or epic: `api`, `web`, `simulator`, `shared`, `db`, `epic-1`, `epic-3`, etc.
 
@@ -165,6 +165,7 @@ Before opening a PR, confirm the following:
 
 - [ ] Branch is up to date with the target branch (`git fetch && git rebase`).
 - [ ] `pnpm lint` and `pnpm test` pass locally.
+- [ ] Pre-commit lint hook (`pnpm lint:staged` via husky) ran clean on every commit in this PR. Any `--no-verify` bypasses are noted here with the reason.
 - [ ] Coverage thresholds are still met (`pnpm -F api test:coverage`, `pnpm -F web test:coverage`).
 - [ ] If the PR changes a wire-contract schema, the PR description explains the contract bump and links the v2-bump justification (Story 1.10).
 - [ ] If the PR changes UX, screenshots or screen recordings are attached.
@@ -175,6 +176,26 @@ Before opening a PR, confirm the following:
 - [ ] No `import type` from another epic's directory (cross-cutting rule).
 - [ ] No `console.log` left in production code.
 - [ ] `__simulator_event`, `__invalid_transition_attempt`, and other audit-row payloads match the schema in Story 5.6's test cases.
+
+---
+
+## Pre-commit lint hook
+
+The repo installs a husky-managed `pre-commit` hook that runs `pnpm lint:staged` — ESLint with `--max-warnings 0` against staged `.ts` / `.tsx` / `.mts` / `.cts` files only. The hook:
+
+- **Blocks** the commit if any staged source file has an ESLint warning or error.
+- **Skips** lint for commits that touch no staged source files (e.g. docs-only commits).
+- **Does not** touch pre-existing lint debt in files you aren't committing.
+
+The hook is installed automatically by `pnpm install` (via the `prepare` script). If for some reason it didn't run on first clone (e.g. you ran `npm install` instead), re-run it with `pnpm exec husky`.
+
+For documented escape-hatch cases — reformatting during a merge, fixing a CI-broken build, etc. — bypass with:
+
+```bash
+git commit --no-verify -m "..."
+```
+
+Any bypass must be noted in the PR body so reviewers can audit. The hook will not silently allow the bypass through; the audit trail is human, not automated.
 
 ---
 

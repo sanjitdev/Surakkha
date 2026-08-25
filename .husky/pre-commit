@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# Surakkha pre-commit hook (managed by husky).
+# Runs ESLint (--max-warnings 0) on staged TS/TSX/MTS/CTS files only.
+#
+# Per CONTRIBUTING.md, "pnpm lint must pass locally" is a merge-blocker.
+# This hook runs only against files in the user's current diff, so:
+#   - a warning on a staged file blocks the commit;
+#   - pre-existing lint debt in unrelated files does not.
+#
+# Bypass with `git commit --no-verify` for documented escape-hatch cases.
+# When bypassing, note the reason in the PR body so reviewers can audit.
+pnpm lint:staged

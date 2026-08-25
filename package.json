@@ -14,10 +14,12 @@
     "build": "pnpm -r build",
     "lint": "pnpm -r lint && pnpm lint:rbac",
     "lint:rbac": "node scripts/lint-rbac-matrix.mjs",
+    "lint:staged": "lint-staged",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "prepare": "husky",
     "clean": "pnpm -r clean && rm -rf node_modules"
   },
   "devDependencies": {
@@ -32,9 +34,16 @@
     "eslint-plugin-react": "7.37.1",
     "eslint-plugin-react-hooks": "5.0.0",
     "eslint-plugin-unicorn": "56.0.0",
+    "husky": "9.1.6",
     "jsonc-eslint-parser": "2.1.0",
+    "lint-staged": "15.2.10",
     "prettier": "3.3.3",
     "typescript": "5.5.4",
     "typescript-eslint": "8.8.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,mts,cts}": [
+      "eslint --no-fix --max-warnings 0 --no-warn-ignored"
+    ]
   }
 }
