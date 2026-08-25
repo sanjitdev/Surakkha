@@ -2,7 +2,7 @@
 title: 'Story 3.2 — Three Rule Types + Evaluation Engine'
 type: 'feature'
 created: '2026-08-25'
-status: 'done'
+status: 'review'
 review_loop_iteration: 1
 baseline_commit: '8c2f8c2b85068a19410bff7c80bd44228d1b1e6a'
 context:
@@ -182,3 +182,67 @@ context:
 - Open `packages/api/src/rules/cache.ts` and confirm the index key format `${deviceId ?? "__global__"}::${metric}` is the only one used (no parallel index structure) AND the unsupported-ruleType path emits a `console.warn` with both `ruleType` and `id`.
 - Open `packages/api/src/rules/hooks.ts` and confirm the rate-rule pre-filter chain is in this exact order: `findMany` → sort ascending → drop future-ts → dedupe → slice to 5 → pass to engine.
 - Open `packages/api/src/ingest/frame.ts` and confirm `ReadingRepository.findMany` exists with the documented `where`/`orderBy`/`take` shape (signature pin via `reading-repository-findmany.spec.ts`).
+
+## Suggested Review Order
+
+**Evaluation engine (the WHY)**
+- Pure rule math lives here — start with the operator table to confirm the closed mapping.
+  [engine.ts:37](../../packages/api/src/rules/engine.ts#L37)
+
+- Regression slope in mean-centered form to avoid catastrophic cancellation at Unix-ms scale.
+  [engine.ts:139](../../packages/api/src/rules/engine.ts#L139)
+
+- Per-rule dispatch with exhaustiveness pin; absence rule rejects non-positive hysteresis as defence-in-depth.
+  [engine.ts:170](../../packages/api/src/rules/engine.ts#L170)
+
+- Multi-rule entry projects BreachCandidate → BreachResult with the single agreed-upon observedAt source.
+  [engine.ts:252](../../packages/api/src/rules/engine.ts#L252)
+
+- Frozen empty-tuple sentinel so the no-op hooks default stays allocation-free.
+  [engine.ts:303](../../packages/api/src/rules/engine.ts#L303)
+
+**Active-rule cache**
+- Per-row skip on unsupported `ruleType` with structured console.warn; valid rows in the same batch still load.
+  [cache.ts:81](../../packages/api/src/rules/cache.ts#L81)
+
+- Global sentinel + `__global__::metric` / `${deviceId}::metric` index — pinned by exact-string test assertions.
+  [cache.ts:32](../../packages/api/src/rules/cache.ts#L32)
+
+- The single lookup entry point — unions global + device-specific rules; the hook uses ONLY this.
+  [cache.ts:178](../../packages/api/src/rules/cache.ts#L178)
+
+**Hook wiring**
+- Frame-to-observation path picks ONE metric, validates against the closed enum, queries the rate-rule window.
+  [hooks.ts:91](../../packages/api/src/rules/hooks.ts#L91)
+
+- Pre-filter chain runs in this exact order: findMany → sort asc → drop future-ts → dedupe → slice to 5.
+  [hooks.ts:121](../../packages/api/src/rules/hooks.ts#L121)
+
+- The four-hook install + uninstall reset to no-op via `resetIngestHooks`.
+  [hooks.ts:170](../../packages/api/src/rules/hooks.ts#L170)
+
+**Interface extensions (the seams)**
+- IngestHooks.onRuleEvaluation return type widens to `readonly BreachResult[]`; pre-3.2 stubs must be updated.
+  [hooks.ts:71](../../packages/api/src/ingest/hooks.ts#L71)
+
+- ReadingRepository gains `findMany` with where/orderBy/take pinned by `reading-repository-findmany.spec.ts`.
+  [frame.ts:62](../../packages/api/src/ingest/frame.ts#L62)
+
+- Boot hydration wrapped in try/catch — failure logs and falls back to NOOP_HOOKS.
+  [index.ts:454](../../packages/api/src/index.ts#L454)
+
+**Tests (the pinning)**
+- 21 engine tests cover the operator table, all 5 instant comparators, rate/absence math, field provenance, dual-semantics pin, hysteresis edge case.
+  [engine.spec.ts](../../packages/api/src/rules/__tests__/engine.spec.ts)
+
+- 4 cache tests pin empty/mixed/global+device/unsupported-ruleType paths; exact-string log format pinned.
+  [cache.spec.ts](../../packages/api/src/rules/__tests__/cache.spec.ts)
+
+- 8 hooks tests pin pre-filter chain order, findMany spying with deviceId/metric + ts clauses, cache lookup union, global absence firing, uninstall reset.
+  [hooks.spec.ts](../../packages/api/src/rules/__tests__/hooks.spec.ts)
+
+- 2 top-level api tests: boot-fallback source-walk + reading-repository-findmany signature pin.
+  [boot-fallback.spec.ts](../../packages/api/__tests__/boot-fallback.spec.ts)
+
+- Pre-3.2 hook mocks in frame.spec.ts + subscriberSocket.spec.ts migrated to return `EMPTY_BREACH_RESULTS`.
+  [frame.spec.ts:304](../../packages/api/src/ingest/frame.spec.ts#L304)
