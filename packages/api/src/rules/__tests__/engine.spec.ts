@@ -132,8 +132,12 @@ describe("Story 3.2 — instant evaluator", () => {
 describe("Story 3.2 — rate evaluator", () => {
   // Five readings spaced 10 s apart with linearly increasing y values
   // produce a stable positive slope (y = x/1000 → slope = 1/1000 = 0.001 value/ms).
-  const fiveReadings = (startMs: number, baseValue: number, stepValue: number): { ts: Date; value: number }[] => {
-    const out: { ts: Date; value: number }[] = [];
+  const fiveReadings = (
+    startMs: number,
+    baseValue: number,
+    stepValue: number,
+  ): Array<{ ts: Date; value: number }> => {
+    const out: Array<{ ts: Date; value: number }> = [];
     for (let i = 0; i < 5; i += 1) {
       out.push({
         ts: new Date(startMs + i * 10_000),
@@ -191,7 +195,7 @@ describe("Story 3.2 — rate evaluator", () => {
     // slope; the test pins that behaviour so a future refactor
     // that adds an internal slice is caught.
     const rule = baseRule({ ruleType: "rate", threshold: 5e-4 });
-    const six: { ts: Date; value: number }[] = [
+    const six: Array<{ ts: Date; value: number }> = [
       // First reading is a clear outlier (flat 0) — if the engine
       // sliced internally to last-5 it would skip this and the
       // slope would be 1e-3; if it uses all 6 the slope is lower.
@@ -241,9 +245,7 @@ describe("Story 3.2 — absence evaluator", () => {
   it("does not fire when a reading is inside the window", () => {
     const rule = baseRule({ ruleType: "absence", hysteresisSeconds: 60 });
     const observation = baseObservation({
-      recentReadings: [
-        { ts: new Date(NOW.getTime() - 30_000), value: 7.2 },
-      ],
+      recentReadings: [{ ts: new Date(NOW.getTime() - 30_000), value: 7.2 }],
     });
     expect(evaluateRules([rule], observation)).toEqual([]);
   });
@@ -296,9 +298,7 @@ describe("Story 3.2 — requireRuleType", () => {
   });
 
   it("throws Error('unsupported_rule_type: bogus') on unknown value", () => {
-    expect(() => requireRuleType("bogus")).toThrowError(
-      "unsupported_rule_type: bogus",
-    );
+    expect(() => requireRuleType("bogus")).toThrowError("unsupported_rule_type: bogus");
   });
 });
 
