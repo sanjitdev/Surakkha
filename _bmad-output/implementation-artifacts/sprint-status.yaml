@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-25T18:30:00.000Z
+last_updated: 2026-08-25T19:40:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -89,7 +89,7 @@ development_status:
   epic-3: in-progress
   3-1-rules-table-prisma-schema: done
   3-2-three-rule-types-evaluation-engine: done
-  3-3-default-thresholds-seed-script: backlog
+  3-3-default-thresholds-seed-script: review
   3-4-de-bouncing: backlog
   3-5-alert-lifecycle: backlog
   3-6-auto-create-incident-from-warning-critical-alert: backlog
@@ -381,14 +381,14 @@ stories:
 
   - id: "3.3"
     title: "Default Thresholds Seed Script"
-    status: backlog
+    status: review
     epic: "3"
     commit: null
     shipped: null
-    covers: []
+    covers: ["FR-11", "FR-13"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-3-3-default-thresholds-seed-script.md"
+      review: "_bmad-output/implementation-artifacts/spec-3-3-default-thresholds-seed-script.md"
 
   - id: "3.4"
     title: "De-bouncing"

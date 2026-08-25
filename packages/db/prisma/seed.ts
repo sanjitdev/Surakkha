@@ -1,12 +1,20 @@
 /**
- * Surakkha database seed — Story 2.5.
+ * Surakkha database seed — Story 2.5 + Story 3.3.
  *
- * Backfills the six default devices from
+ * Story 2.5: Backfills the six default devices from
  * `packages/simulator/src/devices.json` into the `Device` table with
  * human-readable `name` + canonical `scenario`. Idempotent: re-runs
  * never duplicate a row, and the `update` branch is null-guarded so
  * a Story 2.3-canonical `name` (or a runtime-switched `scenario`)
  * is never silently overwritten.
+ *
+ * Story 3.3: Upserts the nine FR-13 default threshold `Rule` rows
+ * (BRD §8.3.1) into the `Rule` table. Idempotent via the natural
+ * `@@unique([deviceId, metric, operator, threshold, version])` key
+ * with `update: {}` — a re-run never duplicates a row. Admin-edited
+ * rows (Story 3.7) that flip `isActive: false` are preserved as-is
+ * (returned `{ status: "skipped-inactive" }`); drifted shapes throw
+ * rather than silently overwriting.
  *
  * Run via:
  *   pnpm --filter @surakkha/db seed
@@ -30,6 +38,11 @@
  * seed mirrors it. The simulator does NOT import `@surakkha/db`
  * (Forbidden by spec: simulator is a separate process); the coupling
  * flows the other way only.
+ *
+ * The threshold rows are sourced from `./thresholdTable.js` (a pure
+ * module, FR-13 verbatim, typed against `@surakkha/shared`'s enum
+ * arrays). Story 3.7's admin-tab "reset to defaults" button could
+ * re-import the same constant.
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -41,7 +54,10 @@ import {
   assertValidScenario,
   buildDeviceUpdateFields,
   deriveName,
+  upsertDefaultRule,
 } from "./seedHelpers.js";
+
+import { THRESHOLD_TABLE } from "./thresholdTable.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -139,6 +155,47 @@ const main = async (): Promise<void> => {
         },
       });
     }
+
+    // Story 3.3: FR-13 default thresholds. Idempotent (uses the
+    // natural `@@unique` key + `update: {}` no-op); admin-edited rows
+    // are preserved via `skipped-inactive` rather than resurrected.
+    // Placed BEFORE the device-loop success log so a seed abort
+    // (drift error, P2002 race) shows up in CI logs after the device
+    // upserts but before any "all good" device-loop success line.
+    let createdCount = 0;
+    let noopCount = 0;
+    let skippedCount = 0;
+    if (THRESHOLD_TABLE.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        "seed: THRESHOLD_TABLE is empty — no-op",
+      );
+    } else {
+      for (const row of THRESHOLD_TABLE) {
+        const result = await upsertDefaultRule(prisma, row);
+        if (result.status === "created") {
+          createdCount += 1;
+        } else if (result.status === "noop") {
+          noopCount += 1;
+        } else if (result.status === "skipped-inactive") {
+          skippedCount += 1;
+          // eslint-disable-next-line no-console
+          console.log(
+            `seed: rule metric=${row.metric} operator=${row.operator} threshold=${row.threshold} was deactivated by an admin; preserving as-is`,
+          );
+        }
+        // "noop" — row already existed with matching shape; nothing
+        // to log (the `update: {}` no-op is the load-bearing detail).
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        `seed: processed ${THRESHOLD_TABLE.length} default rule rows (BRD §8.3.1, global / version 1): ${createdCount} created, ${noopCount} no-op, ${skippedCount} preserved as inactive`,
+      );
+    }
+
+    // Device-loop success log — fires AFTER the rule work so a rule
+    // drift / P2002 race abort shows up in CI logs before any "all
+    // good" device success line. Per F1/F4 re-review.
     // eslint-disable-next-line no-console
     console.log(
       `seed: upserted ${parsed.devices.length} device rows (name + scenario + lat/lng backfill)`,
