@@ -51,10 +51,14 @@ import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
 import { buildDevicesRouter } from "./devices/router.js";
 import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
+import { NOOP_HOOKS, setIngestHooks } from "./ingest/hooks";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
 import { handleSubscriberConnection } from "./ingest/subscriber";
 import { authenticate } from "./middleware/authorize";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
+import { hydrateActiveRuleCache } from "./rules/cache";
+import { installRuleEngineHooks } from "./rules/hooks";
+import { resolvePrismaRuleReader } from "./rules/prismaReader";
 
 const DEFAULT_API_PORT = 3000;
 const HTTP_OK = 200;
@@ -382,6 +386,10 @@ const resolvePrismaClient = async (): Promise<{
  * Resolve the Prisma reading delegate. Lazy so the HTTP-only
  * test suite (which never instantiates the WS path) does not need
  * DATABASE_URL set.
+ *
+ * Story 3.2 — extended with `reading.findMany` (rate-rule window
+ * query). The `metrics` field uses `TelemetryFrame["metrics"]` so
+ * this delegate is assignable to `ReadingRepository`.
  */
 interface ReadingDelegate {
   readonly reading: {
@@ -395,18 +403,71 @@ interface ReadingDelegate {
         readonly flags: readonly string[];
       };
     }): Promise<unknown>;
+    findMany(args: {
+      readonly where: {
+        readonly deviceId: string;
+        readonly metric: import("@surakkha/shared").RuleMetric;
+        readonly ts: { readonly gte: Date };
+      };
+      readonly orderBy: { readonly ts: "asc" };
+      readonly take: number;
+    }): Promise<
+      ReadonlyArray<{
+        readonly ts: Date;
+        readonly metrics: import("@surakkha/shared").TelemetryFrame["metrics"];
+      }>
+    >;
   };
 }
 
 const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
   const client = await resolvePrismaClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = client as any;
   return {
     reading: {
-      create: (args) =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (client as any).reading.create(args) as Promise<unknown>,
+      create: (args) => c.reading.create(args) as Promise<unknown>,
+      findMany: (args) =>
+        c.reading.findMany(args) as Promise<
+          ReadonlyArray<{
+            readonly ts: Date;
+            readonly metrics: import("@surakkha/shared").TelemetryFrame["metrics"];
+          }>
+        >,
     },
   };
+};
+
+/**
+ * Story 3.2 — boot path for the rules engine.
+ *
+ * Wraps the hydration + hook-install in a try/catch so a transient
+ * DB outage at boot (the engine's `rule.findMany` rejects) does not
+ * crash the api. On failure, the no-op `IngestHooks` default is
+ * installed via `setIngestHooks(NOOP_HOOKS)`; the api keeps serving
+ * HTTP + WS requests, just without rule evaluation. Pinned by
+ * `packages/api/__tests__/boot-fallback.spec.ts`.
+ *
+ * Pattern mirrors the `runMigrations` fallback shape higher up in
+ * this file: log + degrade, do not crash.
+ */
+const initializeRuleEngine = async (): Promise<void> => {
+  const client = await resolvePrismaClient();
+  try {
+    const readingDelegate = await resolveReadingDelegate();
+    const cache = await hydrateActiveRuleCache(resolvePrismaRuleReader(client));
+    setIngestHooks(
+      installRuleEngineHooks({
+        cache,
+        prisma: resolvePrismaRuleReader(client),
+        readingRepository: readingDelegate,
+      }),
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[rules] boot: hydrate failed; running with no-op hooks", err);
+    setIngestHooks(NOOP_HOOKS);
+  }
 };
 
 const ingestHandlerPromise = resolveReadingDelegate().then((prisma) =>
@@ -476,6 +537,11 @@ const boot = async (): Promise<void> => {
     )) as { runMigrations: () => Promise<void> | void };
     await Promise.resolve(migrateModule.runMigrations());
   }
+  // Story 3.2 — install the rule engine hooks. Runs inside the
+  // boot() chain so the cache is populated before the first WS
+  // connection. The function swallows DB errors internally (logs +
+  // falls back to NOOP_HOOKS); see initializeRuleEngine above.
+  await initializeRuleEngine();
   httpServer.listen(PORT, () => {
     logger.info({ port: PORT }, "api: listening");
   });

@@ -25,6 +25,7 @@ import {
   PROCESSING_ORDER,
   type ReadingFlag,
   type ReadingNewEvent,
+  type RuleMetric,
   STALE_FRAME_THRESHOLD_MS,
   type TelemetryFrame,
   TelemetryFrameSchema,
@@ -39,6 +40,12 @@ import { type PerDeviceSequence } from "./sequence";
  * Minimal shape the persist + broadcast steps need from Prisma.
  * Tests inject a stub that satisfies this surface; production code
  * passes the real `@prisma/client` Reading delegate.
+ *
+ * Story 3.2 — extended with `reading.findMany` so the rate-rule
+ * pre-filter chain (`packages/api/src/rules/hooks.ts`) can query
+ * the last 60 s of `Reading` rows for `(deviceId, metric)`. The
+ * exact `where` / `orderBy` / `take` shape is pinned by
+ * `__tests__/reading-repository-findmany.spec.ts`.
  */
 export interface ReadingRepository {
   readonly reading: {
@@ -52,6 +59,20 @@ export interface ReadingRepository {
         readonly flags: readonly ReadingFlag[];
       };
     }): Promise<unknown>;
+    findMany(args: {
+      readonly where: {
+        readonly deviceId: string;
+        readonly metric: RuleMetric;
+        readonly ts: { readonly gte: Date };
+      };
+      readonly orderBy: { readonly ts: "asc" };
+      readonly take: number;
+    }): Promise<
+      ReadonlyArray<{
+        readonly ts: Date;
+        readonly metrics: TelemetryFrame["metrics"];
+      }>
+    >;
   };
 }
 
@@ -79,6 +100,20 @@ export interface ProcessFrameDeps {
   readonly io: BroadcastTarget;
   readonly hooks?: IngestHooks;
   readonly now?: () => Date;
+  /**
+   * Story 3.2 — optional read-side handle to the `Rule` table for
+   * the rules engine. Optional; defaults to `undefined` when the
+   * engine is not installed. The engine hot-reload (Story 3.7) may
+   * read this to refresh the cache; for v1 it is informational —
+   * the engine's boot-time hydration reads via its own slice.
+   */
+  readonly ruleRepository?: {
+    readonly rule: {
+      findMany(args: {
+        readonly where: { readonly isActive: true };
+      }): Promise<ReadonlyArray<unknown>>;
+    };
+  };
 }
 
 /**

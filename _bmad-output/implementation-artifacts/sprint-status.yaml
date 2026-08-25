@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-25T17:25:00.000Z
+last_updated: 2026-08-25T18:05:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -88,7 +88,7 @@ development_status:
   # ===== Epic 3 — Rules & Alerts =====
   epic-3: in-progress
   3-1-rules-table-prisma-schema: done
-  3-2-three-rule-types-evaluation-engine: backlog
+  3-2-three-rule-types-evaluation-engine: done
   3-3-default-thresholds-seed-script: backlog
   3-4-de-bouncing: backlog
   3-5-alert-lifecycle: backlog
@@ -370,13 +370,13 @@ stories:
 
   - id: "3.2"
     title: "Three Rule Types + Evaluation Engine"
-    status: backlog
+    status: done
     epic: "3"
-    commit: null
+    commit: "TBD"
     shipped: null
-    covers: []
+    covers: ["FR-11"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-3-2-three-rule-types-evaluation-engine.md"
       review: null
 
   - id: "3.3"

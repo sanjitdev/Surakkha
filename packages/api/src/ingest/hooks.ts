@@ -17,6 +17,8 @@
 
 import type { ReadingFlag } from "@surakkha/shared";
 
+import { EMPTY_BREACH_RESULTS, type BreachResult } from "../rules/engine";
+
 export interface RuleEvaluationInput {
   readonly deviceId: string;
   readonly frame: {
@@ -58,18 +60,34 @@ export interface AuditAppendInput {
 }
 
 export interface IngestHooks {
-  onRuleEvaluation(input: RuleEvaluationInput): Promise<void>;
+  /**
+   * Story 3.2 — return type extended from `Promise<void>` to
+   * `Promise<readonly BreachResult[]>`. The no-op default returns
+   * `EMPTY_BREACH_RESULTS` (frozen empty tuple) so the type is
+   * satisfied without allocating. Story 3.5's alert manager will
+   * consume the breach array; this story keeps the caller in
+   * `frame.ts:303` discarding the value (already `await`-ed).
+   */
+  onRuleEvaluation(input: RuleEvaluationInput): Promise<readonly BreachResult[]>;
   onAlertEmission(input: AlertEmissionInput): Promise<void>;
   onStateMachineUpdate(input: StateMachineUpdateInput): Promise<void>;
   onAuditAppend(input: AuditAppendInput): Promise<void>;
 }
 
 const noopHooks: IngestHooks = {
-  onRuleEvaluation: async () => undefined,
+  onRuleEvaluation: async () => EMPTY_BREACH_RESULTS,
   onAlertEmission: async () => undefined,
   onStateMachineUpdate: async () => undefined,
   onAuditAppend: async () => undefined,
 };
+
+/**
+ * Story 3.2 — exported so the boot path (`packages/api/src/index.ts`)
+ * can fall back to the no-op default if `hydrateActiveRuleCache`
+ * rejects (transient DB outage at boot). Also used by tests that
+ * need a concrete no-op set without calling `resetIngestHooks()`.
+ */
+export const NOOP_HOOKS: IngestHooks = noopHooks;
 
 let currentHooks: IngestHooks = noopHooks;
 
