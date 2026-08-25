@@ -2,7 +2,7 @@
 title: 'Story 3.2 — Three Rule Types + Evaluation Engine'
 type: 'feature'
 created: '2026-08-25'
-status: 'review'
+status: 'done'
 review_loop_iteration: 1
 baseline_commit: '8c2f8c2b85068a19410bff7c80bd44228d1b1e6a'
 context:
