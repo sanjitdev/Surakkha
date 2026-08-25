@@ -7,6 +7,11 @@
  *   - `/auth/login`, `/auth/refresh`         (REST, HttpOnly cookie)
  *   - `/api/readings/latest`, `/api/incidents/recent`,
  *     `/api/devices`                         (REST)
+ *   - `/admin/simulator/status`,
+ *     `/admin/simulator/devices`,
+ *     `/admin/simulator/<uuid>/scenario`,
+ *     `/admin/thresholds`, `/admin/users`,
+ *     `/admin/schools`                        (admin tabs)
  *   - `/ingest/<uuid>`                       (Socket.IO WS, devices)
  *   - `/dashboard`                           (Socket.IO WS, operators)
  *   - `/socket.io`                           (Socket.IO engine handshake)
@@ -63,6 +68,17 @@ describe("web nginx.conf — proxy route coverage", () => {
   it("proxies /auth/ to the api container (login + refresh cookies)", () => {
     expect(prefixes).toContain("/auth/");
     expect(conf).toMatch(/location\s+\/auth\/\s*\{[\s\S]*proxy_pass\s+http:\/\/api:3000/);
+  });
+
+  it("proxies /admin/ to the api container (admin tabs)", () => {
+    // The simulator / thresholds / users / schools SPA tabs call
+    // `/admin/...` via apiFetch. Without this block nginx falls
+    // through to the SPA fallback and returns index.html (200 +
+    // HTML); apiFetch JSON-parses it and fails — the tab shows
+    // "Failed to load …". This regression appeared once already; the
+    // contract pin keeps the location block in place.
+    expect(prefixes).toContain("/admin/");
+    expect(conf).toMatch(/location\s+\/admin\/\s*\{[\s\S]*proxy_pass\s+http:\/\/api:3000/);
   });
 
   it("proxies /ingest/ to the api container with WS upgrade headers", () => {

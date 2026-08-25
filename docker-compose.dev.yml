@@ -23,6 +23,14 @@
 #   POSTGRES_PASSWORD         — local Postgres password
 #   POSTGRES_DB               — local Postgres database name
 #
+# Optional env (set in the shell that runs `docker compose ...`):
+#   SIMULATOR_SECRET          — 32+ char shared secret. When unset, the
+#                              /admin/simulator tab shows the disabled
+#                              banner and the api refuses to proxy
+#                              scenario-switch requests. Set to the
+#                              same value on both api and simulator to
+#                              enable the tab.
+#
 # The api + simulator connect to host-side Postgres via
 # `host.docker.internal:5432`. On Linux, `host-gateway` is wired
 # below; on macOS / Windows Docker Desktop it is wired

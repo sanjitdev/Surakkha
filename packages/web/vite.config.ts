@@ -26,6 +26,7 @@ export default defineConfig({
     proxy: {
       "/auth": { target: API_TARGET, changeOrigin: true },
       "/api": { target: API_TARGET, changeOrigin: true },
+      "/admin": { target: API_TARGET, changeOrigin: true },
       "/ingest": { target: API_TARGET, changeOrigin: true, ws: true },
       "/dashboard": { target: API_TARGET, changeOrigin: true, ws: true },
       "/socket.io": { target: API_TARGET, changeOrigin: true, ws: true },
