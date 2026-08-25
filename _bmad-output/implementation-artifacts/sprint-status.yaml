@@ -372,7 +372,7 @@ stories:
     title: "Three Rule Types + Evaluation Engine"
     status: done
     epic: "3"
-    commit: "TBD"
+    commit: "e509095"
     shipped: null
     covers: ["FR-11"]
     ledger:

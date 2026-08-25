@@ -205,6 +205,18 @@ export const evaluateRule = (
       // reading whose `ts` is at exactly `observedAt −
       // hysteresisSeconds*1000` (inclusive boundary) clears the
       // breach — the engine uses `>=` against the threshold.
+      //
+      // Defense-in-depth: a non-positive or non-finite
+      // `hysteresisSeconds` (zero seed, DB column drift, or a
+      // poison rule row) would make the window vacuously true,
+      // spamming operators with always-on breaches. The engine
+      // treats such a rule as "no rule" and returns null.
+      if (
+        !Number.isFinite(rule.hysteresisSeconds) ||
+        rule.hysteresisSeconds <= 0
+      ) {
+        return null;
+      }
       const cutoffMs = observation.observedAt.getTime() - rule.hysteresisSeconds * 1000;
       const hasReadingInWindow = observation.recentReadings.some(
         (r) => r.ts.getTime() >= cutoffMs,

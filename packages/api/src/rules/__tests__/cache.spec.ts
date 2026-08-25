@@ -124,11 +124,13 @@ describe("Story 3.2 — hydrateActiveRuleCache", () => {
     expect(arr.find((r) => r.id === "bad-1")).toBeUndefined();
     expect(arr.find((r) => r.id === "good-1")).toBeDefined();
 
-    // console.warn emitted with the offending `ruleType` AND `id`.
+    // console.warn emitted with the exact documented format —
+    // operator triage keys off `[rules] hydrate: skipped` so the
+    // shape is pinned (not just substring containment). Drift in
+    // the prefix or key=value pairs breaks log alerts silently.
     const warnCalls = consoleWarnSpy.mock.calls.map((c) => String(c[0]));
-    const matched = warnCalls.find(
-      (msg) => msg.includes("unsupported") && msg.includes("bad-1"),
+    expect(warnCalls).toContain(
+      "[rules] hydrate: skipped unsupported ruleType=unsupported id=bad-1",
     );
-    expect(matched).toBeDefined();
   });
 });

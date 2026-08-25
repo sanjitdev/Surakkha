@@ -229,10 +229,12 @@ describe("Story 3.2 — installRuleEngineHooks", () => {
     // set to ~now-60s and `orderBy.ts = "asc"`.
     expect(rig.findMany).toHaveBeenCalledTimes(1);
     const call = rig.findMany.mock.calls[0]![0] as {
-      where: { ts: { gte: Date } };
+      where: { deviceId: string; metric: string; ts: { gte: Date } };
       orderBy: { ts: "asc" };
     };
     expect(call.orderBy).toEqual({ ts: "asc" });
+    expect(call.where.deviceId).toBe(DEVICE_ID);
+    expect(call.where.metric).toBe("tds_ppm");
     expect(call.where.ts.gte.getTime()).toBeLessThanOrEqual(FRAME_TS_MS);
     expect(call.where.ts.gte.getTime()).toBeGreaterThanOrEqual(FRAME_TS_MS - 60_000);
   });
@@ -295,6 +297,43 @@ describe("Story 3.2 — installRuleEngineHooks", () => {
     expect(b.ruleType).toBe("absence");
     expect(b.value).toBe(0);
     expect(b.deviceId).toBe(DEVICE_ID);
+  });
+
+  it("(f2) global absence rule fires for a device with no per-device rule", async () => {
+    // Spec design note (line 168): "Global absence rules ARE
+    // allowed; they fire per-frame for every device whose last
+    // reading is older than hysteresisSeconds." A regression that
+    // accidentally drops the `__global__` bucket from
+    // `lookupRulesForFrame` for absence rules specifically (e.g., a
+    // refactor that branches on `ruleType === "absence"` to skip
+    // global) would not be caught by test (f) above — that test
+    // uses ONLY a global rule with no per-device distinction.
+    //
+    // This test: cache has ONLY a global absence rule; the
+    // device's own per-device slot is empty. With NO readings in
+    // the 60 s window, the absence breach must still fire.
+    const rig = buildRig([]); // no rows in the window
+    const cache = buildCache([
+      {
+        id: "global-absence-only",
+        deviceId: null, // GLOBAL rule, no per-device rule alongside
+        metric: "tds_ppm",
+        operator: "gte",
+        threshold: 0,
+        severity: "critical",
+        ruleType: "absence",
+        hysteresisSeconds: 60,
+      },
+      // Deliberately NO `${DEVICE_ID}::tds_ppm` rule.
+    ]);
+    const frame = buildFrame();
+    const breaches = await callOnRuleEvaluation(rig, cache, frame);
+    expect(breaches).toHaveLength(1);
+    const b = breaches[0] as BreachResult;
+    expect(b.ruleType).toBe("absence");
+    expect(b.value).toBe(0);
+    expect(b.deviceId).toBe(DEVICE_ID);
+    expect(b.ruleId).toBe("global-absence-only");
   });
 
   it("(g) cache lookup: global + device rule on same metric — only device rule fires for the device frame", async () => {

@@ -271,6 +271,21 @@ describe("Story 3.2 — absence evaluator", () => {
     });
     expect(evaluateRules([rule], observation)).toEqual([]);
   });
+
+  it("does not fire when hysteresisSeconds is 0 (defence-in-depth)", () => {
+    // Pin: a rule row with `hysteresisSeconds: 0` (or negative, or
+    // NaN) must NOT produce a breach. With a zero window, "the
+    // last reading is older than 0 ms" is vacuously true, which
+    // would otherwise spam operators with always-on breaches.
+    // The engine treats non-positive / non-finite hysteresis as
+    // "no rule" and returns no breach.
+    const rule = baseRule({ ruleType: "absence", hysteresisSeconds: 0 });
+    const observation = baseObservation({ recentReadings: [] });
+    expect(evaluateRules([rule], observation)).toEqual([]);
+
+    const ruleNeg = baseRule({ ruleType: "absence", hysteresisSeconds: -1 });
+    expect(evaluateRules([ruleNeg], observation)).toEqual([]);
+  });
 });
 
 describe("Story 3.2 — requireRuleType", () => {

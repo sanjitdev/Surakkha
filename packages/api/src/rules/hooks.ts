@@ -29,7 +29,7 @@
  * value carried in the hook payload IS the observation value; the
  * engine sees it through `EngineObservation.value`.
  */
-import type { RuleMetric } from "@surakkha/shared";
+import { RULE_METRICS, type RuleMetric } from "@surakkha/shared";
 
 import {
   EMPTY_BREACH_RESULTS,
@@ -87,19 +87,28 @@ export interface InstallRuleEngineHooksDeps {
  * device-scoped) in the cache. v1's rule pipeline evaluates ONE
  * metric per frame; the cache lookup helper unions both buckets so
  * a global `ph` rule fires for every device's frame.
+ *
+ * Defense-in-depth: validates the frame's metric keys against the
+ * closed `RULE_METRICS` enum. Upstream Zod parsing on the wire
+ * guarantees this, but a typo that drifts past Zod (e.g. a test
+ * stub, a future wire-format change) would otherwise be silently
+ * cast and dropped at lookup time.
  */
 const pickFrameMetric = (
   cache: ActiveRuleCache,
   deviceId: string,
   frameMetrics: Readonly<Record<string, number>>,
 ): RuleMetric | null => {
-  const keys = Object.keys(frameMetrics) as RuleMetric[];
+  const validKeys = new Set<string>(RULE_METRICS);
+  const keys = Object.keys(frameMetrics);
   for (const k of keys) {
+    if (!validKeys.has(k)) continue;
+    const typedKey = k as RuleMetric;
     const globalCount =
-      cache.byDeviceMetric.get(`${GLOBAL_DEVICE_SENTINEL}::${k}`)?.length ?? 0;
+      cache.byDeviceMetric.get(`${GLOBAL_DEVICE_SENTINEL}::${typedKey}`)?.length ?? 0;
     const deviceCount =
-      cache.byDeviceMetric.get(`${deviceId}::${k}`)?.length ?? 0;
-    if (globalCount + deviceCount > 0) return k;
+      cache.byDeviceMetric.get(`${deviceId}::${typedKey}`)?.length ?? 0;
+    if (globalCount + deviceCount > 0) return typedKey;
   }
   return null;
 };
@@ -132,10 +141,14 @@ const buildRecentReadings = async (
     (r) => r.ts.getTime() <= args.observedAt.getTime(),
   );
   // Dedupe by ts keeping the latest value (last-write-wins).
+  // Defense-in-depth: `Number.isFinite` rejects `NaN`, `Infinity`,
+  // and `-Infinity` from a buggy sensor or a corrupted DB row. A
+  // non-finite value would otherwise poison `computeSlope`
+  // (returning NaN slope → silently no breach).
   const valueByTs = new Map<number, number>();
   for (const r of futureDropped) {
     const v = r.metrics[args.metric];
-    if (typeof v === "number") {
+    if (typeof v === "number" && Number.isFinite(v)) {
       valueByTs.set(r.ts.getTime(), v);
     }
   }

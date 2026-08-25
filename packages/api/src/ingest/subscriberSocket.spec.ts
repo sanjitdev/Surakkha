@@ -33,6 +33,7 @@ import {
   handleSubscriberConnection,
   SUBSCRIBER_ROOM,
 } from "./subscriber.js";
+import { EMPTY_BREACH_RESULTS } from "../rules/engine";
 
 /**
  * `issueAccessToken` reads `process.env.JWT_SECRET` at call time.
@@ -58,7 +59,7 @@ const stubPrisma = {
 
 const stubHooks = {
   async onRuleEvaluation() {
-    return undefined;
+    return EMPTY_BREACH_RESULTS;
   },
   async onAlertEmission() {
     return undefined;

@@ -30,6 +30,7 @@ import { resetIngestHooks, type IngestHooks } from "./hooks";
 import { PerDeviceRateLimiter } from "./rateLimit";
 import { PerDeviceSequence } from "./sequence";
 import { RIG_CLOCK_MS, RIG_CLOCK_TICK_MS } from "../__tests__/rigClock";
+import { EMPTY_BREACH_RESULTS } from "../rules/engine";
 
 const DEVICE_ID = "9b1c4f00-0000-4000-8000-00000000000a";
 
@@ -301,7 +302,7 @@ describe("processFrame — sequence reorder", () => {
     let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     const hooks = {
-      onRuleEvaluation: vi.fn(async () => undefined),
+      onRuleEvaluation: vi.fn(async () => EMPTY_BREACH_RESULTS),
       onAlertEmission: vi.fn(async () => undefined),
       onStateMachineUpdate: vi.fn(async () => undefined),
       onAuditAppend: vi.fn(async () => undefined),
@@ -337,7 +338,7 @@ describe("processFrame — sequence reorder", () => {
     let nowMs = RIG_CLOCK_TICK_MS;
     rig.now = () => new Date(nowMs);
     const hooks = {
-      onRuleEvaluation: vi.fn(async () => undefined),
+      onRuleEvaluation: vi.fn(async () => EMPTY_BREACH_RESULTS),
       onAlertEmission: vi.fn(async () => undefined),
       onStateMachineUpdate: vi.fn(async () => undefined),
       onAuditAppend: vi.fn(async () => undefined),
@@ -553,7 +554,7 @@ describe("processFrame — clock-skew flag (Story 2.3)", () => {
   it("forwards flags:['clock_skew_detected'] to onRuleEvaluation for a skewed frame", async () => {
     const rig = buildRig();
     const hooks: IngestHooks = {
-      onRuleEvaluation: vi.fn(async () => undefined),
+      onRuleEvaluation: vi.fn(async () => EMPTY_BREACH_RESULTS),
       onAlertEmission: vi.fn(async () => undefined),
       onStateMachineUpdate: vi.fn(async () => undefined),
       onAuditAppend: vi.fn(async () => undefined),
@@ -576,7 +577,7 @@ describe("processFrame — clock-skew flag (Story 2.3)", () => {
   it("forwards flags:['clock_skew_detected'] to onAuditAppend reading_ingested context for a skewed frame", async () => {
     const rig = buildRig();
     const hooks: IngestHooks = {
-      onRuleEvaluation: vi.fn(async () => undefined),
+      onRuleEvaluation: vi.fn(async () => EMPTY_BREACH_RESULTS),
       onAlertEmission: vi.fn(async () => undefined),
       onStateMachineUpdate: vi.fn(async () => undefined),
       onAuditAppend: vi.fn(async () => undefined),
@@ -611,7 +612,7 @@ describe("processFrame — hook payloads", () => {
     readonly onStateMachineUpdate: ReturnType<typeof vi.fn>;
     readonly onAuditAppend: ReturnType<typeof vi.fn>;
   } => ({
-    onRuleEvaluation: vi.fn(async () => undefined),
+    onRuleEvaluation: vi.fn(async () => EMPTY_BREACH_RESULTS),
     onAlertEmission: vi.fn(async () => undefined),
     onStateMachineUpdate: vi.fn(async () => undefined),
     onAuditAppend: vi.fn(async () => undefined),
