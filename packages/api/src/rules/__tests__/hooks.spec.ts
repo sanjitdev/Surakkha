@@ -23,22 +23,12 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  EMPTY_BREACH_RESULTS,
-  type BreachResult,
-} from "../engine";
-import {
-  GLOBAL_DEVICE_SENTINEL,
-  type ActiveRuleCache,
-} from "../cache";
-import {
-  installRuleEngineHooks,
-  uninstallRuleEngineHooks,
-} from "../hooks";
+import { EMPTY_BREACH_RESULTS, type BreachResult, type EngineRule } from "../engine";
+import { GLOBAL_DEVICE_SENTINEL, type ActiveRuleCache } from "../cache";
+import { installRuleEngineHooks, uninstallRuleEngineHooks } from "../hooks";
 import { resetIngestHooks } from "../../ingest/hooks";
 import type { ReadingRepository } from "../../ingest/frame";
 import type { PrismaRuleReader } from "../prismaReader";
-import type { EngineRule } from "../engine";
 
 const DEVICE_ID = "9b1c4f00-0000-4000-8000-000000000b01";
 const RULE_ID_INSTANT = "rule-instant";
@@ -53,9 +43,7 @@ interface Rig {
   readonly prismaFindMany: ReturnType<typeof vi.fn>;
 }
 
-const buildRig = (
-  rows: ReadonlyArray<{ ts: Date; metrics: Record<string, number> }> = [],
-): Rig => {
+const buildRig = (rows: ReadonlyArray<{ ts: Date; metrics: Record<string, number> }> = []): Rig => {
   const findMany = vi.fn(async () => rows);
   const prismaFindMany = vi.fn(async () => []);
   const readingRepository: ReadingRepository = {
@@ -72,7 +60,7 @@ const buildRig = (
   return { readingRepository, findMany, prisma, prismaFindMany };
 };
 
-const buildCache = (rules: ReadonlyArray<EngineRule>): ActiveRuleCache => {
+const buildCache = (rules: readonly EngineRule[]): ActiveRuleCache => {
   const byId = new Map<string, EngineRule>();
   const byDeviceMetric = new Map<string, EngineRule[]>();
   for (const r of rules) {
@@ -85,7 +73,9 @@ const buildCache = (rules: ReadonlyArray<EngineRule>): ActiveRuleCache => {
   return { byId, byDeviceMetric };
 };
 
-const buildFrame = (overrides: Partial<Record<string, number>> = {}): {
+const buildFrame = (
+  overrides: Partial<Record<string, number>> = {},
+): {
   version: 1;
   device_id: string;
   ts: number;
@@ -269,9 +259,7 @@ describe("Story 3.2 — installRuleEngineHooks", () => {
     const breaches = await callOnRuleEvaluation(rig, cache, frame);
     // `take: 5` is pinned by the hook so the DB does not return
     // every row in the 60 s window.
-    expect(rig.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: 5 }),
-    );
+    expect(rig.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 5 }));
     expect(breaches).toHaveLength(1);
     expect((breaches[0] as BreachResult).ruleType).toBe("rate");
   });
