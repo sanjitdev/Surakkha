@@ -4,7 +4,17 @@
 // stories. Adding/removing a model is a wire-contract-adjacent change;
 // reviewers should re-read `docs/architecture.md` §5 before merging.
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Prisma 5.x ships a default `linux-musl` engine linked against
+  // OpenSSL 1.1, which Alpine 3.16+ no longer ships (it dropped
+  // libssl1.1 in favour of openssl 3). Alpine 3.x therefore CANNOT
+  // load Prisma's default binary. The runtime containers in this
+  // repo are based on `node:20-bookworm-slim` (Debian), so we
+  // generate only the glibc Debian binary linked against
+  // OpenSSL 3 — `debian-openssl-3.0.x`. `native` covers macOS
+  // dev machines. Listing both targets lets the same generated
+  // client serve both dev (host) and prod (Debian runtime container).
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
