@@ -54,7 +54,7 @@ export interface PrismaRuleReader {
         readonly hysteresisSeconds: true;
         readonly isActive: true;
       };
-    }): Promise<ReadonlyArray<RuleRow>>;
+    }): Promise<readonly RuleRow[]>;
   };
 }
 
@@ -68,7 +68,7 @@ export const resolvePrismaRuleReader = (prisma: unknown): PrismaRuleReader => {
   const client = prisma as any;
   return {
     rule: {
-      findMany: (args) => client.rule.findMany(args) as Promise<ReadonlyArray<RuleRow>>,
+      findMany: (args) => client.rule.findMany(args) as Promise<readonly RuleRow[]>,
     },
   };
 };
