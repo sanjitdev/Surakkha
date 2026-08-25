@@ -15,9 +15,9 @@
  * through the iteration.
  */
 
-import type { ReadingFlag } from "@surakkha/shared";
+import { type BreachResult, EMPTY_BREACH_RESULTS } from "../rules/engine";
 
-import { EMPTY_BREACH_RESULTS, type BreachResult } from "../rules/engine";
+import type { ReadingFlag } from "@surakkha/shared";
 
 export interface RuleEvaluationInput {
   readonly deviceId: string;
