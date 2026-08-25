@@ -21,12 +21,7 @@
  * entry if the enum ever grows (closed lookup pin per Story 3.1's
  * invariant I-5).
  */
-import type {
-  RuleMetric,
-  RuleOperator,
-  RuleRuleType,
-  RuleSeverity,
-} from "@surakkha/shared";
+import type { RuleMetric, RuleOperator, RuleRuleType, RuleSeverity } from "@surakkha/shared";
 
 /**
  * Closed operator→comparator lookup table. Story 3.1's invariant
@@ -34,10 +29,7 @@ import type {
  * addition that forgets this file fails tsc at compile time (the
  * runtime completeness pin lives in `engine.spec.ts`).
  */
-export const OPERATOR_COMPARATORS: Record<
-  RuleOperator,
-  (a: number, b: number) => boolean
-> = {
+export const OPERATOR_COMPARATORS: Record<RuleOperator, (a: number, b: number) => boolean> = {
   gte: (a, b) => a >= b,
   gt: (a, b) => a > b,
   lte: (a, b) => a <= b,
@@ -75,7 +67,7 @@ export interface EngineObservation {
   readonly metric: RuleMetric;
   readonly value: number;
   readonly observedAt: Date;
-  readonly recentReadings: readonly { readonly ts: Date; readonly value: number }[];
+  readonly recentReadings: ReadonlyArray<{ readonly ts: Date; readonly value: number }>;
 }
 
 /**
@@ -137,7 +129,7 @@ interface BreachCandidate {
  * the same regime; the mean-centered form is the textbook fix.
  */
 export const computeSlope = (
-  points: readonly { readonly ts: Date; readonly value: number }[],
+  points: ReadonlyArray<{ readonly ts: Date; readonly value: number }>,
 ): number | null => {
   const n = points.length;
   if (n < 5) return null;
@@ -211,16 +203,11 @@ export const evaluateRule = (
       // poison rule row) would make the window vacuously true,
       // spamming operators with always-on breaches. The engine
       // treats such a rule as "no rule" and returns null.
-      if (
-        !Number.isFinite(rule.hysteresisSeconds) ||
-        rule.hysteresisSeconds <= 0
-      ) {
+      if (!Number.isFinite(rule.hysteresisSeconds) || rule.hysteresisSeconds <= 0) {
         return null;
       }
       const cutoffMs = observation.observedAt.getTime() - rule.hysteresisSeconds * 1000;
-      const hasReadingInWindow = observation.recentReadings.some(
-        (r) => r.ts.getTime() >= cutoffMs,
-      );
+      const hasReadingInWindow = observation.recentReadings.some((r) => r.ts.getTime() >= cutoffMs);
       if (!hasReadingInWindow) {
         return {
           ruleId: rule.id,
