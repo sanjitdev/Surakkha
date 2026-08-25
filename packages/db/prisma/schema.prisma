@@ -53,6 +53,10 @@ model Device {
   // tables (IncidentEvent, IncidentAssignment) that branch off this
   // same DeviceId.
   incidents  Incident[] @relation("DeviceIncidents")
+  // Story 3.1: Rule rows scoped to this Device (NULL = global rule).
+  // Same cascade contract as `readings` / `incidents`; Story 3.7's
+  // admin tab edits rules via the `DeviceRules` relation.
+  rules      Rule[]     @relation("DeviceRules")
 }
 
 // Reading — Story 2.2 (architecture §3.2 step 7 + §5).
@@ -113,4 +117,101 @@ model Incident {
   device    Device   @relation("DeviceIncidents", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([deviceId, openedAt])
+}
+
+// Story 3.1 — Rule enums (BRD §8.3.1, architecture §4.1).
+// Prisma enums (not free strings) so Story 3.2's engine, Story 3.3's
+// seed, and Story 3.7's admin tab share one source of truth at the
+// type layer. Each literal here MUST match the matching entry in
+// `packages/shared/src/rule.ts` 1:1; the source-walk pin in
+// `packages/db/__tests__/rule-table.schema.spec.ts` catches drift.
+
+// Metric keys a Rule can target. Frozen at the v1 set — adding a key
+// in v2 requires a Prisma migration that drops + recreates the type.
+enum RuleMetric {
+  ph
+  tds_ppm
+  turbidity_ntu
+  chlorine_ppm
+  temp_c
+  water_level_cm
+}
+
+// Comparison operators a Rule can apply. Stored as camel-case TS
+// identifiers because Prisma enums must be valid identifiers;
+// Story 3.2's engine maps them to JS comparators at evaluation time.
+enum RuleOperator {
+  gte
+  gt
+  lte
+  lt
+  eq
+}
+
+// Severity stamped onto a fired alert. Mirrors the wire-contract
+// severity set; invariant I-6 — severity is set by the rule, not
+// inferred by the engine.
+enum RuleSeverity {
+  info
+  warning
+  critical
+}
+
+// v1 closed enum of rule types (architecture §4.2, invariant I-5).
+// Story 3.2's engine supports exactly these three.
+enum RuleRuleType {
+  instant
+  rate
+  absence
+}
+
+// Rule — Story 3.1 (architecture §4.1, BRD §8.3.1).
+// The typed source of truth for the rules engine. Field order below
+// matches the AC: `id`, `deviceId`, `metric`, `operator`, `threshold`,
+// `severity`, `ruleType`, `minDurationSeconds`, `hysteresisSeconds`,
+// `version`, `createdBy`, `createdAt`, `updatedAt`, `isActive`.
+//
+// `deviceId` is `String?` (nullable = global rule when NULL). The
+// optional FK to `Device.id` cascades on delete so a removed Device
+// does not leave orphan Rule rows behind. NULL rows coexist in the
+// unique constraint because Postgres treats NULLs as distinct by
+// default.
+//
+// `createdBy` is intentionally a free `String?` (NOT an FK to
+// `User`) — the `User` table does not exist in the schema yet. When
+// the User migration lands in a future story, a follow-up migration
+// adds `references: [id]`. The current nullable string is
+// forward-compatible.
+//
+// `threshold` is the AC-mandated column name; the wire-contract field
+// is `value` (architecture §4.1). Story 3.2's engine maps DB
+// `threshold` → wire `value` at the engine boundary. Out of scope
+// for 3.1 to resolve that drift.
+//
+// Unique constraint `@@unique([deviceId, metric, operator, threshold, version])`
+// is the per-version disambiguator that lets Story 3.7 insert a new
+// `isActive: true` row alongside an `isActive: false` previous version.
+model Rule {
+  id                  String       @id @default(uuid())
+  deviceId            String?
+  metric              RuleMetric
+  operator            RuleOperator
+  threshold           Float
+  severity            RuleSeverity
+  ruleType            RuleRuleType
+  minDurationSeconds  Int
+  hysteresisSeconds   Int
+  version             Int          @default(1)
+  createdBy           String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  isActive            Boolean      @default(true)
+
+  // F-P8 (mirrors Reading/Incident FK contract): enforce the
+  // device_id authority at the DB layer. A rule with a bogus
+  // deviceId is rejected with a FK violation; ON DELETE CASCADE
+  // keeps a removed Device from leaving orphan Rule rows behind.
+  device              Device?      @relation("DeviceRules", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([deviceId, metric, operator, threshold, version])
 }

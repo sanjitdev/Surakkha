@@ -64,3 +64,10 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-7-map-view.md`
   - summary: KPI band's `offline` count remains hard-coded at `0`
   - evidence: `packages/web/src/dashboard/useDashboardReadings.ts:summarizeReadings` hard-codes `offline: 0`. The new shared `isOffline()` helper is the canonical source-of-truth (already exported from `@surakkha/shared/dashboard`). The Story 2.7 spec explicitly deferred this adoption: "the KPI band's `offline` count (currently hard-coded `0`) can adopt it later without a wire change." Cross-reference F-2.7-track. **Defer to a Story 2.x follow-up once operators request the offline count in the band.**
+
+
+## Deferred from: code review of 3-1-rules-table-prisma-schema (2026-08-25)
+
+  - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-rules-table-prisma-schema.md`
+  - summary: Add a partial unique index `WHERE isActive = true` on Rule(deviceId, metric, operator, threshold) to prevent two `isActive: true` rows at the same tuple if Story 3.7's edit path ever bumps `version` without flipping the previous row's `isActive` to false.
+  - evidence: The current `@@unique([deviceId, metric, operator, threshold, version])` relies on `version` as the disambiguator and assumes every edit bumps version AND flips `isActive`. If an admin path forgets either invariant, two `isActive: true` rows coexist and the engine in Story 3.2 has no tie-break rule to pick one. Story 3.7's admin edit path owns the partial-index decision per the spec's "Unique constraint scope" design note. **Defer to Story 3.7 (and confirm via the partial-index test pin suggested in the same review).**
