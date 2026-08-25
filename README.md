@@ -26,6 +26,7 @@
 - [Default thresholds](#default-thresholds)
 - [Incident state machine](#incident-state-machine)
 - [Operational constraints (v1, not durable)](#operational-constraints-v1-not-durable)
+- [Deployment plan](#deployment-plan-deferred)
 - [Roadmap beyond v1](#roadmap-beyond-v1)
 - [License](#license)
 
@@ -326,6 +327,12 @@ These are deliberate v1 simplifications. The AI coding agent must not mistake an
 | I-15 | Hourly cron retention                               | Max 10,000 rows per run; cursor-based; idempotent.            | Continuous aggregation worker.            |
 
 The full register with "do not mistake for durable" warnings per constraint lives at [`docs/architecture-appendix-opconstraints.md`](./docs/architecture-appendix-opconstraints.md) (Story 6.7 deliverable).
+
+---
+
+## Deployment plan (deferred)
+
+Deployment is intentionally deferred until the project ships. The decision space, hosting matrix, and concrete next steps are tracked in [`docs/deployment.md`](./docs/deployment.md). TL;DR — the recommended path when we're ready is **Vercel (web SPA) + Fly.io (api + simulator) + Neon (Postgres)** — all three have permanent free tiers, the architecture maps1:1 onto what we already have, and Fly is the only platform that lets Socket.IO run free without 5-min reconnects. Three open questions for the user are listed in §7 of that doc.
 
 ---
 
