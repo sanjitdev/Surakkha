@@ -174,6 +174,16 @@ const buildRig = (
     alert: {
       create: alertCreate as unknown as AlertStateRepository["alert"]["create"],
       update: alertUpdate as unknown as AlertStateRepository["alert"]["update"],
+      // Story 3.4 review-finding #3: the open path now resolves
+      // `findOpenAlert` INSIDE the `$transaction`, so the
+      // transaction's `tx` object must expose `alert.findFirst`.
+      // Production: `tx` is the same Prisma client the rest of
+      // the call uses, so `tx.alert.findFirst` works directly.
+      // Tests: this stub routes through the rig's `alertReader`
+      // mock so the same `alertReaderFindFirst` mock drives both
+      // the outer `findOpenAlert` calls (when used directly via
+      // `deps.alertReader`) AND the inner tx-resolved calls.
+      findFirst: alertReaderFindFirst as unknown as AlertStateRepository["alert"]["findFirst"],
     },
     ruleDebounceState: {
       findMany:
@@ -181,6 +191,13 @@ const buildRig = (
       upsert:
         ruleDebounceStateUpsert as unknown as AlertStateRepository["ruleDebounceState"]["upsert"],
     },
+    // Story 3.4 review-finding #3 + #4: the `$transaction` seam.
+    // Production forwards to `prisma.$transaction(cb)`; tests
+    // run the callback directly. The callback receives an
+    // `AlertStateRepository` shaped like the parent — we pass
+    // `alertState` itself so `tx.alert.create` / `tx.findFirst`
+    // inside the callback reuse the existing mocks.
+    $transaction: <T>(cb: (tx: AlertStateRepository) => Promise<T>): Promise<T> => cb(alertState),
   };
   return {
     readingRepository,
@@ -803,13 +820,17 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
     expect(secondCreateArgs.data.openedAt.getTime()).toBe(FRAME_TS_MS + 150_000);
   });
 
-  it("(iv) POST_COMMIT_EMIT_ORDERING: alert.create reject → NO broadcast emit", async () => {
-    // B2 + Design Note "Socket emit happens post-commit". If the
-    // Alert row INSERT rejects (e.g. Prisma network error, schema
-    // drift, etc.), the hook MUST NOT emit `alert:opened` to the
-    // client — that would advertise an Alert row that does not exist
-    // in the DB. The BroadcastTarget stub captures every emit; this
-    // test asserts the captured list is empty.
+  it("(iv) POST_COMMIT_EMIT_ORDERING: alert.create reject → NO broadcast emit (post-P3 $transaction envelope)", async () => {
+    // B2 + Design Note "Socket emit happens post-commit" + Finding #9
+    // (PATCH: upgrade to pin transaction-rollback). After the
+    // P3/P4 `$transaction` envelope wraps the (alert.create +
+    // ruleDebounceState.upsert) pair, the post-commit emit MUST
+    // stay suppressed when the transaction rolls back. This test
+    // forces a rollback AFTER `alert.create` succeeded by making
+    // `ruleDebounceState.upsert` reject — the `$transaction`
+    // callback throws, the transaction rolls back, and the emit
+    // is skipped. The pre-P3 test only pinned alert.create
+    // rejection; this upgrade pins the atomicity guarantee.
     const rig = buildRig();
     const cache = buildCache([
       withMinDuration({
@@ -825,10 +846,12 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
       }),
     ]);
     const broadcastStub = createBroadcastStub();
-    // Force `alert.create` to reject with a generic error (NOT a P2002 —
-    // P2002 is the duplicate-open race, which IS expected to suppress
-    // the emit; this test pins the unrelated failure path).
-    rig.alertCreate.mockRejectedValue(new Error("synthetic db failure"));
+    // `alert.create` SUCCEEDS (returns the row id). The
+    // transaction then rolls back when `ruleDebounceState.upsert`
+    // rejects — this pins the atomicity guarantee.
+    rig.ruleDebounceStateUpsert.mockRejectedValueOnce(
+      new Error("synthetic state upsert failure (post-create)"),
+    );
 
     // Frame 1: T0, breach. min=0 → open transition fires.
     await expect(
@@ -838,9 +861,48 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
         { ...buildFrame({ tds_ppm: 312 }), ts: FRAME_TS_MS },
         broadcastStub.broadcast,
       ),
-    ).rejects.toThrow("synthetic db failure");
+    ).rejects.toThrow("synthetic state upsert failure (post-create)");
 
     // Pin the room + event name literals — the wire contract.
+    // Even though `alert.create` returned a row, the
+    // `$transaction` rolled back so the emit MUST be suppressed.
+    expect(broadcastStub.emits).toHaveLength(0);
+  });
+
+  it("(iv-b) POST_COMMIT_EMIT_ORDERING: alert.create reject propagates → NO broadcast emit", async () => {
+    // Companion to (iv): pins the OTHER failure path inside the
+    // `$transaction` — when `alert.create` itself rejects, the
+    // `$transaction` callback throws, the transaction rolls back,
+    // and the emit is suppressed. The pre-P3 test pinned this
+    // path; this version is updated for the `$transaction`
+    // envelope (same observable behaviour, different failure
+    // surface).
+    const rig = buildRig();
+    const cache = buildCache([
+      withMinDuration({
+        id: RULE_ID_DEBOUNCE,
+        deviceId: null,
+        metric: "tds_ppm",
+        operator: "gte",
+        threshold: 300,
+        severity: "warning",
+        ruleType: "instant",
+        minDurationSeconds: 0,
+        hysteresisSeconds: 60,
+      }),
+    ]);
+    const broadcastStub = createBroadcastStub();
+    rig.alertCreate.mockRejectedValue(new Error("synthetic db failure"));
+
+    await expect(
+      callOnRuleEvaluation(
+        rig,
+        cache,
+        { ...buildFrame({ tds_ppm: 312 }), ts: FRAME_TS_MS },
+        broadcastStub.broadcast,
+      ),
+    ).rejects.toThrow("synthetic db failure");
+
     expect(broadcastStub.emits).toHaveLength(0);
   });
 
@@ -915,6 +977,69 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
         alertState: rig.alertState,
       }),
     ).not.toThrow();
+  });
+
+  it("(vii) P2002_RACE_CATCH: alert.create throws P2002 → no throw, no emit, dup-suppress log", async () => {
+    // Story 3.4 review-finding #10: the P2002 catch is the safety
+    // net for AC11 (the partial unique index raises this when a
+    // concurrent `alert.create` beats us). The hook catches the
+    // P2002 error, logs `[alerts] duplicate open suppressed
+    // (race) ...`, and returns normally — no emit. The
+    // pre-patch code path was un-pinned by any test; this test
+    // pins both the suppression behaviour and the log line.
+    const rig = buildRig();
+    const cache = buildCache([
+      withMinDuration({
+        id: RULE_ID_DEBOUNCE,
+        deviceId: null,
+        metric: "tds_ppm",
+        operator: "gte",
+        threshold: 300,
+        severity: "warning",
+        ruleType: "instant",
+        minDurationSeconds: 0, // min=0 → opens on frame 1
+        hysteresisSeconds: 60,
+      }),
+    ]);
+    const broadcastStub = createBroadcastStub();
+    // Stub `findOpenAlert` (used both outside and inside the
+    // `$transaction`) to return `null` so the fast-path
+    // idempotency check passes and we proceed to `alert.create`.
+    rig.alertReaderFindFirst.mockResolvedValue(null);
+    // Force `alert.create` to reject with a P2002 error. The hook
+    // catches this and suppresses the emit. This simulates a
+    // concurrent insert that beat us between the `findOpenAlert`
+    // lookup and the `alert.create` call.
+    const p2002Error = Object.assign(new Error("unique constraint violation"), {
+      code: "P2002",
+    });
+    rig.alertCreate.mockRejectedValueOnce(p2002Error);
+    // Suppress console.warn noise — the test asserts no throw +
+    // no emit, but the hook logs `[alerts] duplicate open
+    // suppressed (race)` which is part of the pinned behaviour.
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    // Frame 1: T0, breach. min=0 → open transition fires. The
+    // `$transaction` callback rejects with P2002 → the catch
+    // suppresses the throw + emit.
+    await expect(
+      callOnRuleEvaluation(
+        rig,
+        cache,
+        { ...buildFrame({ tds_ppm: 312 }), ts: FRAME_TS_MS },
+        broadcastStub.broadcast,
+      ),
+    ).resolves.toBeDefined(); // hook returns normally, not throws
+
+    // No broadcast emit — the safety-net suppression worked.
+    expect(broadcastStub.emits).toHaveLength(0);
+    // The race-suppression log line is pinned — operators can
+    // diagnose the duplicate-open race from the boot log.
+    const raceLog = consoleWarnSpy.mock.calls.find((args) =>
+      String(args[0]).includes("duplicate open suppressed (race)"),
+    );
+    expect(raceLog).toBeDefined();
+    consoleWarnSpy.mockRestore();
   });
 });
 
