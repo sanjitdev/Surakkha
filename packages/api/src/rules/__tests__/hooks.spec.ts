@@ -78,6 +78,11 @@ interface Rig {
   readonly alertUpdate: ReturnType<typeof vi.fn>;
   readonly ruleDebounceStateFindMany: ReturnType<typeof vi.fn>;
   readonly ruleDebounceStateUpsert: ReturnType<typeof vi.fn>;
+  // Story 3.6 — auto-create Incident stub. Pre-3.6 tests don't
+  // assert on incidents (info-severity hooks dominate), so the
+  // default mock is a no-op; tests that exercise warning/critical
+  // flows can override this via the returned `incidentCreate` ref.
+  readonly incidentCreate: ReturnType<typeof vi.fn>;
 }
 
 // Shared, mutable de-bounce state. Keys are `${metric}|${severity}`
@@ -124,6 +129,12 @@ const buildRig = (
   };
   const alertCreate = vi.fn(async () => ({ id: "11111111-1111-4111-8111-111111111111" }));
   const alertUpdate = vi.fn(async () => ({}));
+  // Story 3.6 — incident auto-create stub. Default returns a stable
+  // UUID; tests that need to assert on the call can replace this
+  // mock via the `incidentCreate` ref on the returned rig.
+  const incidentCreate = vi.fn(
+    async () => ({ id: "22222222-2222-4222-8222-222222222222" }) as const,
+  );
 
   // Shared, mutable state. `findMany` reads from it; `upsert`
   // writes into it. Tests that drive multiple frames share state
@@ -191,6 +202,14 @@ const buildRig = (
       upsert:
         ruleDebounceStateUpsert as unknown as AlertStateRepository["ruleDebounceState"]["upsert"],
     },
+    // Story 3.6 — incident auto-create slice. Lives in the same
+    // `$transaction` as the Alert row + state upsert. The mock
+    // returns a stable UUID; tests that need to assert on the call
+    // (e.g. "warning → create, info → skip") reach for the
+    // returned `incidentCreate` vi.fn ref.
+    incident: {
+      create: incidentCreate as unknown as AlertStateRepository["incident"]["create"],
+    },
     // Story 3.4 review-finding #3 + #4: the `$transaction` seam.
     // Production forwards to `prisma.$transaction(cb)`; tests
     // run the callback directly. The callback receives an
@@ -211,6 +230,7 @@ const buildRig = (
     alertUpdate,
     ruleDebounceStateFindMany,
     ruleDebounceStateUpsert,
+    incidentCreate,
   };
 };
 

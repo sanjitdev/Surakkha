@@ -91,6 +91,29 @@ export interface AlertStateRepository {
     }): Promise<{ readonly id: string } | null>;
   };
   /**
+   * Story 3.6 — auto-create Incident from warning/critical Alert.
+   * Lives on the SAME `$transaction` so the Alert row + Incident
+   * row + state upsert commit as one unit. The `tx` object inside
+   * `$transaction`'s callback exposes this slice via the
+   * `AlertStateRepository` shape. Production forwards to
+   * `tx.incident.create(...)`; tests inject a stub.
+   *
+   * Atomicity: any throw inside the `$transaction` callback rolls
+   * back the entire transaction (Alert row + Incident row + state
+   * row). No orphan alerts on Incident-write failure (AC6).
+   */
+  readonly incident: {
+    create(args: {
+      readonly data: {
+        readonly deviceId: string;
+        readonly severity: string;
+        readonly metric: RuleMetric;
+        readonly value: number;
+        readonly openedAt: Date;
+      };
+    }): Promise<{ readonly id: string }>;
+  };
+  /**
    * Story 3.4 review-finding #3 + #4: `$transaction` wrapper.
    * The callback runs the IO pair (Alert write + state upsert)
    * atomically. Production forwards to `prisma.$transaction(cb)`.
@@ -124,6 +147,13 @@ export const resolveAlertStateRepository = (prisma: unknown): AlertStateReposito
       create: (args) => client.alert.create(args) as Promise<{ readonly id: string }>,
       update: (args) => client.alert.update(args) as Promise<unknown>,
       findFirst: (args) => client.alert.findFirst(args) as Promise<{ readonly id: string } | null>,
+    },
+    // Story 3.6 — incident auto-create lives in the same
+    // `$transaction` as the alert write. Production forwards to
+    // `client.incident.create(...)` (the same Prisma client the
+    // rest of the call uses); tests inject a stub.
+    incident: {
+      create: (args) => client.incident.create(args) as Promise<{ readonly id: string }>,
     },
     $transaction: <T>(cb: (tx: AlertStateRepository) => Promise<T>): Promise<T> =>
       client.$transaction(cb) as Promise<T>,

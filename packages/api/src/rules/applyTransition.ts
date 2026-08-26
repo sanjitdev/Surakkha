@@ -36,6 +36,7 @@ import { type AlertStateRepository } from "./alertStateRepository";
 import { type BreachTransition } from "./debounce";
 import { findOpenAlert, type PrismaAlertReader } from "./findOpenAlert";
 import { type InstallRuleEngineHooksDeps } from "./hooks";
+import { buildIncidentPayload, shouldCreateIncident } from "./incidentFromAlert";
 
 import type { BroadcastTarget } from "../ingest/frame";
 
@@ -130,6 +131,8 @@ const applyOpenTransition = async (
     } catch (err) {
       // Race: another concurrent insert beat us; the partial
       // unique index raised P2002. Treat as "already-open, skip".
+      // The P2002 catch returns BEFORE the incident auto-create
+      // (AC3 — losing writers do not create duplicate Incidents).
       if (isPrismaP2002(err)) {
         console.warn(
           `[alerts] duplicate open suppressed (race) device=${deviceId} metric=${transition.metric} severity=${transition.severity}`,
@@ -138,6 +141,26 @@ const applyOpenTransition = async (
         return;
       }
       throw err;
+    }
+
+    // Story 3.6 — auto-create Incident from warning/critical Alert.
+    // Lives inside the same `$transaction` so the Incident row
+    // commits atomically with the Alert row + state upsert (AC1,
+    // AC6). Info-severity alerts do NOT create Incidents (AC2).
+    // The decision is made via the type-guard helper so a future
+    // drift on the wire enum (e.g. a new severity literal) is a
+    // closed-set refusal — the Incident is NOT created for unknown
+    // severities.
+    if (shouldCreateIncident(transition.severity)) {
+      await tx.incident.create({
+        data: buildIncidentPayload({
+          deviceId,
+          severity: transition.severity,
+          metric: transition.metric,
+          value: metricValue,
+          openedAt: transition.openedAt,
+        }),
+      });
     }
 
     // Atomic with the alert row creation: both commit together or
