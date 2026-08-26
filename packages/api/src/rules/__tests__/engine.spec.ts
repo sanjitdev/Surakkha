@@ -41,6 +41,12 @@ const baseRule = (overrides: Partial<EngineRule> = {}): EngineRule => ({
   threshold: 300,
   severity: "warning",
   ruleType: "instant",
+  // Story 3.4 — `minDurationSeconds` is required by `EngineRule`. Default
+  // value 0 preserves the existing Story 3.2 semantics: the engine itself
+  // does not consume this field; the de-bounce layer reads it (and a
+  // value of 0 means "fire immediately on first breach", matching the
+  // pre-3.4 engine behavior of "no de-bounce").
+  minDurationSeconds: 0,
   hysteresisSeconds: 60,
   ...overrides,
 });

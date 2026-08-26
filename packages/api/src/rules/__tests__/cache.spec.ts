@@ -30,6 +30,10 @@ const makeRow = (overrides: Partial<RuleRow> = {}): RuleRow => ({
   threshold: 300,
   severity: "warning",
   ruleType: "instant",
+  // Story 3.4 — `minDurationSeconds` is now part of the `RuleRow`
+  // contract. Default value 30 matches the spec's primary example
+  // (`min=30` rule); tests that need a different value override it.
+  minDurationSeconds: 30,
   hysteresisSeconds: 60,
   isActive: true,
   ...overrides,
@@ -132,5 +136,19 @@ describe("Story 3.2 — hydrateActiveRuleCache", () => {
     expect(warnCalls).toContain(
       "[rules] hydrate: skipped unsupported ruleType=unsupported id=bad-1",
     );
+  });
+
+  it("(e) Story 3.4 — projects minDurationSeconds from RuleRow into EngineRule", async () => {
+    // AC #B4 — pin that `projectRow` carries `minDurationSeconds`
+    // through. A regression that forgets to add the projection
+    // returns `undefined` for every cached rule's `minDurationSeconds`;
+    // the de-bounce layer then treats every rule as poison and
+    // emits zero transitions (silent failure).
+    const rows: RuleRow[] = [makeRow({ id: "min-42", minDurationSeconds: 42 })];
+    const { prisma } = buildStubPrisma(rows);
+    const cache = await hydrateActiveRuleCache(prisma);
+    const engineRule = cache.byId.get("min-42");
+    expect(engineRule).toBeDefined();
+    expect(engineRule?.minDurationSeconds).toBe(42);
   });
 });
