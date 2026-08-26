@@ -22,7 +22,7 @@
  * + `max-lines` ceilings.
  */
 import { type RuleRow } from "@surakkha/shared";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { type NewRuleForm } from "./ThresholdsModals";
 import {
@@ -67,6 +67,16 @@ export const ThresholdsPage = () => {
     }, TOAST_TTL_MS);
     timersRef.current.add(timer);
   };
+
+  // Clear any pending toast timers when the page unmounts so the
+  // deferred `setToasts` callbacks don't fire on an unmounted tree.
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   // Hooks MUST run on every render — derive the lists BEFORE any
   // early returns so the hook order is stable across the loading
@@ -195,7 +205,6 @@ export const ThresholdsPage = () => {
       onSupersede={handleSupersede}
       onDeactivate={handleDeactivate}
       onActivate={handleActivate}
-      pushToast={pushToast}
     />
   );
 };

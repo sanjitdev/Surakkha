@@ -101,7 +101,6 @@ interface ThresholdsPopulatedViewProps {
   readonly onSupersede: (id: string, threshold: number) => void;
   readonly onDeactivate: (row: RuleRow) => void;
   readonly onActivate: (row: RuleRow) => void;
-  readonly pushToast: (tone: ToastTone, message: string) => void;
 }
 
 export const ThresholdsPopulatedView = ({
@@ -116,19 +115,11 @@ export const ThresholdsPopulatedView = ({
   onSupersede,
   onDeactivate,
   onActivate,
-  pushToast,
 }: ThresholdsPopulatedViewProps) => {
   const [editing, setEditing] = useState<RuleRow | null>(null);
   const [creating, setCreating] = useState(false);
 
   const handleCreateSubmit = (form: NewRuleForm): void => {
-    const thresholdNum = Number(form.threshold);
-    const minDurationNum = Number(form.minDurationSeconds);
-    const hysteresisNum = Number(form.hysteresisSeconds);
-    if (Number.isNaN(thresholdNum) || Number.isNaN(minDurationNum) || Number.isNaN(hysteresisNum)) {
-      pushToast("error", "Invalid numeric field.");
-      return;
-    }
     onCreate(form);
     setCreating(false);
   };
@@ -242,7 +233,6 @@ export const ThresholdsPopulatedView = ({
           onSubmit={(body) => {
             setEditing(null);
             onSupersede(editing.id, body.threshold);
-            pushToast("success", `Rule superseded (v+1).`);
           }}
         />
       ) : null}

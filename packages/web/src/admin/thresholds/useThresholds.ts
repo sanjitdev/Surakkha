@@ -36,6 +36,56 @@ export type { RuleRow } from "@surakkha/shared";
 const THRESHOLDS_RULES_KEY = ["admin", "thresholds", "rules"] as const;
 
 /**
+ * Build a human-readable error message from a non-`ok` response. The
+ * api returns `{ error: "validation_error", issues: [...] }` on Zod
+ * parse failures (see `thresholdsRouter.sendValidationError`); we
+ * surface the issues' `.path` + `.message` so an operator can see
+ * WHICH field failed instead of a bare "failed: 400" toast. For all
+ * other non-2xx responses we fall back to `status` + the body's
+ * `error` string (or "unknown_error" if absent / non-JSON).
+ */
+const isValidationError = (
+  parsed: unknown,
+): parsed is { issues: ReadonlyArray<{ path?: unknown; message?: unknown }> } =>
+  parsed !== null &&
+  typeof parsed === "object" &&
+  "error" in parsed &&
+  (parsed as { error: unknown }).error === "validation_error" &&
+  "issues" in parsed &&
+  Array.isArray((parsed as { issues: unknown }).issues);
+
+const summarizeIssues = (issues: ReadonlyArray<{ path?: unknown; message?: unknown }>): string =>
+  issues
+    .map((i) => {
+      const path = Array.isArray(i.path) ? i.path.join(".") : "";
+      return path === "" ? `${i.message ?? "invalid"}` : `${path}: ${i.message ?? "invalid"}`;
+    })
+    .join("; ");
+
+const errorCodeFromBody = (parsed: unknown): string =>
+  parsed !== null && typeof parsed === "object" && "error" in parsed
+    ? String((parsed as { error: unknown }).error)
+    : "unknown_error";
+
+const parseApiError = async (res: Response, label: string): Promise<Error> => {
+  let bodyText: string;
+  let parsed: unknown;
+  try {
+    bodyText = await res.text();
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return new Error(`${label} failed: ${res.status} (no body)`);
+  }
+  if (isValidationError(parsed)) {
+    const summary = summarizeIssues(parsed.issues);
+    return new Error(`${label} failed: ${res.status} — ${summary || "validation_error"}`);
+  }
+  const { status } = res;
+  const errStr = errorCodeFromBody(parsed);
+  return new Error(`${label} failed: ${status} — ${errStr}`);
+};
+
+/**
  * Query one page of rules. `activeOnly` defaults to `false` so the
  * page shows the full history (active + inactive versions).
  */
@@ -47,7 +97,7 @@ export const useThresholds = (activeOnly: boolean = false) =>
       params.set("activeOnly", activeOnly ? "true" : "false");
       const res = await apiFetch(`/admin/thresholds/rules?${params.toString()}`);
       if (!res.ok) {
-        throw new Error(`thresholds fetch failed: ${res.status}`);
+        throw await parseApiError(res, "thresholds fetch");
       }
       const parsed = RuleListResponseSchema.safeParse(await res.json());
       if (!parsed.success) {
@@ -70,7 +120,7 @@ export const useCreateThreshold = () => {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        throw new Error(`create threshold failed: ${res.status}`);
+        throw await parseApiError(res, "create threshold");
       }
       // The api returns a bare `RuleRow` (not wrapped in `{ rule }`)
       // — the schema parse below strips the optional wrapper.
@@ -106,7 +156,7 @@ export const useUpdateThreshold = () => {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        throw new Error(`update threshold failed: ${res.status}`);
+        throw await parseApiError(res, "update threshold");
       }
       // The api returns `{ old, new }` for supersede, a bare row for
       // deactivate. Branch on the body shape we sent to disambiguate.
@@ -142,7 +192,7 @@ export const useActivateThreshold = () => {
         method: "PATCH",
       });
       if (!res.ok) {
-        throw new Error(`activate threshold failed: ${res.status}`);
+        throw await parseApiError(res, "activate threshold");
       }
       const parsed = RuleRowSchema.safeParse(await res.json());
       if (!parsed.success) {

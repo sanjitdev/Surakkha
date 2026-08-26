@@ -36,6 +36,30 @@ export const INCIDENT_STABLE_STATES = [
 export const IncidentSeveritySchema = z.enum(["info", "warning", "critical"]);
 export type IncidentSeverity = z.infer<typeof IncidentSeveritySchema>;
 
+/**
+ * Closed subset of `IncidentSeverity` that auto-creates an Incident
+ * row from a just-committed Alert (Story 3.6 AC1 + AC2). `info` is
+ * excluded — informational alerts do not generate work items.
+ *
+ * Shared here so both `packages/api` (production: `applyOpenTransition`
+ * calls this inside the alert-state `$transaction`) and
+ * `packages/db/prisma/alert-debounce.spec.ts` (live test rig mirrors
+ * the same gate) import one source of truth.
+ */
+export type IncidentCreatingSeverity = Extract<IncidentSeverity, "warning" | "critical">;
+
+/**
+ * Pure predicate — does a just-committed Alert of `severity` merit
+ * an auto-created Incident? No DB or socket side effects.
+ *
+ * Defence-in-depth: `severity` is typed `string` (Alert.severity is a
+ * free-form `String` column, not a Prisma enum), but the closed set
+ * of valid values is exactly `IncidentSeverity` — anything outside
+ * that set returns `false`.
+ */
+export const shouldCreateIncident = (severity: string): severity is IncidentCreatingSeverity =>
+  severity === "warning" || severity === "critical";
+
 /** Inspection outcome enum — what a Technician submits in Story 4.7. */
 export const InspectionOutcomeSchema = z.enum(["SAFE", "UNSAFE", "MONITORING"]);
 export type InspectionOutcome = z.infer<typeof InspectionOutcomeSchema>;

@@ -292,6 +292,50 @@ describe("Story 3.7 — POST /admin/thresholds/rules (AC2)", () => {
     await close();
   });
 
+  // Pins that `RuleCreateRequestSchema.strict()` actually rejects
+  // unknown top-level fields. Without `.strict()`, this body would
+  // silently parse (extra field ignored) and the row would commit —
+  // a future refactor that drops `.strict()` from the wire schema
+  // would slip past the unknown-metric case above and only surface
+  // here.
+  it("rejects a body with an unknown top-level field (validation_error) — pins RuleCreateRequestSchema.strict()", async () => {
+    const { repo } = buildRepo([]);
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      repo,
+    });
+    const res = await fetch(`${url}/admin/thresholds/rules`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        metric: "ph",
+        operator: "lt",
+        threshold: 6.5,
+        severity: "critical",
+        ruleType: "instant",
+        minDurationSeconds: 0,
+        hysteresisSeconds: 0,
+        foo: 1,
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      issues?: ReadonlyArray<{ path?: unknown }>;
+    };
+    expect(body.error).toBe("validation_error");
+    // Zod surfaces `.strict()` rejections via `unrecognized_keys` issue
+    // code; the path is `[]` (top-level). We assert the path presence
+    // to confirm the rejection comes from the strict-check, not from
+    // a coincidental type mismatch.
+    const issues = body.issues ?? [];
+    expect(issues.some((i) => Array.isArray(i.path) && i.path.length === 0)).toBe(true);
+    await close();
+  });
+
   it("returns 403 + rbac_denied audit when a Viewer hits the endpoint", async () => {
     const events: AuditEvent[] = [];
     const { repo } = buildRepo([]);

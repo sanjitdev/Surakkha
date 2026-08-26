@@ -69,7 +69,7 @@
 import { randomUUID } from "node:crypto";
 
 import { Prisma, PrismaClient } from "@prisma/client";
-import type { RuleMetric, RuleSeverity } from "@surakkha/shared";
+import { type RuleMetric, type RuleSeverity, shouldCreateIncident } from "@surakkha/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 /**
@@ -591,11 +591,11 @@ describe("Story 3.6 — auto-create Incident (AC1-AC4, AC6)", () => {
   };
 
   // The api's applyOpenTransition calls `tx.incident.create` only
-  // when `shouldCreateIncident(severity)` returns true. We mirror
-  // that gate in the test rig (so a future regression that drops
-  // the gate is pinned here).
-  const shouldCreateIncident = (severity: RuleSeverity): boolean =>
-    severity === "warning" || severity === "critical";
+  // when `shouldCreateIncident(severity)` returns true. We import
+  // the shared predicate (rather than mirror it locally) so a future
+  // regression that drops the gate is pinned here AND so api and db
+  // share one source of truth for the severity subset. Called at
+  // 619 / 684 / 727 below.
 
   it("AC1 (warning) — committing a warning-severity Alert inside $transaction auto-creates a matching Incident row", async () => {
     const deviceId = await mkDevice();

@@ -96,3 +96,25 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md`
   summary: `assertAcknowledgedByUserIdColumnPresent` data_type assertion accepts only `["text", "character varying"]`
   evidence: `packages/db/prisma/alert-debounce.spec.ts` asserts `data_type IN ('text', 'character varying')`. Epic 5 will likely migrate the column to `uuid` when the FK constraint is added (the User table lands in Epic 5). The test will need updating at that point. **Deferred — pre-existing acceptance of the v1 type; Epic 5 will trigger a test update when the type changes.**
+
+## Deferred from: code review of 3-6-auto-create-incident-from-alert + 3-7-admin-thresholds-tab (2026-08-26)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-auto-create-incident-from-alert.md`
+  summary: AC4 observability boundary unverified at router — 3.6 live test reads the DB directly, not via `GET /api/incidents/recent`
+  evidence: `packages/db/prisma/alert-debounce.spec.ts:1939, 2003, 2043, 2132` asserts via `prisma.incident.findUnique`/`findMany`. The AC4 wording requires the auto-created Incident to be observable via `/api/incidents/recent`. A wire-shape drift between the production `tx.incident.create` payload and the router's `select` shape would silently break dashboard surfacing while leaving the DB-row assertion green. **Defer to a future Incidents-region story (Epic 4) that consumes the auto-created row — that's the natural place to add an end-to-end round-trip pin.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-auto-create-incident-from-alert.md`
+  summary: AC5 socket non-emit is not pinned by any behavioural test
+  evidence: Spec AC5 says the auto-create "does NOT emit a separate socket event." `alert-debounce.spec.ts`'s 3.6 block has no `vi.spyOn` on the broadcast target, no negative-emit assertion. The Pin column says "code review + `applyTransition.ts:189`" but that's a comment, not a behavioural guard. **Defer — absence-of-emit is structurally asserted by the absence of a new emit call site; a behavioural spy would couple the test to internal broadcast wiring. Spec acceptance is satisfied at the source-review level.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-auto-create-incident-from-alert.md`
+  summary: `alert-debounce.spec.ts:2115-2137` Promise.all writer race has no deterministic barrier
+  evidence: Two concurrent `tx.alert.create` calls; the spec wants exactly one winner. Postgres serializable isolation MAY let both commit at distinct `openedAt`-ms timestamps depending on the partial-unique-index width. The test passes today but the assertion is fragile under timing variation. **Defer — pre-existing test pattern (not introduced by 3.6); flake surface is low under current volumes.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-6-auto-create-incident-from-alert.md`
+  summary: P2002 inside a future Incident-table unique constraint would double-warn
+  evidence: `applyTransition.ts:1662-1668` warns on `tx.alert.create` P2002. If a future schema adds `@@unique` on `Incident(deviceId, openedAt)`, the second writer's `tx.incident.create` (after alert succeeds) raises P2002; the alert row rolls back but the warn log has already fired for the alert P2002, producing a confusing operator log line. **Defer — speculative; depends on a future schema change not in scope for Epic 3.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-thresholds-tab.md`
+  summary: `deactivateRule`/`activateRule` P2025 (concurrent-delete-mid-flight) returns 500 instead of 404
+  evidence: `packages/api/src/admin/thresholdsRouter.ts:1239-1274` — between `findUnique` (which gates 404) and `repo.rule.update`, a concurrent delete raises Prisma P2025, which falls into the generic `catch (err)` and returns 500. Race window is narrow (single-instance api, low write volume on thresholds). **Defer — narrow race; current 500 path is acceptable v1 behaviour. Wrap in a P2025-aware try/catch in a future hardening pass.**

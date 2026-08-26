@@ -1061,6 +1061,88 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
     expect(raceLog).toBeDefined();
     consoleWarnSpy.mockRestore();
   });
+
+  // Story 3.6 — auto-create Incident from warning/critical Alert.
+  // Two new cases pin the headline invariant via the rig's
+  // `incidentCreate` vi.fn ref. AC1 = warning → create once; AC2
+  // = info → no create call. These close the gap that existed
+  // pre-review: dropping `shouldCreateIncident` (or the call
+  // site entirely) would have passed the existing suite.
+  it("(viii) INCIDENT_CREATE_WARNING: warning-severity OPEN transition calls incident.create once with deviceId/severity/metric/value", async () => {
+    const rig = buildRig();
+    const cache = buildCache([
+      withMinDuration({
+        id: RULE_ID_DEBOUNCE,
+        deviceId: null,
+        metric: "tds_ppm",
+        operator: "gte",
+        threshold: 300,
+        severity: "warning",
+        ruleType: "instant",
+        minDurationSeconds: 0, // min=0 → opens on frame 1
+        hysteresisSeconds: 60,
+      }),
+    ]);
+    const broadcastStub = createBroadcastStub();
+    rig.alertReaderFindFirst.mockResolvedValue(null);
+
+    await callOnRuleEvaluation(
+      rig,
+      cache,
+      { ...buildFrame({ tds_ppm: 312 }), ts: FRAME_TS_MS },
+      broadcastStub.broadcast,
+    );
+
+    // AC1 — warning-severity Alert creation triggers exactly one
+    // incident.create call. The payload carries the same deviceId,
+    // severity, metric, and the metricValue from the frame. The
+    // helper passes `tx.incident.create({ data: buildIncidentPayload
+    // (...) })`, so the assertion unwraps `arg.data` to keep the
+    // match-object against the inner payload (otherwise `openedAt`
+    // and other wrapper keys from the surrounding `create(...)` call
+    // would leak into the diff).
+    expect(rig.incidentCreate).toHaveBeenCalledTimes(1);
+    const [arg] = rig.incidentCreate.mock.calls[0] ?? [];
+    expect(arg).toMatchObject({
+      data: {
+        deviceId: DEVICE_ID,
+        severity: "warning",
+        metric: "tds_ppm",
+        value: 312,
+      },
+    });
+  });
+
+  it("(ix) INCIDENT_SKIP_INFO: info-severity OPEN transition does NOT call incident.create", async () => {
+    const rig = buildRig();
+    const cache = buildCache([
+      withMinDuration({
+        id: RULE_ID_DEBOUNCE,
+        deviceId: null,
+        metric: "tds_ppm",
+        operator: "gte",
+        threshold: 300,
+        severity: "info",
+        ruleType: "instant",
+        minDurationSeconds: 0, // min=0 → opens on frame 1
+        hysteresisSeconds: 60,
+      }),
+    ]);
+    const broadcastStub = createBroadcastStub();
+    rig.alertReaderFindFirst.mockResolvedValue(null);
+
+    await callOnRuleEvaluation(
+      rig,
+      cache,
+      { ...buildFrame({ tds_ppm: 312 }), ts: FRAME_TS_MS },
+      broadcastStub.broadcast,
+    );
+
+    // AC2 — info-severity Alert creation does NOT trigger
+    // incident.create. The mock must remain untouched.
+    expect(rig.alertCreate).toHaveBeenCalledTimes(1);
+    expect(rig.incidentCreate).not.toHaveBeenCalled();
+  });
 });
 
 // --------------------------------------------------------------------------

@@ -431,24 +431,55 @@ app.use(
 
 /**
  * Story 3.7 — `/admin/thresholds` admin tab. Mount the router with
- * the same lazy Prisma singleton pattern the simulator router uses
- * so a transient DB outage at boot doesn't crash the api; the
- * router itself catches per-request errors and surfaces 500 instead
- * of leaking a stack trace.
+ * the same lazy Prisma singleton pattern the simulator + alerts
+ * routers use (see `alertAckRepositoryWrapper` above): the router
+ * is mounted at boot with a forwarder-shaped deps object that
+ * resolves Prisma on first request and forwards every method. A
+ * transient DB outage at boot does NOT crash the api — the wrapper
+ * rejects on first request and the router's per-handler catch
+ * surfaces 500 instead of leaking a stack trace.
  */
-const thresholdsRepoFromPrisma = async (): Promise<
+let cachedThresholdsRepo: Awaited<ReturnType<typeof resolveThresholdsRepository>> | null = null;
+const ensureThresholdsRepo = async (): Promise<
   Awaited<ReturnType<typeof resolveThresholdsRepository>>
 > => {
-  const client = await resolvePrismaClient();
-  return resolveThresholdsRepository(client);
+  if (cachedThresholdsRepo === null) {
+    const client = await resolvePrismaClient();
+    cachedThresholdsRepo = resolveThresholdsRepository(client);
+  }
+  return cachedThresholdsRepo;
 };
 
-const buildThresholdsRouterFromPrisma = async () => {
-  const repo = await thresholdsRepoFromPrisma();
-  return buildThresholdsRouter({ audit, repo });
+/**
+ * Forwarder-shaped ThresholdsRepository. Every method awaits the
+ * first-use Prisma resolution then forwards to the typed adapter.
+ * The router's per-handler try/catch (see `thresholdsRouter.ts`) is
+ * what surfaces a DB-down response as 500.
+ */
+const thresholdsRepoWrapper: Parameters<typeof buildThresholdsRouter>[0]["repo"] = {
+  rule: {
+    findMany: async (args) => {
+      const repo = await ensureThresholdsRepo();
+      return repo.rule.findMany(args);
+    },
+    findUnique: async (args) => {
+      const repo = await ensureThresholdsRepo();
+      return repo.rule.findUnique(args);
+    },
+    create: async (args) => {
+      const repo = await ensureThresholdsRepo();
+      return repo.rule.create(args);
+    },
+    update: async (args) => {
+      const repo = await ensureThresholdsRepo();
+      return repo.rule.update(args);
+    },
+  },
+  $transaction: async <T>(cb: (tx: typeof thresholdsRepoWrapper) => Promise<T>): Promise<T> =>
+    cb(await ensureThresholdsRepo()),
 };
 
-app.use("/admin/thresholds", await buildThresholdsRouterFromPrisma());
+app.use("/admin/thresholds", buildThresholdsRouter({ audit, repo: thresholdsRepoWrapper }));
 
 // Final 404 — the same shape the Step 0 stub returned, so the Docker
 // healthcheck contract is unchanged.

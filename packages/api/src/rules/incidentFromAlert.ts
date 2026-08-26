@@ -30,21 +30,25 @@
  *   - Deduplicate across multiple alerts on the same `(deviceId,
  *     metric)` key (Epic 4's reopen path owns this).
  */
-import type { RuleMetric } from "@surakkha/shared";
+import {
+  type IncidentCreatingSeverity,
+  type RuleMetric,
+  shouldCreateIncident as shouldCreateIncidentShared,
+} from "@surakkha/shared";
 
 /**
- * Closed set of severities that auto-create an Incident. Matches
- * the wire-side enum (`@surakkha/shared/severity`) and the
- * `Alert.severity` column convention exactly.
+ * Closed set of severities that auto-create an Incident. Re-exported
+ * from `@surakkha/shared/incident.ts` so api and db share one source
+ * of truth (test rig at `alert-debounce.spec.ts` imports from shared).
  */
-export type IncidentCreatingSeverity = "warning" | "critical";
+export type { IncidentCreatingSeverity };
 
 /**
- * Decide whether a just-committed Alert should auto-create an
- * Incident. Pure: no DB / no socket side effects.
+ * Re-export the shared predicate. Aliased back to the local name so
+ * the call site in `applyTransition.ts` keeps its existing
+ * `shouldCreateIncident(severity)` import path.
  */
-export const shouldCreateIncident = (severity: string): severity is IncidentCreatingSeverity =>
-  severity === "warning" || severity === "critical";
+export const shouldCreateIncident = shouldCreateIncidentShared;
 
 /**
  * Input shape the helper needs from the alert row + transition

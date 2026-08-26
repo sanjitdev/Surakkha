@@ -224,6 +224,30 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
         <p className="text-md text-neutral-secondary">
           Editing creates a new version. The old row is deactivated automatically.
         </p>
+        {/* Spec AC8 — "pre-fill with the rule's current fields". The
+            supersede key is `(deviceId, metric, operator, threshold)`
+            so only `threshold` is mutable across versions; the rest
+            are shown read-only to make the slot visible to the
+            operator without inviting drift. Each field has its own
+            `data-testid` so a RTL test can assert pre-fill. */}
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-md">
+          <dt className="text-neutral-secondary">Device</dt>
+          <dd data-testid="thresholds-edit-field-deviceId" className="font-mono">
+            {rule.deviceId ?? "global"}
+          </dd>
+          <dt className="text-neutral-secondary">Metric</dt>
+          <dd data-testid="thresholds-edit-field-metric">{rule.metric}</dd>
+          <dt className="text-neutral-secondary">Operator</dt>
+          <dd data-testid="thresholds-edit-field-operator">{rule.operator}</dd>
+          <dt className="text-neutral-secondary">Severity</dt>
+          <dd data-testid="thresholds-edit-field-severity">{rule.severity}</dd>
+          <dt className="text-neutral-secondary">Rule type</dt>
+          <dd data-testid="thresholds-edit-field-ruleType">{rule.ruleType}</dd>
+          <dt className="text-neutral-secondary">Min duration (s)</dt>
+          <dd data-testid="thresholds-edit-field-minDurationSeconds">{rule.minDurationSeconds}</dd>
+          <dt className="text-neutral-secondary">Hysteresis (s)</dt>
+          <dd data-testid="thresholds-edit-field-hysteresisSeconds">{rule.hysteresisSeconds}</dd>
+        </dl>
         <label className="text-md">
           New threshold
           <input

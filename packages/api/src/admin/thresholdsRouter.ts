@@ -75,11 +75,16 @@ const MAX_LIMIT = 200;
 /**
  * Per-element `orderBy` shape. A page may order by a heterogeneous
  * list of keys (e.g. `[{ deviceId: "asc" }, { metric: "asc" }]`),
- * so each element is a one-of union of the supported keys.
+ * so each element is a one-of union of the supported keys. The
+ * `version DESC` + `id ASC` pair terminates the list so cursor
+ * pagination has a deterministic tiebreak (no two rows can share
+ * the same `(deviceId, metric, version, id)` tuple).
  */
 interface RuleOrderBy {
   readonly deviceId?: "asc" | "desc";
   readonly metric?: "asc" | "desc";
+  readonly version?: "asc" | "desc";
+  readonly id?: "asc" | "desc";
 }
 
 export interface ThresholdsRepository {
@@ -212,7 +217,20 @@ const listRules = async (
   const where = args.activeOnly ? { isActive: true } : {};
   const findArgs: Parameters<ThresholdsRepository["rule"]["findMany"]>[0] = {
     where,
-    orderBy: [{ deviceId: "asc" as const }, { metric: "asc" as const }],
+    // OrderBy must terminate in a UNIQUE column for cursor pagination
+    // to be deterministic — `deviceId` + `metric` alone is non-unique
+    // (multiple Rule rows can share the same tuple at different
+    // versions or different `isActive` states). `id` is the unique
+    // tiebreak so a `cursor: { id }` + `skip: 1` page boundary
+    // never repeats or skips rows across pages. The `version DESC`
+    // tiebreak surfaces the active version ahead of its history
+    // panel (Story 3.7 AC1).
+    orderBy: [
+      { deviceId: "asc" as const },
+      { metric: "asc" as const },
+      { version: "desc" as const },
+      { id: "asc" as const },
+    ],
     take: args.limit + 1,
     ...(args.cursor !== undefined ? { cursor: { id: args.cursor }, skip: 1 } : {}),
     select: ruleSelectShape,
@@ -493,11 +511,6 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
         sendValidationError(res, idParsed);
         return;
       }
-      // Body is empty (per RuleActivateRequestSchema). The schema
-      // accepts `undefined` (no body) so we pass the literal
-      // undefined to the parse. The middleware does not run on
-      // POST-by-convention here; we just gate against the Zod
-      // schema and ignore the result.
       RuleActivateRequestSchema.parse(req.body ?? {});
       try {
         const activated = await activateRule(deps.repo, idParsed.data.id);
@@ -516,9 +529,11 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
   return router;
 };
 
-// `RuleRowSchema` is referenced as a Zod parse anchor in the
-// repository's `select` shape; the runtime type is already exported
-// via `RuleRow` but the schema import ensures drift between the
+// `RuleRowSchema` is referenced only as a Zod parse anchor for the
+// repository's `select` shape — its inferred `RuleRow` type drives
+// the repository interface. The runtime schema import is
+// side-effect-free and would be elided by TS, so we keep this
+// marker so the import survives build-pruning and drift between the
 // wire contract and the Prisma select shape surfaces at compile
 // time.
 const _ruleRowSchemaAnchor = RuleRowSchema;
