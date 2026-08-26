@@ -58,7 +58,8 @@ import { handleSubscriberConnection } from "./ingest/subscriber";
 import { authenticate } from "./middleware/authorize";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 import { hydrateActiveRuleCache } from "./rules/cache";
-import { installRuleEngineHooks } from "./rules/hooks";
+import { resolvePrismaAlertReader } from "./rules/findOpenAlert";
+import { installRuleEngineHooks, resolveAlertStateRepository } from "./rules/hooks";
 import { resolvePrismaRuleReader } from "./rules/prismaReader";
 
 const DEFAULT_API_PORT = 3000;
@@ -462,6 +463,8 @@ const initializeRuleEngine = async (): Promise<void> => {
         cache,
         prisma: resolvePrismaRuleReader(client),
         readingRepository: readingDelegate,
+        alertReader: resolvePrismaAlertReader(client),
+        alertState: resolveAlertStateRepository(client),
       }),
     );
   } catch (err) {
