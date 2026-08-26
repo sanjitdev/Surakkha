@@ -57,6 +57,12 @@ model Device {
   // Same cascade contract as `readings` / `incidents`; Story 3.7's
   // admin tab edits rules via the `DeviceRules` relation.
   rules      Rule[]     @relation("DeviceRules")
+  // Story 3.4: Alert rows owned by this Device. ON DELETE CASCADE
+  // collapses the Device → Alert chain on a device remove.
+  alerts     Alert[]    @relation("DeviceAlerts")
+  // Story 3.4: RuleDebounceState rows owned by this Device. Same
+  // cascade contract; no ghost timers on device re-add.
+  debounceStates RuleDebounceState[] @relation("DeviceRuleDebounceStates")
 }
 
 // Reading — Story 2.2 (architecture §3.2 step 7 + §5).
@@ -213,5 +219,71 @@ model Rule {
   // keeps a removed Device from leaving orphan Rule rows behind.
   device              Device?      @relation("DeviceRules", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
+  // Story 3.4 — Alert rows reference the Rule that fired them.
+  // ON DELETE CASCADE collapses the Device → Rule → Alert chain
+  // on a device remove (a Rule independent of the Device that
+  // fires against it does not cascade-delete; if the Rule itself
+  // is removed, Alerts referencing it cascade).
+  alerts              Alert[]      @relation("RuleAlerts")
+
   @@unique([deviceId, metric, operator, threshold, version])
+}
+
+// Alert — Story 3.4 (architecture §5.1, BRD §8.3.1).
+// The row is the per-`(deviceId, metric, severity)` alert lifecycle.
+// `ruleId` records which Rule fired the alert; `severity` and `metric`
+// are duplicated on the Alert row (rather than joined via Rule) so the
+// `findOpenAlert` lookup is a single indexed scan without joining Rule.
+// `openedAt` is set at rising edge; `clearedAt` is set at falling edge
+// (NULL while open). `acknowledgedAt` lands here as a forward-compatible
+// nullable column so Story 3.5's acknowledge flow does not need a
+// migration; it stays NULL in 3.4.
+//
+// Indexes:
+//   - (deviceId, metric, severity) — `findOpenAlert` lookup
+//     (3.4 idempotency + 3.5 linked-alerts collapse seam).
+//   - (deviceId, metric, severity, clearedAt) — operator dashboard
+//     list (open alerts + recently cleared alerts by key).
+// Partial unique index `WHERE clearedAt IS NULL` (at-most-one-open per
+// key) lives in the migration SQL — Prisma `@@unique` does not support
+// SQL WHERE predicates.
+model Alert {
+  id              String       @id @default(uuid())
+  deviceId        String
+  ruleId          String
+  severity        RuleSeverity
+  metric          RuleMetric
+  openedAt        DateTime     @default(now())
+  clearedAt       DateTime?
+  acknowledgedAt  DateTime?
+
+  device          Device       @relation("DeviceAlerts", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  rule            Rule         @relation("RuleAlerts", fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([deviceId, metric, severity])
+  @@index([deviceId, metric, severity, clearedAt])
+}
+
+// RuleDebounceState — Story 3.4 (architecture §5.1, FR-14).
+// The de-bounce timer state per `(deviceId, metric, severity)`. The
+// `@@unique` constraint is the schema-level enforcement of the FR-14
+// key; range-rule halves collapse to one timer (they share severity
+// and metric) and severity is independent (warning + critical run
+// two timers). `inViolationSince` is set on the rising edge (raw
+// breach present); `clearedSince` is set on the falling edge (no raw
+// breach). Both are nullable — a fresh device has no row, a long-quiet
+// device has `inViolationSince: null, clearedSince: lastSeen.ts`.
+// `deviceId` FK CASCADE drops state rows on a removed Device (no ghost
+// timers on re-add).
+model RuleDebounceState {
+  id                 String       @id @default(uuid())
+  deviceId           String
+  metric             RuleMetric
+  severity           RuleSeverity
+  inViolationSince   DateTime?
+  clearedSince       DateTime?
+
+  device             Device       @relation("DeviceRuleDebounceStates", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([deviceId, metric, severity])
 }
