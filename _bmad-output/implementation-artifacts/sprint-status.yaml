@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-26T17:30:00.000Z
+last_updated: 2026-08-26T18:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -86,14 +86,14 @@ development_status:
   2-9-connection-state-offline-ux: done
 
   # ===== Epic 3 — Rules & Alerts =====
-  epic-3: in-progress
+  epic-3: done
   3-1-rules-table-prisma-schema: done
   3-2-three-rule-types-evaluation-engine: done
   3-3-default-thresholds-seed-script: done
   3-4-de-bouncing: done
   3-5-alert-lifecycle: done
-  3-6-auto-create-incident-from-warning-critical-alert: backlog
-  3-7-admin-thresholds-admin-tab: backlog
+  3-6-auto-create-incident-from-warning-critical-alert: done
+  3-7-admin-thresholds-admin-tab: done
 
   # ===== Epic 4 — Incidents & Workflow =====
   epic-4: backlog
@@ -416,10 +416,10 @@ stories:
 
   - id: "3.5"
     title: "Alert Lifecycle"
-    status: ready-for-dev
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
+    commit: "1b65d35"
+    shipped: "2026-08-26"
     covers: ["FR-15"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md"
@@ -427,24 +427,24 @@ stories:
 
   - id: "3.6"
     title: "Auto-Create Incident from Warning/Critical Alert"
-    status: backlog
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "bd35a88"
+    shipped: "2026-08-26"
+    covers: ["PRD-F-16", "US-8", "AR-7", "I-8"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-3-6-auto-create-incident-from-alert.md"
       review: null
 
   - id: "3.7"
     title: "/admin/thresholds Admin Tab"
-    status: backlog
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "34d489e"
+    shipped: "2026-08-26"
+    covers: ["PRD-F-21", "US-9", "AR-9", "I-9"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-3-7-admin-thresholds-tab.md"
       review: null
 
   # ===== Epic 4 — Incidents & Workflow (backlog) =====
@@ -789,7 +789,7 @@ epics:
   - id: "3"
     title: "Rules & Alerts"
     goal: "Frames are evaluated against the WHO/BSTI rules, severity is assigned, alerts open, and incidents auto-create from warning/critical alerts."
-    status: backlog
+    status: done
     stories: ["3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"]
   - id: "4"
     title: "Incidents & Workflow"

@@ -52,6 +52,7 @@
  * is the right shape for the predecessor-history lookup.
  */
 import {
+  type AlertLinked,
   type AlertListResponse,
   AlertListResponseSchema,
   AlertSeveritySchema,
@@ -428,16 +429,13 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
         // tuple. The per-row slice is the first PREDECESSOR_PER_ROW
         // entries in `openedAt DESC` order (the batched query
         // already ordered the union; per-key slicing preserves
-        // that order).
+        // that order). Returns the wire `AlertLinked` shape so the
+        // caller can pass directly to `buildAlertSummary`.
         const groupByKey = (
           deviceId: string,
           metric: (typeof METRIC_VALUES)[number],
           severity: (typeof SEVERITY_VALUES)[number],
-        ): ReadonlyArray<{
-          readonly id: string;
-          readonly openedAt: Date;
-          readonly clearedAt: Date | null;
-        }> =>
+        ): readonly AlertLinked[] =>
           predecessorGroups
             .filter(
               (p) => p.deviceId === deviceId && p.metric === metric && p.severity === severity,
@@ -445,8 +443,11 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
             .slice(0, PREDECESSOR_PER_ROW)
             .map((p) => ({
               id: p.id,
-              openedAt: p.openedAt,
-              clearedAt: p.clearedAt,
+              opened_at: p.openedAt.toISOString(),
+              cleared_at:
+                p.clearedAt === null || p.clearedAt === undefined
+                  ? null
+                  : p.clearedAt.toISOString(),
             }));
 
         const summaries = rows.map((row) => {

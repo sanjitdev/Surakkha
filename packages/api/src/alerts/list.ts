@@ -59,7 +59,9 @@ const toIso = (d: Date | null): string | null =>
  * Map one Prisma `Alert` row + its predecessor list to the wire
  * `AlertSummary` shape. The `linkedAlerts` array is REQUIRED — the
  * router always populates it (closed page rows get `[]`, open page
- * rows get the batched predecessor history).
+ * rows get the batched predecessor history). The spread preserves
+ * the readonly source while satisfying the wire `AlertSummary`
+ * shape's mutable `linked_alerts` array field.
  */
 export const buildAlertSummary = (
   row: AlertRowShape,
@@ -74,7 +76,7 @@ export const buildAlertSummary = (
   cleared_at: toIso(row.clearedAt),
   acknowledged_at: toIso(row.acknowledgedAt),
   acknowledged_by_user_id: row.acknowledgedByUserId,
-  linked_alerts: linkedAlerts,
+  linked_alerts: [...linkedAlerts],
 });
 
 /**
