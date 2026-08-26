@@ -44,7 +44,7 @@
  * (`EX_CONFIG`); see Design Note "Write-amplification boot guard
  * is code-enforced, not documented-only".
  */
-import { AlertOpenedEventSchema, RULE_METRICS, type RuleMetric } from "@surakkha/shared";
+import { RULE_METRICS, type RuleMetric } from "@surakkha/shared";
 
 import {
   type AlertEmissionInput,
@@ -55,6 +55,8 @@ import {
   type StateMachineUpdateInput,
 } from "../ingest/hooks";
 
+import { type AlertStateRepository } from "./alertStateRepository";
+import { applyTransition, persistStateSlot } from "./applyTransition";
 import { type ActiveRuleCache, GLOBAL_DEVICE_SENTINEL, lookupRulesForFrame } from "./cache";
 import { type BreachTransition, debounceBreaches, type DebounceState } from "./debounce";
 import {
@@ -64,7 +66,7 @@ import {
   type EngineRule,
   evaluateRules,
 } from "./engine";
-import { findOpenAlert, type PrismaAlertReader } from "./findOpenAlert";
+import { type PrismaAlertReader } from "./findOpenAlert";
 
 import type { PrismaRuleReader } from "./prismaReader";
 import type { BroadcastTarget, ReadingRepository } from "../ingest/frame";
@@ -83,14 +85,10 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_POINTS = 5;
 
 /**
- * Stable Prisma error code for unique-constraint violation. The
- * partial unique index `Alert_open_unique_idx` raises this when a
- * second `prisma.alert.create` for the same `(deviceId, metric,
- * severity)` runs while the first is still open. The hook catches
- * it and treats it as "already-open, skip" (the partial index is
- * the safety net; this catch is the fast path).
+ * `PRISMA_P2002` moved to `./applyTransition.ts` along with the
+ * P2002 catch (`isPrismaP2002`). The constant is no longer
+ * referenced in this file.
  */
-const PRISMA_P2002 = "P2002";
 
 /**
  * Stable exit code for "configuration error" (sysexits.h EX_CONFIG).
@@ -137,93 +135,11 @@ export interface InstallRuleEngineHooksDeps {
   readonly lastSeenFrameTs?: Map<string, Date>;
 }
 
-/**
- * Narrow slice of Prisma for the de-bounce state table. Mirrors the
- * `PrismaRuleReader` pattern: production narrows the real client
- * via `resolveAlertStateRepository`; tests inject a stub.
- */
-export interface AlertStateRepository {
-  readonly ruleDebounceState: {
-    findMany(args: {
-      readonly where: {
-        readonly deviceId: string;
-        readonly OR: ReadonlyArray<{
-          readonly metric: RuleMetric;
-          readonly severity: { in: ReadonlyArray<"info" | "warning" | "critical"> };
-        }>;
-      };
-    }): Promise<
-      ReadonlyArray<{
-        readonly metric: RuleMetric;
-        readonly severity: "info" | "warning" | "critical";
-        readonly inViolationSince: Date | null;
-        readonly clearedSince: Date | null;
-      }>
-    >;
-    upsert(args: {
-      readonly where: {
-        readonly deviceId_metric_severity: {
-          readonly deviceId: string;
-          readonly metric: RuleMetric;
-          readonly severity: "info" | "warning" | "critical";
-        };
-      };
-      readonly create: {
-        readonly deviceId: string;
-        readonly metric: RuleMetric;
-        readonly severity: "info" | "warning" | "critical";
-        readonly inViolationSince: Date | null;
-        readonly clearedSince: Date | null;
-      };
-      readonly update: {
-        readonly inViolationSince?: Date | null;
-        readonly clearedSince?: Date | null;
-      };
-    }): Promise<unknown>;
-  };
-  readonly alert: {
-    create(args: {
-      readonly data: {
-        readonly deviceId: string;
-        readonly ruleId: string;
-        readonly severity: "info" | "warning" | "critical";
-        readonly metric: RuleMetric;
-        readonly openedAt: Date;
-      };
-    }): Promise<{ readonly id: string }>;
-    update(args: {
-      readonly where: { readonly id: string };
-      readonly data: { readonly clearedAt: Date };
-    }): Promise<unknown>;
-  };
-}
-
-/**
- * Adapter — narrow the real `@prisma/client` to the
- * `AlertStateRepository` slice.
- */
-export const resolveAlertStateRepository = (prisma: unknown): AlertStateRepository => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const client = prisma as any;
-  return {
-    ruleDebounceState: {
-      findMany: (args) =>
-        client.ruleDebounceState.findMany(args) as Promise<
-          ReadonlyArray<{
-            readonly metric: RuleMetric;
-            readonly severity: "info" | "warning" | "critical";
-            readonly inViolationSince: Date | null;
-            readonly clearedSince: Date | null;
-          }>
-        >,
-      upsert: (args) => client.ruleDebounceState.upsert(args) as Promise<unknown>,
-    },
-    alert: {
-      create: (args) => client.alert.create(args) as Promise<{ readonly id: string }>,
-      update: (args) => client.alert.update(args) as Promise<unknown>,
-    },
-  };
-};
+// `AlertStateRepository` + `resolveAlertStateRepository` moved to
+// `./alertStateRepository.ts`. Re-exported here for back-compat
+// with the existing import sites (`index.ts` and the test rig).
+export type { AlertStateRepository } from "./alertStateRepository";
+export { resolveAlertStateRepository } from "./alertStateRepository";
 
 /**
  * Default no-op broadcast. Production injects the real `io.to(...)`
@@ -454,9 +370,15 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
   // Boot guard — Story 3.4 AC12. Runs BEFORE the hook is installed.
   // Iterates ALL rules in the cache (global + device-scoped). The
   // first offending rule triggers the guard; subsequent rules are
-  // not checked (fail-fast).
+  // not checked (fail-fast). Emits the spec-required
+  // `console.warn('[debounce] write-amplification guard: ruleId=...')`
+  // line BEFORE throwing so operators see which rule triggered the
+  // refusal in the boot log.
   for (const rule of deps.cache.byId.values()) {
     if (rule.minDurationSeconds === 0 && rule.hysteresisSeconds === 0) {
+      console.warn(
+        `[debounce] write-amplification guard: ruleId=${rule.id} has min=0 AND hysteresis=0`,
+      );
       throw new WriteAmplificationError(rule.id);
     }
   }
@@ -490,21 +412,37 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
 
     // IO side effects — transitions are NOT returned; the hook's
     // return type stays `Promise<readonly BreachResult[]>`. Each
-    // transition triggers an Alert row write + (for opens) a
-    // post-commit socket emit.
+    // transition triggers an Alert row write + state upsert
+    // wrapped in a single `$transaction` (per spec line 84). The
+    // socket emit (open only) happens AFTER the transaction
+    // commits (per Design Note "Socket emit happens post-commit").
+    //
+    // For slots that have a transition, the state upsert lives
+    // inside the transaction — atomicity per the spec. For slots
+    // WITHOUT a transition but whose state changed (e.g. timer
+    // reset on a brief non-breach), the state upsert runs outside
+    // the transaction (best-effort; the next frame re-derives).
+    const transitionSlots = new Set<string>();
     for (const transition of transitions) {
+      const key = `${transition.metric}|${transition.severity}`;
+      const slot = nextState[key];
+      if (slot === undefined) continue; // pure module should always provide it
+      transitionSlots.add(key);
       await applyTransition(deps, {
         broadcast,
         ctx: { deviceId: input.deviceId, metricValue },
         transition,
+        slot,
       });
     }
 
-    // Persist the updated state. Best-effort: a transient DB
-    // outage on the state row write logs but does not fail the
-    // eval path (the next frame re-derives from `rawBreaches` +
-    // the prior on-disk state).
+    // Persist the updated state for the slots that did NOT
+    // transition. Best-effort: a transient DB outage on the state
+    // row write logs but does not fail the eval path (the next
+    // frame re-derives from `rawBreaches` + the prior on-disk
+    // state).
     for (const [key, slot] of Object.entries(nextState)) {
+      if (transitionSlots.has(key)) continue; // already upserted inside the transaction
       const [m, s] = key.split("|") as [RuleMetric, "info" | "warning" | "critical"];
       await persistStateSlot(deps, {
         deviceId: input.deviceId,
@@ -537,166 +475,12 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
 };
 
 /**
- * Persist one slot of `DebounceState` to Postgres. Called for every
- * slot in the union of rules + breaches — the upsert is idempotent.
+ * Story 3.4 — `applyTransition`, `applyOpenTransition`,
+ * `applyClearTransition`, `persistStateSlot`, and `isPrismaP2002`
+ * moved to `./applyTransition.ts` so this file stays under the
+ * lint `max-lines` ceiling. The behaviour is identical — see the
+ * header comment in `applyTransition.ts`.
  */
-const persistStateSlot = async (
-  deps: InstallRuleEngineHooksDeps,
-  ctx: {
-    readonly deviceId: string;
-    readonly slotKey: { metric: RuleMetric; severity: "info" | "warning" | "critical" };
-    readonly slot: { inViolationSince: Date | null; clearedSince: Date | null };
-  },
-): Promise<void> => {
-  const { deviceId, slotKey, slot } = ctx;
-  try {
-    await deps.alertState.ruleDebounceState.upsert({
-      where: {
-        deviceId_metric_severity: {
-          deviceId,
-          metric: slotKey.metric,
-          severity: slotKey.severity,
-        },
-      },
-      create: {
-        deviceId,
-        metric: slotKey.metric,
-        severity: slotKey.severity,
-        inViolationSince: slot.inViolationSince,
-        clearedSince: slot.clearedSince,
-      },
-      update: {
-        inViolationSince: slot.inViolationSince,
-        clearedSince: slot.clearedSince,
-      },
-    });
-  } catch (err) {
-    // Best-effort — log and continue. The next frame re-derives
-    // state from Postgres + rawBreaches, so a missed upsert
-    // recovers on the next eval.
-    console.warn(
-      `[debounce] state upsert failed device=${deviceId} metric=${slotKey.metric} severity=${slotKey.severity}`,
-      err,
-    );
-  }
-};
-
-/**
- * Apply one `BreachTransition` to Postgres + (for opens) the socket.
- * The Alert row write happens inside a single `$transaction` block;
- * the socket emit happens AFTER the transaction commits (per Design
- * Note "Socket emit happens post-commit").
- */
-const applyTransition = async (
-  deps: InstallRuleEngineHooksDeps,
-  args: {
-    readonly broadcast: BroadcastTarget;
-    readonly ctx: { deviceId: string; metricValue: number };
-    readonly transition: BreachTransition;
-  },
-): Promise<void> => {
-  const { broadcast, ctx, transition } = args;
-  if (transition.kind === "open") {
-    const { deviceId, metricValue } = ctx;
-    // Idempotency fast path: check `findOpenAlert` first. If an
-    // open Alert already exists, skip the insert. The partial
-    // unique index is the safety net for the race; this lookup
-    // avoids the unnecessary INSERT attempt.
-    const existing = await findOpenAlert(deps.alertReader, {
-      deviceId,
-      metric: transition.metric,
-      severity: transition.severity,
-    });
-    if (existing !== null) {
-      // eslint-disable-next-line no-console
-      console.info(
-        `[alerts] duplicate open suppressed device=${deviceId} alertId=${existing.id} metric=${transition.metric} severity=${transition.severity}`,
-      );
-      return;
-    }
-
-    let alertId: string;
-    try {
-      const created = await deps.alertState.alert.create({
-        data: {
-          deviceId,
-          ruleId: transition.ruleId,
-          severity: transition.severity,
-          metric: transition.metric,
-          openedAt: transition.openedAt,
-        },
-      });
-      alertId = created.id;
-    } catch (err) {
-      // Race: another concurrent insert beat us; the partial
-      // unique index raised P2002. Treat as "already-open, skip".
-      if (isPrismaP2002(err)) {
-        // eslint-disable-next-line no-console
-        console.info(
-          `[alerts] duplicate open suppressed (race) device=${deviceId} metric=${transition.metric} severity=${transition.severity}`,
-        );
-        return;
-      }
-      throw err;
-    }
-
-    // Post-commit emit. The hook returns control before the emit;
-    // if the transaction rolled back, we wouldn't reach this line.
-    // If the emit itself fails, the Alert row exists and the next
-    // eval pass can re-emit (idempotent on `alertId`).
-    const payload = {
-      alert_id: alertId,
-      device_id: deviceId,
-      metric: transition.metric,
-      severity: transition.severity,
-      opened_at: transition.openedAt.toISOString(),
-      rule_id: transition.ruleId,
-      value: metricValue,
-    };
-    const parsed = AlertOpenedEventSchema.safeParse(payload);
-    if (parsed.success) {
-      broadcast.to(`device:${deviceId}`).emit("alert:opened", parsed.data);
-    }
-    // eslint-disable-next-line no-console
-    console.info(
-      `[alerts] opened device=${deviceId} alertId=${alertId} ruleId=${transition.ruleId} severity=${transition.severity} openedAt=${transition.openedAt.toISOString()}`,
-    );
-  } else {
-    // `clear` — set Alert.clearedAt. The transition's `alertId` is
-    // the placeholder from the pure module; the hook looks up the
-    // real `alertId` via the partial-index lookup. The pure module
-    // carries `deviceId` + `metric` + `severity` on the transition
-    // (Story 3.4 loopback-1 amendment — clear must scope to the
-    // slot that just transitioned, not scan all open alerts).
-    const existing = await findOpenAlert(deps.alertReader, {
-      deviceId: transition.deviceId,
-      metric: transition.metric,
-      severity: transition.severity,
-    });
-    if (existing !== null) {
-      await deps.alertState.alert.update({
-        where: { id: existing.id },
-        data: { clearedAt: transition.clearedAt },
-      });
-      // eslint-disable-next-line no-console
-      console.info(
-        `[alerts] cleared alertId=${existing.id} clearedAt=${transition.clearedAt.toISOString()}`,
-      );
-    }
-  }
-};
-
-/**
- * Narrow type guard for Prisma's P2002 (unique-constraint
- * violation) error. The shape varies across Prisma versions; this
- * minimal `code` check is what the engine + de-bounce modules rely
- * on.
- */
-const isPrismaP2002 = (err: unknown): boolean => {
-  if (typeof err !== "object" || err === null) return false;
-  const { code } = err as { code?: unknown };
-  return code === PRISMA_P2002;
-};
 
 /**
  * Test-only escape hatch. Resets the module-level `currentHooks`
