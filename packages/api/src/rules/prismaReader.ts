@@ -29,6 +29,11 @@ export interface RuleRow {
   readonly threshold: number;
   readonly severity: RuleSeverity;
   readonly ruleType: RuleRuleType;
+  // Story 3.4 — `minDurationSeconds` is the rising-edge timer (FR-14).
+  // Required by `EngineRule` (projected in `cache.ts`); the de-bounce
+  // layer reads this field from the cache, not from Prisma, so the
+  // cache is the canonical source of de-bounce configuration.
+  readonly minDurationSeconds: number;
   readonly hysteresisSeconds: number;
   readonly isActive: boolean;
 }
@@ -51,6 +56,7 @@ export interface PrismaRuleReader {
         readonly threshold: true;
         readonly severity: true;
         readonly ruleType: true;
+        readonly minDurationSeconds: true;
         readonly hysteresisSeconds: true;
         readonly isActive: true;
       };

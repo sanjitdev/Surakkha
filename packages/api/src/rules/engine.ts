@@ -39,9 +39,17 @@ export const OPERATOR_COMPARATORS: Record<RuleOperator, (a: number, b: number) =
 
 /**
  * The shape the engine consumes at eval time. Deliberately excludes
- * `createdAt / updatedAt / version / isActive / minDurationSeconds /
- * createdBy` — the engine doesn't need them; cache hydration
- * (`./cache.ts`) projects the Prisma row down to this shape.
+ * `createdAt / updatedAt / version / isActive / createdBy` — the
+ * engine doesn't need them; cache hydration (`./cache.ts`) projects
+ * the Prisma row down to this shape.
+ *
+ * Story 3.4 — adds `minDurationSeconds` to the projected shape.
+ * The engine itself does NOT consume `minDurationSeconds` (its surface
+ * is unchanged); the field is passed through so the de-bounce layer
+ * (`./debounce.ts`) can read it without re-querying Prisma or
+ * re-projection. The presence of the field on `EngineRule` is the
+ * deliberate signal that the cache is the canonical source of
+ * de-bounce configuration.
  */
 export interface EngineRule {
   readonly id: string;
@@ -51,6 +59,7 @@ export interface EngineRule {
   readonly threshold: number;
   readonly severity: RuleSeverity;
   readonly ruleType: RuleRuleType;
+  readonly minDurationSeconds: number;
   readonly hysteresisSeconds: number;
 }
 

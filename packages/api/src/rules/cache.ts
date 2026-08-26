@@ -61,6 +61,12 @@ const projectRow = (row: RuleRow): EngineRule => ({
   threshold: row.threshold,
   severity: row.severity,
   ruleType: row.ruleType,
+  // Story 3.4 — `minDurationSeconds` is required by `EngineRule`.
+  // The cache is the canonical source of de-bounce configuration;
+  // the de-bounce layer (`./debounce.ts`) reads this field from the
+  // projected rule without re-querying Prisma. `hysteresisSeconds`
+  // was already projected (Story 3.2 dual-semantics pin).
+  minDurationSeconds: row.minDurationSeconds,
   hysteresisSeconds: row.hysteresisSeconds,
 });
 
@@ -92,6 +98,7 @@ export const hydrateActiveRuleCache = async (
       threshold: true,
       severity: true,
       ruleType: true,
+      minDurationSeconds: true,
       hysteresisSeconds: true,
       isActive: true,
     },
@@ -118,6 +125,7 @@ export const refreshActiveRuleCache = async (
       threshold: true,
       severity: true,
       ruleType: true,
+      minDurationSeconds: true,
       hysteresisSeconds: true,
       isActive: true,
     },
