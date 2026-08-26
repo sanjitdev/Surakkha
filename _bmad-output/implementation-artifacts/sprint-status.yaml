@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-26T14:38:00.000Z
+last_updated: 2026-08-26T17:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -91,7 +91,7 @@ development_status:
   3-2-three-rule-types-evaluation-engine: done
   3-3-default-thresholds-seed-script: done
   3-4-de-bouncing: done
-  3-5-alert-lifecycle: backlog
+  3-5-alert-lifecycle: done
   3-6-auto-create-incident-from-warning-critical-alert: backlog
   3-7-admin-thresholds-admin-tab: backlog
 
@@ -416,14 +416,14 @@ stories:
 
   - id: "3.5"
     title: "Alert Lifecycle"
-    status: backlog
+    status: ready-for-dev
     epic: "3"
     commit: null
     shipped: null
-    covers: []
+    covers: ["FR-15"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md"
+      review: "_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md"
 
   - id: "3.6"
     title: "Auto-Create Incident from Warning/Critical Alert"

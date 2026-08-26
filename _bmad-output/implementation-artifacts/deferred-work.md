@@ -13,7 +13,7 @@
 
 ## Deferred from: code review of 2-1-wire-contract-schemas (2026-08-22)
 
-- *No outstanding deferrals.* The 2026-08-22 re-review resolved the original `frame.ts` placeholder deferral by amending spec AC5 to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as the canonical sources for the 10-step pipeline. Story 2.2 owns the ingest handler; AC5's literal text about a 31-line placeholder is deprecated.
+- _No outstanding deferrals._ The 2026-08-22 re-review resolved the original `frame.ts` placeholder deferral by amending spec AC5 to point at ADR 0013 + architecture §3.2 + `PROCESSING_ORDER` as the canonical sources for the 10-step pipeline. Story 2.2 owns the ingest handler; AC5's literal text about a 31-line placeholder is deprecated.
 
 ## Deferred from: code review of 2-3-unknown-missing-field-handling (2026-08-22)
 
@@ -65,12 +65,11 @@
   - summary: KPI band's `offline` count remains hard-coded at `0`
   - evidence: `packages/web/src/dashboard/useDashboardReadings.ts:summarizeReadings` hard-codes `offline: 0`. The new shared `isOffline()` helper is the canonical source-of-truth (already exported from `@surakkha/shared/dashboard`). The Story 2.7 spec explicitly deferred this adoption: "the KPI band's `offline` count (currently hard-coded `0`) can adopt it later without a wire change." Cross-reference F-2.7-track. **Defer to a Story 2.x follow-up once operators request the offline count in the band.**
 
-
 ## Deferred from: code review of 3-1-rules-table-prisma-schema (2026-08-25)
 
-  - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-rules-table-prisma-schema.md`
-  - summary: Add a partial unique index `WHERE isActive = true` on Rule(deviceId, metric, operator, threshold) to prevent two `isActive: true` rows at the same tuple if Story 3.7's edit path ever bumps `version` without flipping the previous row's `isActive` to false.
-  - evidence: The current `@@unique([deviceId, metric, operator, threshold, version])` relies on `version` as the disambiguator and assumes every edit bumps version AND flips `isActive`. If an admin path forgets either invariant, two `isActive: true` rows coexist and the engine in Story 3.2 has no tie-break rule to pick one. Story 3.7's admin edit path owns the partial-index decision per the spec's "Unique constraint scope" design note. **Defer to Story 3.7 (and confirm via the partial-index test pin suggested in the same review).**
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-rules-table-prisma-schema.md`
+- summary: Add a partial unique index `WHERE isActive = true` on Rule(deviceId, metric, operator, threshold) to prevent two `isActive: true` rows at the same tuple if Story 3.7's edit path ever bumps `version` without flipping the previous row's `isActive` to false.
+- evidence: The current `@@unique([deviceId, metric, operator, threshold, version])` relies on `version` as the disambiguator and assumes every edit bumps version AND flips `isActive`. If an admin path forgets either invariant, two `isActive: true` rows coexist and the engine in Story 3.2 has no tie-break rule to pick one. Story 3.7's admin edit path owns the partial-index decision per the spec's "Unique constraint scope" design note. **Defer to Story 3.7 (and confirm via the partial-index test pin suggested in the same review).**
 
 ## Deferred from: code review of 3-2-three-rule-types-evaluation-engine (2026-08-25)
 
@@ -85,3 +84,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-three-rule-types-evaluation-engine.md`
   summary: `pickFrameMetric` evaluates ONE metric per frame — a real telemetry frame always carries 6 metrics, so up to 5 of them may be silently dropped every frame.
   evidence: `packages/api/src/rules/hooks.ts` `pickFrameMetric` returns the first frame metric that has any rule in the cache. The subagent flagged this in its report: "v1's rule pipeline evaluates ONE metric per frame; if a frame carries multiple metrics (e.g. {ph: 8.5, tds_ppm: 312}) and BOTH a ph and a tds_ppm rule exist, only one metric is ever evaluated per frame". A future Epic 3 story may need per-metric dispatch (Story 3.4 de-bouncing surfaces this when the rule-cache and the breach stream need fan-out). **Defer to a follow-up story once a real telemetry fixture surfaces the missed-metric case in production, OR escalate via Story 3.5's alert lifecycle if alert volume turns out to be silently capped.**
+
+## Deferred from: code review of 3-5-alert-lifecycle (2026-08-26)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md`
+  summary: Type-system observation on `AlertRowShape` projection drift risk
+  evidence: `packages/api/src/alerts/list.ts:37-47` defines `AlertRowShape` as the minimum projection the list helper reads off a Prisma `Alert` row. TypeScript already enforces the projection matches the interface at compile time; the live test rig would surface a runtime error on column rename. A runtime projection-shape test (asserting the Prisma `Alert` model's columns match the `AlertRowShape` interface at test time) is technically possible but adds a brittle coupling to Prisma's internal column-set enumeration. **Deferred — pre-existing type-system observation, not introduced by this story; live test rig covers the practical case.**
+
+## Deferred from: code review of 3-5-alert-lifecycle (2026-08-26, loopback 4 re-review)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-alert-lifecycle.md`
+  summary: `assertAcknowledgedByUserIdColumnPresent` data_type assertion accepts only `["text", "character varying"]`
+  evidence: `packages/db/prisma/alert-debounce.spec.ts` asserts `data_type IN ('text', 'character varying')`. Epic 5 will likely migrate the column to `uuid` when the FK constraint is added (the User table lands in Epic 5). The test will need updating at that point. **Deferred — pre-existing acceptance of the v1 type; Epic 5 will trigger a test update when the type changes.**
