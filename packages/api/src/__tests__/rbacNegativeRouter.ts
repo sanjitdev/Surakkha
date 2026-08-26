@@ -127,6 +127,25 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   // one handler survives per unique path). The shared gate enforces
   // both denies by virtue of the matrix cell.
   { method: "post", path: "/alerts/x/acknowledge", action: "acknowledge", resource: "Alert" },
+  // 19. Operator → update → Rule (Story 3.7 AC6) — mirrors the
+  // existing #7 (Viewer → update → Rule) for the second deny cell.
+  // The matrix grants `Operator.update.Rule = N`.
+  { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
+  // 20. Technician → update → Rule (Story 3.7 AC6) — third deny cell
+  // on the same handler; matrix grants `Technician.update.Rule = N`.
+  // All three subjects (Viewer / Operator / Technician) drive the same
+  // `(method, path)` slot; the matrix cell enforces each deny.
+  { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
+  // 21. Operator → POST /admin/thresholds/rules (Story 3.7 AC6) —
+  // matrix also gates POST on `update × Rule` (no `create × Rule`
+  // cell exists). Distinct path so Express mounts a separate handler
+  // for the POST variant.
+  {
+    method: "post",
+    path: "/admin/thresholds/rules",
+    action: "update",
+    resource: "Rule",
+  },
 ];
 
 /**
@@ -372,6 +391,47 @@ export const NEGATIVE_CASES: readonly NegativeCase[] = [
     expected: 403,
     auditAction: "rbac_denied",
     appendixRow: "Alert · acknowledge (Technician)",
+  },
+  // Story 3.7 — `/admin/thresholds` admin tab. The matrix grants
+  // `Admin.update.Rule = Y` and `Operator/Technician/Viewer.update
+  // .Rule = N`. Cases 18 + 19 + 20 pin the three deny cells. The
+  // PATCH `/admin/thresholds/x` slot is shared (Express mounts ONE
+  // handler per unique `(method, path)`; the matrix cell enforces
+  // each deny). The POST `/admin/thresholds/rules` slot is distinct
+  // because the production router uses a separate `app.post`
+  // registration.
+  {
+    index: 18,
+    subject: "Operator",
+    method: "patch",
+    path: "/admin/thresholds/x",
+    action: "update",
+    resource: "Rule",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Rule · update (Operator)",
+  },
+  {
+    index: 19,
+    subject: "Technician",
+    method: "patch",
+    path: "/admin/thresholds/x",
+    action: "update",
+    resource: "Rule",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Rule · update (Technician)",
+  },
+  {
+    index: 20,
+    subject: "Operator",
+    method: "post",
+    path: "/admin/thresholds/rules",
+    action: "update",
+    resource: "Rule",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Rule · update (Operator, POST)",
   },
 ];
 

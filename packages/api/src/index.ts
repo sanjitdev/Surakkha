@@ -47,6 +47,7 @@ import {
   buildAdminSimulatorPublicRouter,
   buildAdminSimulatorRouter,
 } from "./admin/simulatorRouter.js";
+import { buildThresholdsRouter, resolveThresholdsRepository } from "./admin/thresholdsRouter.js";
 import {
   buildAlertAcknowledgeRouter,
   buildAlertListRouter,
@@ -427,6 +428,27 @@ app.use(
   "/admin/simulator",
   buildAdminSimulatorRouter({ audit, listDevices: listDevicesFromPrisma }),
 );
+
+/**
+ * Story 3.7 — `/admin/thresholds` admin tab. Mount the router with
+ * the same lazy Prisma singleton pattern the simulator router uses
+ * so a transient DB outage at boot doesn't crash the api; the
+ * router itself catches per-request errors and surfaces 500 instead
+ * of leaking a stack trace.
+ */
+const thresholdsRepoFromPrisma = async (): Promise<
+  Awaited<ReturnType<typeof resolveThresholdsRepository>>
+> => {
+  const client = await resolvePrismaClient();
+  return resolveThresholdsRepository(client);
+};
+
+const buildThresholdsRouterFromPrisma = async () => {
+  const repo = await thresholdsRepoFromPrisma();
+  return buildThresholdsRouter({ audit, repo });
+};
+
+app.use("/admin/thresholds", await buildThresholdsRouterFromPrisma());
 
 // Final 404 — the same shape the Step 0 stub returned, so the Docker
 // healthcheck contract is unchanged.

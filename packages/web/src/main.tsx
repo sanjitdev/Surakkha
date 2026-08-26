@@ -27,16 +27,11 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  BrowserRouter,
-  Navigate,
-  Route,
-  Routes,
-  useNavigate,
-} from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 
 import { RbacRoute } from "./access/RbacRoute";
 import { SimulatorPage } from "./admin/simulator/SimulatorPage";
+import { ThresholdsPage } from "./admin/thresholds/ThresholdsPage";
 import { apiLogin, configureApiClient } from "./api/apiClient";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
@@ -85,17 +80,11 @@ const PageStub = ({ name }: { readonly name: string }) => (
  */
 const SeverityCards = () => (
   <div data-testid="severity-cards">
-    <h1 className="mb-4 text-2xl font-semibold text-neutral-body">
-      Severity palette
-    </h1>
+    <h1 className="mb-4 text-2xl font-semibold text-neutral-body">Severity palette</h1>
     <p className="mb-6 text-md text-neutral-secondary">
-      Sample KpiStat cards — Story 1.9 verifies the saturated palette
-      and the critical pulse.
+      Sample KpiStat cards — Story 1.9 verifies the saturated palette and the critical pulse.
     </p>
-    <div
-      data-testid="severity-cards-grid"
-      className="grid gap-4 lg:grid-cols-4 sm:grid-cols-2"
-    >
+    <div data-testid="severity-cards-grid" className="grid gap-4 lg:grid-cols-4 sm:grid-cols-2">
       <KpiStat severity="healthy" label="pH" value="7.2" sub="in range" />
       <KpiStat severity="warning" label="Turbidity" value="4.8 NTU" sub="watch" />
       <KpiStat severity="critical" label="TDS" value="610 ppm" sub="out of range" />
@@ -163,9 +152,7 @@ const LoginRoute = () => {
     const params = new URLSearchParams(window.location.search);
     const next = params.get("next");
     const safeNext =
-      next !== null && next.startsWith("/") && !next.startsWith("//")
-        ? next
-        : "/dashboard";
+      next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
     navigate(safeNext, { replace: true });
   };
 
@@ -178,153 +165,153 @@ createRoot(root).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
-        <Route
-          path="/"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <Dashboard />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <Dashboard />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/severity-cards"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <SeverityCards />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/sensors"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <PageStub name="Sensors" />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/incidents"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <PageStub name="Incidents" />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/alerts"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <PageStub name="Alerts" />
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/reports"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Reports" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/audit"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Audit" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/admin/simulator"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <SimulatorPage />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/admin/notifications"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Notifications" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/admin/thresholds"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Thresholds" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Users" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route
-          path="/admin/schools"
-          element={
-            <CurrentRoleProvider>
-              <AppShell>
-                <RbacRoute>
-                  <PageStub name="Schools" />
-                </RbacRoute>
-              </AppShell>
-            </CurrentRoleProvider>
-          }
-        />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </BrowserRouter>
+          <Route
+            path="/"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <Dashboard />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <Dashboard />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/severity-cards"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <SeverityCards />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/sensors"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <PageStub name="Sensors" />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/incidents"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <PageStub name="Incidents" />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/alerts"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <PageStub name="Alerts" />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/reports"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <PageStub name="Reports" />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/audit"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <PageStub name="Audit" />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/admin/simulator"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <SimulatorPage />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/admin/notifications"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <PageStub name="Notifications" />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/admin/thresholds"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <ThresholdsPage />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <PageStub name="Users" />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/admin/schools"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  <RbacRoute>
+                    <PageStub name="Schools" />
+                  </RbacRoute>
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
 );
