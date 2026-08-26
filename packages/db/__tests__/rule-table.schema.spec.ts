@@ -64,9 +64,7 @@ const extractRuleBlock = (source: string): string => {
   const startMarker = "model Rule {";
   const start = source.indexOf(startMarker);
   if (start === -1) {
-    throw new Error(
-      `expected \`${SCHEMA_PATH}\` to contain \`${startMarker}\``,
-    );
+    throw new Error(`expected \`${SCHEMA_PATH}\` to contain \`${startMarker}\``);
   }
   const blockStart = start + startMarker.length;
   // A Prisma model body closes at the first top-level `}` — we walk
@@ -80,9 +78,7 @@ const extractRuleBlock = (source: string): string => {
     i += 1;
   }
   if (depth !== 0) {
-    throw new Error(
-      `unterminated \`${startMarker}\` block in \`${SCHEMA_PATH}\``,
-    );
+    throw new Error(`unterminated \`${startMarker}\` block in \`${SCHEMA_PATH}\``);
   }
   return source.slice(start, i);
 };
@@ -100,14 +96,8 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
       // type marker (`?`, `:`, `@`, `\t`). This rejects e.g. a
       // comment-only reference and only counts true column
       // declarations.
-      const pattern = new RegExp(
-        `^\\s+${field}\\b`,
-        "m",
-      );
-      expect(
-        pattern.test(block),
-        `Rule model is missing AC field \`${field}\``,
-      ).toBe(true);
+      const pattern = new RegExp(`^\\s+${field}\\b`, "m");
+      expect(pattern.test(block), `Rule model is missing AC field \`${field}\``).toBe(true);
     }
   });
 
@@ -139,10 +129,9 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
         `AC field \`${field}\` must be declared exactly once in the Rule model block; saw ${matchingIndices.length}`,
       ).toBe(1);
       const idx = matchingIndices[0] ?? -1;
-      expect(
-        idx,
-        `expected \`${field}\` to appear in the Rule model block`,
-      ).toBeGreaterThan(lastIndex);
+      expect(idx, `expected \`${field}\` to appear in the Rule model block`).toBeGreaterThan(
+        lastIndex,
+      );
       lastIndex = idx;
     }
   });
@@ -154,10 +143,9 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
     // by only checking for the `String?` token after the field name.
     const match = block.match(/^\s+createdBy\s+([^\n]+)$/m);
     expect(match, "Rule model is missing the `createdBy` column").not.toBeNull();
-    expect(
-      match?.[1] ?? "",
-      "`createdBy` must be typed `String?` (nullable, not an FK)",
-    ).toMatch(/^String\?(\s|$)/);
+    expect(match?.[1] ?? "", "`createdBy` must be typed `String?` (nullable, not an FK)").toMatch(
+      /^String\?(\s|$)/,
+    );
     expect(
       match?.[1] ?? "",
       "`createdBy` must NOT carry a `@relation` (no User table yet)",
@@ -166,16 +154,15 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
 
   it("has `@@unique([deviceId, metric, operator, threshold, version])` on the Rule model", () => {
     const block = extractRuleBlock(readSchema());
-    expect(block).toMatch(
-      /@@unique\(\[deviceId,\s*metric,\s*operator,\s*threshold,\s*version\]\)/,
-    );
+    expect(block).toMatch(/@@unique\(\[deviceId,\s*metric,\s*operator,\s*threshold,\s*version\]\)/);
   });
 
-  it("does NOT introduce Alert, IncidentEvent, MetricDefinition, or AuditLog tables", () => {
+  it("does NOT introduce IncidentEvent, MetricDefinition, or AuditLog tables", () => {
     // Per the spec "Never" list: those models belong to other stories.
     // Catching a stray declaration here keeps the story boundary clean.
+    // Note: the `Alert` + `RuleDebounceState` models belong to Story
+    // 3.4 — see `alert-debounce.schema.spec.ts` for those pins.
     const source = readSchema();
-    expect(source).not.toMatch(/^model Alert\b/m);
     expect(source).not.toMatch(/^model IncidentEvent\b/m);
     expect(source).not.toMatch(/^model MetricDefinition\b/m);
     expect(source).not.toMatch(/^model AuditLog\b/m);
@@ -189,35 +176,27 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
     },
   );
 
-  it("Device model gains `rules Rule[] @relation(\"DeviceRules\")`", () => {
+  it('Device model gains `rules Rule[] @relation("DeviceRules")`', () => {
     const source = readSchema();
-    expect(source).toMatch(
-      /rules\s+Rule\[\]\s+@relation\(\s*["']DeviceRules["']\s*\)/,
-    );
+    expect(source).toMatch(/rules\s+Rule\[\]\s+@relation\(\s*["']DeviceRules["']\s*\)/);
   });
 
   it("Device model retains its existing relations (readings / incidents)", () => {
     // Defensive: this story adds `rules` to the Device model but must
     // NOT delete the prior `readings` / `incidents` relations.
     const source = readSchema();
-    expect(source).toMatch(
-      /readings\s+Reading\[\]\s+@relation\(\s*["']DeviceReadings["']\s*\)/,
-    );
-    expect(source).toMatch(
-      /incidents\s+Incident\[\]\s+@relation\(\s*["']DeviceIncidents["']\s*\)/,
-    );
+    expect(source).toMatch(/readings\s+Reading\[\]\s+@relation\(\s*["']DeviceReadings["']\s*\)/);
+    expect(source).toMatch(/incidents\s+Incident\[\]\s+@relation\(\s*["']DeviceIncidents["']\s*\)/);
   });
 
-  it("Rule model declares `device Device? @relation(\"DeviceRules\", ...)` matching Device.rules", () => {
+  it('Rule model declares `device Device? @relation("DeviceRules", ...)` matching Device.rules', () => {
     // Prisma requires both sides of a named relation to agree. The
     // Device side is pinned by the "Device model gains `rules ...`"
     // test above; this pins the Rule side so a regression that
     // renames the relation on one side only (or flips the optional
     // marker `?`) is loud before `prisma generate` errors out.
     const block = extractRuleBlock(readSchema());
-    expect(block).toMatch(
-      /device\s+Device\?\s+@relation\(\s*["']DeviceRules["']/,
-    );
+    expect(block).toMatch(/device\s+Device\?\s+@relation\(\s*["']DeviceRules["']/);
   });
 
   it("schema generator pins binaryTargets for native + Debian OpenSSL 3", () => {
@@ -227,18 +206,14 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
     // need `native`. Dropping either silently breaks one of those
     // platforms without a runtime error visible to the other.
     const source = readSchema();
-    expect(source).toMatch(
-      /binaryTargets\s*=\s*\[\s*"native"\s*,\s*"debian-openssl-3\.0\.x"\s*\]/,
-    );
+    expect(source).toMatch(/binaryTargets\s*=\s*\[\s*"native"\s*,\s*"debian-openssl-3\.0\.x"\s*\]/);
   });
 });
 
 describe("Rule migration folder — Prisma timestamp pin (Story 3.1)", () => {
   it("contains an entry matching Prisma's auto-assigned \\d{14}_rule_table pattern", () => {
     const entries = readdirSync(MIGRATIONS_DIR);
-    const matches = entries.filter((entry) =>
-      /^\d{14}_rule_table$/.test(entry),
-    );
+    const matches = entries.filter((entry) => /^\d{14}_rule_table$/.test(entry));
     expect(
       matches,
       `expected migrations directory to contain a \`\\d{14}_rule_table\` folder; saw [${entries.join(", ")}]`,
@@ -280,16 +255,11 @@ describe("Enum literal set consistency between schema.prisma and packages/shared
    *   `enum RuleMetric { ph tds_ppm ... }`
    * The body is whitespace/comma/newline separated identifiers.
    */
-  const extractSchemaEnumLiterals = (
-    source: string,
-    enumName: string,
-  ): string[] => {
+  const extractSchemaEnumLiterals = (source: string, enumName: string): string[] => {
     const re = new RegExp(`enum\\s+${enumName}\\s*\\{([^}]*)\\}`, "m");
     const match = source.match(re);
     if (!match) {
-      throw new Error(
-        `expected schema.prisma to declare \`enum ${enumName} { ... }\``,
-      );
+      throw new Error(`expected schema.prisma to declare \`enum ${enumName} { ... }\``);
     }
     return match[1]
       .split(/[\s,]+/)
@@ -302,19 +272,11 @@ describe("Enum literal set consistency between schema.prisma and packages/shared
    * Captures everything between `[` and `]` and parses the quoted
    * strings, tolerating newlines and trailing commas.
    */
-  const extractSharedArrayLiterals = (
-    source: string,
-    arrayName: string,
-  ): string[] => {
-    const re = new RegExp(
-      `${arrayName}\\s*=\\s*\\[([^\\]]*)\\]`,
-      "m",
-    );
+  const extractSharedArrayLiterals = (source: string, arrayName: string): string[] => {
+    const re = new RegExp(`${arrayName}\\s*=\\s*\\[([^\\]]*)\\]`, "m");
     const match = source.match(re);
     if (!match) {
-      throw new Error(
-        `expected packages/shared/src/rule.ts to declare \`${arrayName} = [ ... ]\``,
-      );
+      throw new Error(`expected packages/shared/src/rule.ts to declare \`${arrayName} = [ ... ]\``);
     }
     const literals: string[] = [];
     const literalRe = /["']([^"']+)["']/g;
@@ -331,10 +293,7 @@ describe("Enum literal set consistency between schema.prisma and packages/shared
    * `as const` arrays are read sequentially — a reordering should
    * fail (the engine may depend on declaration order in Story 3.2).
    */
-  const expectLiteralSetsEqual = (
-    enumName: string,
-    arrayName: string,
-  ): void => {
+  const expectLiteralSetsEqual = (enumName: string, arrayName: string): void => {
     const schemaSource = readSchema();
     const sharedSource = readSharedRule();
     const schemaLiterals = extractSchemaEnumLiterals(schemaSource, enumName);
