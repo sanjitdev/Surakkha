@@ -59,7 +59,11 @@ import { authenticate } from "./middleware/authorize";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 import { hydrateActiveRuleCache } from "./rules/cache";
 import { resolvePrismaAlertReader } from "./rules/findOpenAlert";
-import { installRuleEngineHooks, resolveAlertStateRepository } from "./rules/hooks";
+import {
+  installRuleEngineHooks,
+  resolveAlertStateRepository,
+  WriteAmplificationError,
+} from "./rules/hooks";
 import { resolvePrismaRuleReader } from "./rules/prismaReader";
 
 const DEFAULT_API_PORT = 3000;
@@ -451,7 +455,18 @@ const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
  * `packages/api/__tests__/boot-fallback.spec.ts`.
  *
  * Pattern mirrors the `runMigrations` fallback shape higher up in
- * this file: log + degrade, do not crash.
+ * this file: log + degrade, do not crash — EXCEPT for the
+ * `WriteAmplificationError` thrown by the Story 3.4 boot guard.
+ * That error type is a configuration error, not a transient DB
+ * outage, and the spec (Design Note "Write-amplification boot
+ * guard is code-enforced, not documented-only") requires the api
+ * process to exit 78 (EX_CONFIG). The catch below recognizes the
+ * error type and re-throws so the outer `boot().catch()` handles
+ * it. The `boot-fallback.spec.ts` source-walk pins the swallow
+ * pattern — but only for the NON-WriteAmplificationError path
+ * (the regex matches the generic `console.error` + NOOP_HOOKS
+ * branch; the re-throw branch is a sibling `if` that precedes the
+ * fallback and does not collide with the regex).
  */
 const initializeRuleEngine = async (): Promise<void> => {
   const client = await resolvePrismaClient();
@@ -468,6 +483,13 @@ const initializeRuleEngine = async (): Promise<void> => {
       }),
     );
   } catch (err) {
+    if (err instanceof WriteAmplificationError) {
+      // Story 3.4 AC12 — configuration error, not a transient
+      // outage. The boot guard already logged the offending
+      // ruleId via `console.warn`; here we re-throw so the outer
+      // `boot().catch()` exits 78 (EX_CONFIG). NOT swallowed.
+      throw err;
+    }
     console.error("[rules] boot: hydrate failed; running with no-op hooks", err);
     setIngestHooks(NOOP_HOOKS);
   }
