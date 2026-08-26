@@ -1,0 +1,20 @@
+-- AlterTable — Alert gains `acknowledgedByUserId` (Story 3.5)
+-- Operator-facing acknowledge flow (FR-15). Plain `String?` — no FK
+-- constraint. The `User` table lands in Epic 5; that migration adds
+-- the FK constraint via a single `ALTER TABLE ADD CONSTRAINT`. The
+-- column is nullable so existing 3.4-shipped rows are valid without
+-- backfill; no `DEFAULT` — a NULL `acknowledgedByUserId` means "no
+-- operator has acknowledged this alert yet" (the same NULL semantics
+-- as `acknowledgedAt`).
+--
+-- Why NOT a deferred-FK column: a forward-only `ADD COLUMN` with no
+-- FK constraint is the minimal, side-effect-free addition. The
+-- compare-and-set `updateMany({ where: { id, acknowledgedAt: null },
+-- data: { acknowledgedAt, acknowledgedByUserId } })` in
+-- `packages/api/src/alerts/acknowledgeRouter.ts` is atomic at the row
+-- level (Postgres row tuple lock); no `READ COMMITTED` race window.
+--
+-- Touches: NO indexes (3.4's `Alert_open_unique_idx` partial
+-- predicate is unchanged; AC15 of `spec-3-5-alert-lifecycle.md`
+-- stays green). NO FKs. NO data backfill. NO triggers.
+ALTER TABLE "Alert" ADD COLUMN "acknowledgedByUserId" TEXT;

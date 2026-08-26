@@ -47,6 +47,12 @@ import {
   buildAdminSimulatorPublicRouter,
   buildAdminSimulatorRouter,
 } from "./admin/simulatorRouter.js";
+import {
+  buildAlertAcknowledgeRouter,
+  buildAlertListRouter,
+  resolveAlertAcknowledgeRepository,
+  resolveAlertListRepository,
+} from "./alerts/index.js";
 import { type AuditLogger } from "./audit";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
@@ -272,6 +278,119 @@ const listRecentIncidentsFromPrisma = async (limit: number) => {
 };
 
 app.use(buildRecentIncidentsRouter({ audit, listRecent: listRecentIncidentsFromPrisma }));
+
+/**
+ * Story 3.5 — `POST /api/alerts/:alert_id/acknowledge` +
+ * `GET /api/alerts`. The acknowledge endpoint is RBAC-gated by
+ * `acknowledge Alert` (Admin + Operator only); the list endpoint
+ * is RBAC-gated by `read Alert` (all 4 roles). The deps wire the
+ * real Prisma client + the shared audit logger + the Socket.IO
+ * `io` broadcast target. The injectable `now: () => new Date()`
+ * clock keeps the wire `acknowledged_at` and the DB row's
+ * `acknowledgedAt` in lockstep on the same Date instance (AC1c).
+ *
+ * The Prisma client is wrapped in `resolveAlertAcknowledgeRepository`
+ * / `resolveAlertListRepository` to narrow the surface area the
+ * routers see (mirror of `resolvePrismaAlertReader` from
+ * `rules/findOpenAlert.ts:62`). The broadcast target adapts the
+ * full Socket.IO server to the `BroadcastTarget` interface the
+ * router expects (`to(room).emit(event, payload)` — same shape as
+ * 3.4's `alert:opened` emit in `applyTransition.ts:189`).
+ *
+ * Mount registration is synchronous (the routers only need the deps
+ * reference; the actual Prisma call happens at request time, and
+ * `resolvePrismaClient()` returns the singleton on first call —
+ * after `initializeRuleEngine()` has installed the rule hooks).
+ */
+const alertBroadcastTarget = {
+  to: (room: string) => ({
+    emit: (event: string, payload: unknown): unknown => {
+      io.to(room).emit(event, payload);
+      return undefined;
+    },
+  }),
+};
+
+// Build the router deps by narrowing the resolved Prisma client.
+// `cachedAlertPrisma` is filled lazily on first request (after
+// `boot()` has loaded the singleton); the routers await their
+// adapter methods so a race between boot and first-request is
+// handled naturally by the await chain.
+let cachedAlertPrisma: unknown = null;
+const ensureAlertPrisma = async (): Promise<{
+  readonly ack: ReturnType<typeof resolveAlertAcknowledgeRepository>;
+  readonly list: ReturnType<typeof resolveAlertListRepository>;
+}> => {
+  if (cachedAlertPrisma === null) {
+    const client = await resolvePrismaClient();
+    cachedAlertPrisma = {
+      ack: resolveAlertAcknowledgeRepository(client),
+      list: resolveAlertListRepository(client),
+    };
+  }
+  return cachedAlertPrisma as {
+    readonly ack: ReturnType<typeof resolveAlertAcknowledgeRepository>;
+    readonly list: ReturnType<typeof resolveAlertListRepository>;
+  };
+};
+
+// Wrappers around the lazy adapters. Each call awaits the
+// resolve-on-first-use chain and then forwards to the typed
+// adapter. The cast at the bottom keeps the type narrow so the
+// routers don't see the full Prisma client.
+const alertAckRepositoryWrapper = {
+  alert: {
+    updateMany: async (
+      args: Parameters<
+        ReturnType<typeof resolveAlertAcknowledgeRepository>["alert"]["updateMany"]
+      >[0],
+    ) => {
+      const { ack } = await ensureAlertPrisma();
+      return await ack.alert.updateMany(args);
+    },
+    findUnique: async (
+      args: Parameters<
+        ReturnType<typeof resolveAlertAcknowledgeRepository>["alert"]["findUnique"]
+      >[0],
+    ) => {
+      const { ack } = await ensureAlertPrisma();
+      return await ack.alert.findUnique(args);
+    },
+  },
+};
+
+const alertListRepositoryWrapper = {
+  alert: {
+    findMany: async (
+      args: Parameters<ReturnType<typeof resolveAlertListRepository>["alert"]["findMany"]>[0],
+    ) => {
+      const { list } = await ensureAlertPrisma();
+      return await list.alert.findMany(args);
+    },
+  },
+};
+
+app.use(
+  buildAlertAcknowledgeRouter({
+    audit,
+    broadcast: alertBroadcastTarget,
+    now: () => new Date(),
+    // The wrapper conforms to `AlertAcknowledgeRepository` by
+    // construction (every required method present with the same
+    // signature); the cast at the boundary keeps the type narrow.
+    prisma: alertAckRepositoryWrapper as unknown as Parameters<
+      typeof buildAlertAcknowledgeRouter
+    >[0]["prisma"],
+  }),
+);
+app.use(
+  buildAlertListRouter({
+    audit,
+    prisma: alertListRepositoryWrapper as unknown as Parameters<
+      typeof buildAlertListRouter
+    >[0]["prisma"],
+  }),
+);
 
 /**
  * Story 2.5 — mount the admin simulator router. The router reads

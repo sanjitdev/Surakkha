@@ -14,3 +14,4 @@ export * from "./logger.js";
 export * from "./simulator.js";
 export * from "./dashboard.js";
 export * from "./rule.js";
+export * from "./alerts.js";

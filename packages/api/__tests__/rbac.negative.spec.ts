@@ -22,8 +22,12 @@
  *     12   Technician  delete           Device            403
  *     13   Operator    reopen           Incident          403
  *     14   Viewer      acknowledge      Incident          403
+ *     15   Technician  resolve          Incident          403
+ *     16   Viewer      acknowledge      Alert             403
+ *     17   Technician  acknowledge      Alert             403
  *
- * Total: 14 negative cases (Story 1.8 floor: 10).
+ * Total: 17 negative cases (Story 1.8 floor: 10; Story 3.5 adds cases
+ * 16 + 17 for the Alert.acknowledge deny cells).
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Server, createServer } from "node:http";

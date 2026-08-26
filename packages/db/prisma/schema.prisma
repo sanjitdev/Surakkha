@@ -248,14 +248,22 @@ model Rule {
 // key) lives in the migration SQL — Prisma `@@unique` does not support
 // SQL WHERE predicates.
 model Alert {
-  id              String       @id @default(uuid())
-  deviceId        String
-  ruleId          String
-  severity        RuleSeverity
-  metric          RuleMetric
-  openedAt        DateTime     @default(now())
-  clearedAt       DateTime?
-  acknowledgedAt  DateTime?
+  id                     String       @id @default(uuid())
+  deviceId               String
+  ruleId                 String
+  severity               RuleSeverity
+  metric                 RuleMetric
+  openedAt               DateTime     @default(now())
+  clearedAt              DateTime?
+  acknowledgedAt         DateTime?
+  // Story 3.5 — operator who clicked the "Acknowledge" button. Plain
+  // column, NOT a foreign key: the `User` table lands in Epic 5 and the
+  // FK constraint is added in that migration. The column is nullable
+  // so existing 3.4-shipped rows are valid without backfill; after
+  // acknowledge, both `acknowledgedAt` and `acknowledgedByUserId` are
+  // set via a single compare-and-set `updateMany` (see
+  // `packages/api/src/alerts/acknowledgeRouter.ts`).
+  acknowledgedByUserId   String?
 
   device          Device       @relation("DeviceAlerts", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   rule            Rule         @relation("RuleAlerts", fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)

@@ -39,11 +39,7 @@ interface MountArgs {
   readonly resource: Resource;
 }
 
-const mountOne = (
-  app: Express,
-  audit: AuditLogger,
-  args: MountArgs,
-): void => {
+const mountOne = (app: Express, audit: AuditLogger, args: MountArgs): void => {
   app[args.method](
     args.path,
     authorize({ action: args.action, resource: args.resource }, audit),
@@ -92,7 +88,12 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   // 3. Operator → drive → Simulator (RBAC_NEGATIVE_CASES #5)
   { method: "post", path: "/admin/simulator/x/scenario", action: "drive", resource: "Simulator" },
   // 4. Viewer → submit_result → Incident (RBAC_NEGATIVE_CASES #4)
-  { method: "post", path: "/incidents/x/submit_result", action: "submit_result", resource: "Incident" },
+  {
+    method: "post",
+    path: "/incidents/x/submit_result",
+    action: "submit_result",
+    resource: "Incident",
+  },
   // 5. Technician → export → Reading (RBAC_NEGATIVE_CASES #6)
   { method: "get", path: "/devices/x/export.csv", action: "export", resource: "Reading" },
   // 6. Operator → read → SeverityBanner (RBAC_NEGATIVE_CASES #7)
@@ -117,6 +118,15 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   { method: "post", path: "/incidents/x/acknowledge", action: "acknowledge", resource: "Incident" },
   // 16. Technician → resolve → Incident (extra)
   { method: "post", path: "/incidents/x/resolve", action: "resolve", resource: "Incident" },
+  // 17. Viewer → acknowledge → Alert (Story 3.5 AC3) and
+  // 18. Technician → acknowledge → Alert (Story 3.5 AC4) — RBAC
+  // matrix grants `Alert.acknowledge = false` to both. The test rig
+  // drives BOTH subjects (NEGATIVE_CASES indices 16 + 17) against
+  // the SINGLE mounted handler here (Express's `app.post` with
+  // duplicate `(method, path)` literals would warn + override; only
+  // one handler survives per unique path). The shared gate enforces
+  // both denies by virtue of the matrix cell.
+  { method: "post", path: "/alerts/x/acknowledge", action: "acknowledge", resource: "Alert" },
 ];
 
 /**
@@ -165,26 +175,204 @@ export interface NegativeCase {
 }
 
 export const NEGATIVE_CASES: readonly NegativeCase[] = [
-  { index: 1, subject: "Operator", method: "get", path: "/audit", action: "read", resource: "AuditLog", expected: 403, auditAction: "rbac_denied", appendixRow: "AuditLog · read" },
-  { index: 2, subject: "Viewer", method: "post", path: "/incidents", action: "create", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · create" },
-  { index: 3, subject: "Technician", method: "get", path: "/incidents/abc", action: "read", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · read (not assignee)" },
-  { index: 4, subject: "Viewer", method: "post", path: "/incidents/x/submit_result", action: "submit_result", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · submit_result" },
-  { index: 5, subject: "Operator", method: "post", path: "/admin/simulator/x/scenario", action: "drive", resource: "Simulator", expected: 403, auditAction: "rbac_denied", appendixRow: "Simulator · drive" },
-  { index: 6, subject: "Technician", method: "get", path: "/devices/x/export.csv", action: "export", resource: "Reading", expected: 403, auditAction: "rbac_denied", appendixRow: "Reading · export" },
-  { index: 7, subject: "Operator", method: "get", path: "/banners/active", action: "read", resource: "SeverityBanner", expected: 403, auditAction: "rbac_denied", appendixRow: "SeverityBanner · read" },
-  { index: 8, subject: "Viewer", method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule", expected: 403, auditAction: "rbac_denied", appendixRow: "Rule · update" },
-  { index: 9, subject: "Operator", method: "post", path: "/admin/users", action: "manage", resource: "User", expected: 403, auditAction: "rbac_denied", appendixRow: "User · manage" },
+  {
+    index: 1,
+    subject: "Operator",
+    method: "get",
+    path: "/audit",
+    action: "read",
+    resource: "AuditLog",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "AuditLog · read",
+  },
+  {
+    index: 2,
+    subject: "Viewer",
+    method: "post",
+    path: "/incidents",
+    action: "create",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · create",
+  },
+  {
+    index: 3,
+    subject: "Technician",
+    method: "get",
+    path: "/incidents/abc",
+    action: "read",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · read (not assignee)",
+  },
+  {
+    index: 4,
+    subject: "Viewer",
+    method: "post",
+    path: "/incidents/x/submit_result",
+    action: "submit_result",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · submit_result",
+  },
+  {
+    index: 5,
+    subject: "Operator",
+    method: "post",
+    path: "/admin/simulator/x/scenario",
+    action: "drive",
+    resource: "Simulator",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Simulator · drive",
+  },
+  {
+    index: 6,
+    subject: "Technician",
+    method: "get",
+    path: "/devices/x/export.csv",
+    action: "export",
+    resource: "Reading",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Reading · export",
+  },
+  {
+    index: 7,
+    subject: "Operator",
+    method: "get",
+    path: "/banners/active",
+    action: "read",
+    resource: "SeverityBanner",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "SeverityBanner · read",
+  },
+  {
+    index: 8,
+    subject: "Viewer",
+    method: "patch",
+    path: "/admin/thresholds/x",
+    action: "update",
+    resource: "Rule",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Rule · update",
+  },
+  {
+    index: 9,
+    subject: "Operator",
+    method: "post",
+    path: "/admin/users",
+    action: "manage",
+    resource: "User",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "User · manage",
+  },
   // 10. Technician → reopen → Incident (RBAC_NEGATIVE_CASES #10 was
   // mis-anchored — the matrix grants Technician submit_result on
   // Incident but denies reopen. We pin the actual deny cell.)
-  { index: 10, subject: "Technician", method: "post", path: "/incidents/x/reopen", action: "reopen", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · reopen (Technician)" },
+  {
+    index: 10,
+    subject: "Technician",
+    method: "post",
+    path: "/incidents/x/reopen",
+    action: "reopen",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · reopen (Technician)",
+  },
   // Extra cells beyond RBAC_NEGATIVE_CASES so the register exceeds the
   // Story 1.8 floor of "at least 10 negative RBAC cases".
-  { index: 11, subject: "Viewer", method: "post", path: "/admin/users", action: "manage", resource: "User", expected: 403, auditAction: "rbac_denied", appendixRow: "User · manage (Viewer)" },
-  { index: 12, subject: "Technician", method: "delete", path: "/devices/x", action: "delete", resource: "Device", expected: 403, auditAction: "rbac_denied", appendixRow: "Device · delete (Technician)" },
-  { index: 13, subject: "Operator", method: "post", path: "/incidents/x/reopen", action: "reopen", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · reopen (Operator)" },
-  { index: 14, subject: "Viewer", method: "post", path: "/incidents/x/acknowledge", action: "acknowledge", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · acknowledge (Viewer)" },
-  { index: 15, subject: "Technician", method: "post", path: "/incidents/x/resolve", action: "resolve", resource: "Incident", expected: 403, auditAction: "rbac_denied", appendixRow: "Incident · resolve (Technician)" },
+  {
+    index: 11,
+    subject: "Viewer",
+    method: "post",
+    path: "/admin/users",
+    action: "manage",
+    resource: "User",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "User · manage (Viewer)",
+  },
+  {
+    index: 12,
+    subject: "Technician",
+    method: "delete",
+    path: "/devices/x",
+    action: "delete",
+    resource: "Device",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Device · delete (Technician)",
+  },
+  {
+    index: 13,
+    subject: "Operator",
+    method: "post",
+    path: "/incidents/x/reopen",
+    action: "reopen",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · reopen (Operator)",
+  },
+  {
+    index: 14,
+    subject: "Viewer",
+    method: "post",
+    path: "/incidents/x/acknowledge",
+    action: "acknowledge",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · acknowledge (Viewer)",
+  },
+  {
+    index: 15,
+    subject: "Technician",
+    method: "post",
+    path: "/incidents/x/resolve",
+    action: "resolve",
+    resource: "Incident",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Incident · resolve (Technician)",
+  },
+  // Story 3.5 — Alert lifecycle. The matrix cell
+  // `Alert.acknowledge = Admin + Operator only` is new; cases 16 + 17
+  // pin Viewer + Technician denials on the new endpoint so a future
+  // matrix drift surfaces as a failed test rather than a silent
+  // privilege escalation. The path `/alerts/x/acknowledge` mirrors
+  // the production route literal.
+  {
+    index: 16,
+    subject: "Viewer",
+    method: "post",
+    path: "/alerts/x/acknowledge",
+    action: "acknowledge",
+    resource: "Alert",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Alert · acknowledge (Viewer)",
+  },
+  {
+    index: 17,
+    subject: "Technician",
+    method: "post",
+    path: "/alerts/x/acknowledge",
+    action: "acknowledge",
+    resource: "Alert",
+    expected: 403,
+    auditAction: "rbac_denied",
+    appendixRow: "Alert · acknowledge (Technician)",
+  },
 ];
 
 /** Map subject → UUID for token minting in tests. */

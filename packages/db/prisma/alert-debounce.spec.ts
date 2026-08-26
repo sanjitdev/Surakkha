@@ -101,6 +101,44 @@ const assertPartialIndexPresent = async (): Promise<void> => {
   expect(rows[0]?.indexdef.toUpperCase()).toContain('"CLEAREDAT" IS NULL');
 };
 
+/**
+ * Story 3.5 — verify the `acknowledgedByUserId` column added by
+ * the `20260826140000_alert_lifecycle` migration is present on the
+ * `Alert` table. Pinned here so a future migration that drops the
+ * column (or forgets to add it on a fresh DB) surfaces as a clear
+ * test failure rather than a runtime `prisma.alert.update` /
+ * `findUnique` field-not-found error deep in the request path.
+ * Companion to `assertPartialIndexPresent` (Story 3.4's AC11 pin).
+ *
+ * The column must be:
+ *   - present in `information_schema.columns`
+ *   - nullable (`is_nullable = 'YES'`) — Epic 5 owns the FK +
+ *     NOT NULL constraint when the `User` table lands
+ *   - `text` / `character varying` (Postgres reports the unqualified
+ *     type name without `pg_catalog.` prefix; either is acceptable
+ *     as long as the column isn't a domain or composite type)
+ */
+const assertAcknowledgedByUserIdColumnPresent = async (): Promise<void> => {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+    }>
+  >`
+    SELECT column_name, data_type, is_nullable
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'Alert'
+       AND column_name = 'acknowledgedByUserId'
+  `;
+  expect(rows.length).toBe(1);
+  expect(rows[0]?.is_nullable).toBe("YES");
+  // Postgres returns `text` for `String` in Prisma's schema; tolerate
+  // `character varying` as well in case the column is later re-typed.
+  expect(["text", "character varying"]).toContain(rows[0]?.data_type);
+};
+
 describe("Story 3.4 — Alert partial unique index + cascade (AC10, AC11)", () => {
   // Shared Rule row — `Alert.ruleId` is a NOT NULL FK to `Rule.id`.
   // One row per test file is enough; each test inserts its own
@@ -438,5 +476,27 @@ describe("Story 3.4 — Alert partial unique index + cascade (AC10, AC11)", () =
       select: { id: true },
     });
     expect(afterDelete).toBeNull();
+  });
+});
+
+/**
+ * Story 3.5 — `Alert.acknowledgedByUserId` column presence (AC14).
+ *
+ * Sibling describe block to the 3.4 tests above. Lives in the same
+ * file because the column assertion is a quick `information_schema`
+ * check that depends on the same live Prisma connection the 3.4
+ * tests share. The column is asserted HERE (not in the 3.4
+ * `beforeAll`) so readers of "Story 3.4" do not see a 3.5 AC
+ * assertion leaking into their describe block.
+ */
+describe("Story 3.5 — Alert lifecycle column (AC14)", () => {
+  beforeAll(async () => {
+    await assertAcknowledgedByUserIdColumnPresent();
+  });
+
+  it("AC14 — Alert.acknowledgedByUserId column exists, is nullable, and is text/varchar", async () => {
+    // The beforeAll already ran the check; this test documents the
+    // contract explicitly so the test name appears in CI output.
+    await assertAcknowledgedByUserIdColumnPresent();
   });
 });
