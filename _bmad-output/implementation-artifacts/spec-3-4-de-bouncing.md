@@ -182,3 +182,33 @@ context:
 - After `pnpm -F @surakkha/db exec prisma migrate deploy`, `psql ... -c '\d "Alert"'` shows `clearedAt`, `acknowledgedAt`, the `@@index([deviceId, metric, severity, clearedAt])`, and the partial unique index `WHERE clearedAt IS NULL` named `Alert_open_unique_idx`. `'\d "RuleDebounceState"'` shows the FK to `Device` with cascade.
 - Boot api, run simulator at a `tds_ppm>=300` breach scenario for 60s, then `psql ... -c 'SELECT id, severity, "openedAt", "clearedAt" FROM "Alert";'` returns the row with `openedAt` set; `psql ... -c 'SELECT "inViolationSince", "clearedSince" FROM "RuleDebounceState";'` shows the state row.
 - Verify write-amplification guard: a Rule row with `minDurationSeconds: 0` AND `hysteresisSeconds: 0` causes the api boot to emit the warning and exit 78; removing one of the two to a positive value lets boot succeed.
+
+### Review Findings (2026-08-26, post-ship code review — 4 review layers)
+
+The full diff for Story 3.4 (19 files, 2766+/160-) was reviewed by four parallel layers: blind-hunter (adversarial), edge-case-hunter, verification-gap, and acceptance-auditor. Ten findings survived triage. Decision-needed Finding #6 was resolved by the reviewer (option C: fold into Finding #3). One finding dismissed as noise.
+
+**Patch findings (resolved by reviewer choice on #6 — fold into #3 `$transaction` envelope):**
+
+- [ ] [Review][Patch] **AC12 boot guard catch swallows `WriteAmplificationError`** [`packages/api/src/index.ts:470-473`] — Severity: high. `initializeRuleEngine`'s catch is generic and falls back to NOOP_HOOKS for ALL errors including `WriteAmplificationError`. Spec line 169 requires the boot guard to run BEFORE the existing try/catch and that `boot().catch()` at `index.ts:553` calls `process.exit(78)`. `boot-fallback.spec.ts` actively pins the swallow pattern. Convergent across 4 layers.
+
+- [ ] [Review][Patch] **Pre-throw `console.warn` missing from boot guard** [`packages/api/src/rules/hooks.ts:465-468`] — Severity: medium. Spec line 169 requires the boot guard to emit `console.warn('[debounce] write-amplification guard: ruleId=<id> has min=0 AND hysteresis=0')` BEFORE throwing. Current `installRuleEngineHooks` throws immediately; the offending ruleId is buried in the error object.
+
+- [ ] [Review][Patch] **Missing `$transaction` wrapper around (open) pair** [`packages/api/src/rules/hooks.ts:599-664` + state persistence `hooks.ts:511-514`] — Severity: high. Spec line 84 mandates: "for each `open`: in a `$transaction` (a) `findOpenAlert(...)` for idempotency, (b) if none, `prisma.alert.create(...)`, (c) `prisma.ruleDebounceState.upsert(...)`". Current impl does these as three separate IO calls; a crash between create and state upsert leaves an Alert row without a corresponding debounce state row. Convergent across 3 layers. **This patch resolves Finding #6 once `$transaction` is in place** — the resolved open alert id is the IO layer's contract for both fields.
+
+- [ ] [Review][Patch] **Missing `$transaction` wrapper around (clear) pair** [`packages/api/src/rules/hooks.ts:664-686` + state persistence `hooks.ts:511-514`] — Severity: medium. Same atomicity issue as the open path. Loopback-1 P2 noted the clear-path race is naturally protected by Prisma's UPDATE lock, so the risk is bounded, but the atomicity guarantee AC explicitly demands is still absent.
+
+- [x] [Review][Patch] **AC11 partial-unique-index race: source-walk pin instead of real concurrent-insert integration test** [`packages/db/prisma/alert-debounce.spec.ts` (NEW)] — Severity: high. Spec line 88 requires `packages/db/prisma/alert-debounce.spec.ts` — NEW with a real `prisma.alert.create` × 2 → P2002 test, plus `prisma.device.delete` → `ruleDebounceState.findFirst` returns null (cascade). **Resolved:** NEW file `packages/db/prisma/alert-debounce.spec.ts` (6 tests) exercises both contracts against a live Postgres: (a) sequential `prisma.alert.create` × 2 with same `(deviceId, metric, severity)` → second throws `P2002`; (b) clearing the first row (setting `clearedAt`) unblocks a new OPEN row for the same key (proves the partial predicate is load-bearing); (c) two concurrent Prisma clients racing on a brand-new device → exactly one row persists + one `P2002` (the actual AC11 scenario); (d) `prisma.device.delete` cascades to both `Alert` + `RuleDebounceState` rows (AC10 contract). Pin is live-Prisma; CI wiring is deferred (`.github/workflows/ci.yml` `db` job is a placeholder as of Story 3.4 ship).
+
+- [ ] [Review][Patch] **`AlertOpenedEventSchema.safeParse` failure silent** [`packages/api/src/rules/hooks.ts:656-659`] — Severity: medium. When the wire payload fails Zod validation, the code drops the emit with no log. Alert row is committed but never reaches clients; operator cannot diagnose.
+
+- [ ] [Review][Patch] **Clear path: `existing === null` silent drop** [`packages/api/src/rules/hooks.ts:676`] — Severity: medium. When `findOpenAlert` returns null on the clear path, the clear transition is silently dropped with no log. The `RuleDebounceState` row is still updated by the outer loop, so the timer resets but the Alert row's `clearedAt` stays NULL — drift between timer and Alert row.
+
+- [ ] [Review][Patch] **`hooks.spec.ts` POST_COMMIT_EMIT_ORDERING test does not pin transaction-rollback** [`packages/api/src/rules/__tests__/hooks.spec.ts` test iv] — Severity: medium. Spec line 90 requires: "force the `$transaction` to reject, assert no emit happens". Current test stubs `alertCreate.mockRejectedValue(new Error("synthetic db failure"))` — a non-Prisma error. With no `$transaction` in the impl, the test passes only because `throw err` aborts before broadcast; it doesn't pin atomicity. Once the `$transaction` wrapper is in place (Finding #3), the test needs an upgrade.
+
+- [ ] [Review][Patch] **`hooks.spec.ts` does not cover the P2002 duplicate-open race catch** [`packages/api/src/rules/hooks.ts:633-638`] — Severity: high. The P2002 catch is the safety net for AC11 (which is itself unverified end-to-end per Finding #5). The catch branch and the `[alerts] duplicate open suppressed (race)` log line are un-pinned by any test.
+
+**Dismissed as noise:**
+
+- [x] ~~`AlertOpenedEvent` adds `rule_id` + `value` as REQUIRED fields (wire drift risk)~~ — Spec line 82 + spec loopback-1 I1 amendment confirm adding the two fields (`rule_id: z.string().uuid()`, `value: z.number()`) is the intended contract; the spec language "three fields" was a typo counting the type-alias re-export. Implementation matches. Wire drift at consumer hot-reload boundary is the consumer's responsibility on migration. — Deferred not.
+
+**Deferred from this review:** none.
