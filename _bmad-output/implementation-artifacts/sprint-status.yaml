@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-25T20:30:00.000Z
+last_updated: 2026-08-26T14:38:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -90,7 +90,7 @@ development_status:
   3-1-rules-table-prisma-schema: done
   3-2-three-rule-types-evaluation-engine: done
   3-3-default-thresholds-seed-script: done
-  3-4-de-bouncing: backlog
+  3-4-de-bouncing: done
   3-5-alert-lifecycle: backlog
   3-6-auto-create-incident-from-warning-critical-alert: backlog
   3-7-admin-thresholds-admin-tab: backlog
@@ -405,14 +405,14 @@ stories:
 
   - id: "3.4"
     title: "De-bouncing"
-    status: backlog
+    status: done
     epic: "3"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "feed712"
+    shipped: "2026-08-26"
+    covers: ["FR-14", "AR-7"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-3-4-de-bouncing.md"
+      review: "_bmad-output/implementation-artifacts/spec-3-4-de-bouncing.md"
 
   - id: "3.5"
     title: "Alert Lifecycle"
