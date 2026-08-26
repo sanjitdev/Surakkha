@@ -36,6 +36,13 @@ export const AlertOpenedEventSchema = z.object({
   metric: MetricKeySchema,
   severity: z.enum(["info", "warning", "critical"]),
   opened_at: ISO8601,
+  // Story 3.4 — wire fields that let the UI render the rule that
+  // fired (`rule_id`) and the reading that breached (`value`).
+  // `rule_id` enables the operator dashboard's "view rule" link;
+  // `value` is the rendering value on the alert card (without it,
+  // the dashboard must join back to the Reading row).
+  rule_id: z.string().uuid(),
+  value: z.number(),
 });
 export type AlertOpenedEvent = z.infer<typeof AlertOpenedEventSchema>;
 
@@ -59,9 +66,7 @@ export const IncidentStateChangedEventSchema = z.object({
   changed_at: ISO8601,
   actor_user_id: z.string().uuid().nullable(),
 });
-export type IncidentStateChangedEvent = z.infer<
-  typeof IncidentStateChangedEventSchema
->;
+export type IncidentStateChangedEvent = z.infer<typeof IncidentStateChangedEventSchema>;
 
 const NOTIFICATION_TITLE_MAX = 200;
 const NOTIFICATION_BODY_MAX = 2_000;
@@ -73,6 +78,4 @@ export const NotificationCriticalEventSchema = z.object({
   body: z.string().min(1).max(NOTIFICATION_BODY_MAX),
   created_at: ISO8601,
 });
-export type NotificationCriticalEvent = z.infer<
-  typeof NotificationCriticalEventSchema
->;
+export type NotificationCriticalEvent = z.infer<typeof NotificationCriticalEventSchema>;
