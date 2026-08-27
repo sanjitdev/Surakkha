@@ -101,7 +101,7 @@ development_status:
   4-1-card-action-affordance-contract: done
   4-2-incident-state-machine-implementation: done
   4-3-kanban-column-projection: done
-  4-4-incident-detail-page: backlog
+  4-4-incident-detail-page: done
   4-5-acknowledge-flow: backlog
   4-6-assign-technician-inspecting-transition: backlog
   4-7-submit-result-safe-unsafe-monitoring: backlog

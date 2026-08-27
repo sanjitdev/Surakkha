@@ -144,3 +144,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
   summary: No `incident-state.migration.spec.ts` exercises the new migration's table shapes, FKs, or partial unique index.
   evidence: Owner: live-Prisma test rig (sibling of `alert-debounce.migration.spec.ts`); spec doesn't require it for 4.2 but it should land with the deferred-test sweep.
+
+## Deferred from: code review of 4-4-incident-detail-page (2026-08-27)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md`
+  summary: `useIncidentDetailSocket` `useEffect` deps array — re-registration on `id` change within the same mounted component is unverified.
+  evidence: In practice `id` never changes inside a single `<IncidentDetailPage />` mount (the component unmounts on route change because `/incidents/:id` is a different route), so the hot path is idle. Test coverage would require an explicit navigation-within-mount rig, which is not part of 4.4's AC matrix. Defer until a future story wires intra-route id transitions (e.g., pagination).
