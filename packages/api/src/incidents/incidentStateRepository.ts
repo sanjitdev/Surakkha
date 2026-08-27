@@ -28,6 +28,7 @@
  */
 import type {
   ActionVerb,
+  IncidentEventPayload,
   IncidentEventType,
   IncidentPayload,
   IncidentState,
@@ -122,6 +123,17 @@ export interface IncidentStateRepository {
         readonly payload: Readonly<Record<string, unknown>>;
       };
     }): Promise<IncidentEventRow>;
+    /**
+     * Story 4.4 — read path for `/api/incidents/:id/events` (the
+     * detail-page audit timeline). Filters by `incidentId` and
+     * accepts `orderBy: { createdAt: "asc" | "desc" }` so the
+     * route can pin chronological order. The wire-shape
+     * conversion happens in `incidentEventRowToPayload`.
+     */
+    findMany(args: {
+      readonly where: { readonly incidentId: string };
+      readonly orderBy?: { readonly createdAt: "asc" | "desc" };
+    }): Promise<IncidentEventRow[]>;
   };
   /**
    * Story 4.9 — the `notification:critical` write site fires when
@@ -168,6 +180,7 @@ export const resolveIncidentStateRepository = (prisma: unknown): IncidentStateRe
     },
     incidentEvent: {
       create: (args) => client.incidentEvent.create(args) as Promise<IncidentEventRow>,
+      findMany: (args) => client.incidentEvent.findMany(args) as Promise<IncidentEventRow[]>,
     },
     notification: {
       create: (args) => client.notification.create(args) as Promise<{ readonly id: string }>,
@@ -349,6 +362,30 @@ export const incidentRowToPayload = (row: IncidentRow): IncidentPayload => ({
       : row.resolvedAt instanceof Date
         ? row.resolvedAt.toISOString()
         : new Date(row.resolvedAt).toISOString(),
+});
+
+/**
+ * Build the wire-row `IncidentEventPayload` from a Prisma
+ * `IncidentEvent` row. Used by the route layer's
+ * `/api/incidents/:id/events` endpoint to serialize the timeline.
+ * Mirrors `incidentRowToPayload` above; lives here because it has
+ * no other natural home.
+ *
+ * The `payload` field is freeform (`Record<string, unknown>`);
+ * we pass it through unchanged. The shape varies by event type
+ * (e.g., `assign` carries `assigneeUserId`; `submit_result`
+ * carries `outcome`). The detail page renders it as JSON.
+ */
+export const incidentEventRowToPayload = (row: IncidentEventRow): IncidentEventPayload => ({
+  id: row.id,
+  incident_id: row.incidentId,
+  actor_user_id: row.actorUserId,
+  type: row.type,
+  payload: { ...row.payload },
+  created_at:
+    row.createdAt instanceof Date
+      ? row.createdAt.toISOString()
+      : new Date(row.createdAt).toISOString(),
 });
 
 /**

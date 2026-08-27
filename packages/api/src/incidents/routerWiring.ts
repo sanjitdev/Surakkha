@@ -92,6 +92,10 @@ const buildIncidentRepoResolver = (
         const repo = await ensure();
         return repo.incidentEvent.create(args);
       },
+      findMany: async (args) => {
+        const repo = await ensure();
+        return repo.incidentEvent.findMany(args);
+      },
     },
     notification: {
       create: async (args) => {

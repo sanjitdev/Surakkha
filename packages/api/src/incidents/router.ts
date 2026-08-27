@@ -42,7 +42,11 @@
  * live in `./transitionHelpers.ts` so this file stays under the
  * lint `max-lines: 500` ceiling.
  */
-import { type ActionVerb, type IncidentPayload } from "@surakkha/shared/incident";
+import {
+  type ActionVerb,
+  type IncidentEventPayload,
+  type IncidentPayload,
+} from "@surakkha/shared/incident";
 import { type Action } from "@surakkha/shared/rbac";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
@@ -51,6 +55,8 @@ import { type AuditLogger } from "../audit.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
+  type IncidentEventRow,
+  incidentEventRowToPayload,
   type IncidentRow,
   incidentRowToPayload,
   type IncidentStateRepository,
@@ -259,6 +265,78 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
       }
       const payload: IncidentPayload = incidentRowToPayload(row);
       res.status(HTTP_OK).json(payload);
+    },
+  );
+
+  // Story 4.4 — read-side timeline endpoint. Returns every
+  // `IncidentEvent` row for the parent incident in chronological
+  // order. RBAC + Tech-ownership mirror the parent GET: a Tech
+  // requesting the timeline of an incident they're NOT assigned
+  // to gets 403 (the Tech's audit-timeline view is restricted to
+  // their assigned incidents).
+  //
+  // Why a separate endpoint instead of embedding in the parent
+  // GET response: the parent GET stays small (one row); the
+  // timeline can be paginated / filtered independently in the
+  // future. See `spec-4-4-incident-detail-page.md` Design Notes.
+  router.get(
+    "/api/incidents/:id/events",
+    authorize({ action: "read", resource: "Incident" }, deps.audit),
+    async (req: AuthorizedRequest, res: Response) => {
+      const idParsed = idPathSchema.safeParse(req.params);
+      if (!idParsed.success) {
+        res
+          .status(HTTP_BAD_REQUEST)
+          .json({ error: "validation_error", issues: idParsed.error.issues });
+        return;
+      }
+      const { id } = idParsed.data;
+      let row: IncidentRow | null;
+      try {
+        row = await deps.repo.incident.findUnique({ where: { id } });
+      } catch (err) {
+        console.error(`api/incidents/${id}/events: findUnique failed`, err);
+        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        return;
+      }
+      if (row === null) {
+        res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+        return;
+      }
+      // Technician-only-mine ownership check (same shape as the
+      // parent GET; the Tech's audit-timeline view is restricted
+      // to incidents they're assigned to per code-review Patch
+      // #11 from Story 4.2).
+      if (req.user?.role === "Technician" && row.assigneeUserId !== req.user.id) {
+        deps.audit.emit({
+          auditAction: "rbac_denied",
+          userId: req.user.id,
+          outcome: "failure",
+          context: {
+            subject: "Technician",
+            action: "read",
+            resource: "Incident",
+            reason: "not_assignee",
+          },
+        });
+        res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+        return;
+      }
+      let events: IncidentEventRow[];
+      try {
+        events = await deps.repo.incidentEvent.findMany({
+          where: { incidentId: id },
+          orderBy: { createdAt: "asc" },
+        });
+      } catch (err) {
+        console.error(`api/incidents/${id}/events: findMany failed`, err);
+        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        return;
+      }
+      const body: { events: IncidentEventPayload[] } = {
+        events: events.map((row_) => incidentEventRowToPayload(row_)),
+      };
+      res.status(HTTP_OK).json(body);
     },
   );
 

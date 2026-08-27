@@ -18,6 +18,8 @@ import express, { type Express } from "express";
 import { type AddressInfo, createServer, type Server } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { IncidentEventPayloadSchema } from "@surakkha/shared/incident";
+
 import {
   type IncidentEventRow,
   type IncidentRow,
@@ -76,6 +78,9 @@ interface MockRepoOptions {
   readonly eventCreate?: (
     args: Parameters<IncidentStateRepository["incidentEvent"]["create"]>[0],
   ) => Promise<IncidentEventRow>;
+  readonly eventFindMany?: (
+    args: Parameters<IncidentStateRepository["incidentEvent"]["findMany"]>[0],
+  ) => Promise<IncidentEventRow[]>;
   readonly notificationCreate?: (
     args: Parameters<IncidentStateRepository["notification"]["create"]>[0],
   ) => Promise<{ readonly id: string }>;
@@ -106,6 +111,9 @@ const makeMockRepo = (opts: MockRepoOptions): IncidentStateRepository => {
           payload: args.data.payload,
           createdAt: new Date("2026-08-27T01:00:00.000Z"),
         })),
+      // Story 4.4 — default empty list; timeline tests pass a
+      // stub via `opts.eventFindMany`.
+      findMany: opts.eventFindMany ?? (async () => []),
     },
     notification: {
       create:
@@ -133,6 +141,7 @@ interface StartArgs {
   readonly broadcast?: Parameters<typeof buildIncidentsRouter>[0]["broadcast"];
   readonly updateMany?: MockRepoOptions["updateMany"];
   readonly eventCreate?: MockRepoOptions["eventCreate"];
+  readonly eventFindMany?: MockRepoOptions["eventFindMany"];
   readonly notificationCreate?: MockRepoOptions["notificationCreate"];
 }
 
@@ -148,6 +157,7 @@ const startApp = async (args: StartArgs): Promise<{ url: string; close: () => Pr
         nextRow: args.nextRow,
         updateMany: args.updateMany,
         eventCreate: args.eventCreate,
+        eventFindMany: args.eventFindMany,
         notificationCreate: args.notificationCreate,
       }),
       broadcast: args.broadcast,
@@ -793,6 +803,260 @@ describe("Story 4.2 — GET /api/incidents/:id", () => {
     const { url, close } = await startApp({ row: baseRow() });
     const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}`);
     expect(res.status).toBe(401);
+    await close();
+  });
+});
+
+describe("Story 4.4 — GET /api/incidents/:id/events", () => {
+  // Story 4.4 — the detail-page audit timeline endpoint. Returns
+  // every IncidentEvent row for the parent incident in
+  // chronological order. RBAC + Tech-ownership mirror the parent
+  // GET; 401 / 403 / 404 / 500 / 200-happy-path all pinned below.
+
+  const buildEventRow = (
+    overrides: Partial<IncidentEventRow> & { id: string },
+  ): IncidentEventRow => ({
+    incidentId: INCIDENT_ID,
+    actorUserId: ADMIN_ID,
+    type: "acknowledge",
+    payload: { from: "OPEN", to: "ACKNOWLEDGED" },
+    createdAt: new Date("2026-08-27T01:00:00.000Z"),
+    ...overrides,
+  });
+
+  it("returns every IncidentEvent row for the parent incident sorted by createdAt ASC", async () => {
+    const events: IncidentEventRow[] = [
+      buildEventRow({
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        type: "acknowledge",
+        createdAt: new Date("2026-08-27T01:00:00.000Z"),
+        payload: { from: "OPEN", to: "ACKNOWLEDGED" },
+      }),
+      buildEventRow({
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        type: "assign",
+        createdAt: new Date("2026-08-27T02:00:00.000Z"),
+        actorUserId: OPERATOR_ID,
+        payload: { assigneeUserId: TECH_ID },
+      }),
+      buildEventRow({
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        type: "submit_result",
+        createdAt: new Date("2026-08-27T03:00:00.000Z"),
+        actorUserId: TECH_ID,
+        payload: { outcome: "SAFE" },
+      }),
+    ];
+    const { url, close } = await startApp({
+      row: baseRow({ state: "INSPECTING" }),
+      eventFindMany: async (args) => {
+        // The endpoint pins orderBy: { createdAt: "asc" }; verify
+        // the contract by asserting the args the endpoint passes.
+        expect(args.where).toEqual({ incidentId: INCIDENT_ID });
+        expect(args.orderBy).toEqual({ createdAt: "asc" });
+        return events;
+      },
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { events: unknown[] };
+    expect(body.events).toHaveLength(3);
+    // Every row matches the canonical wire shape — schema parse
+    // succeeds against the live response body.
+    for (const event of body.events) {
+      const parsed = IncidentEventPayloadSchema.safeParse(event);
+      expect(parsed.success).toBe(true);
+    }
+    // Order is ASC by createdAt — the response carries the rows in
+    // insertion order (the stub returns them in that order; the
+    // production handler passes `orderBy: { createdAt: "asc" }`).
+    expect(body.events.map((e: { id: string }) => e.id)).toEqual([
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    ]);
+    await close();
+  });
+
+  it("returns the empty envelope when the parent incident has no events", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN" }),
+      eventFindMany: async () => [],
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ events: [] });
+    await close();
+  });
+
+  it("renders invalid_transition_attempt event type correctly", async () => {
+    const events: IncidentEventRow[] = [
+      buildEventRow({
+        id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        type: "invalid_transition_attempt",
+        actorUserId: OPERATOR_ID,
+        payload: { from: "RESOLVED", attempted: "acknowledge" },
+      }),
+    ];
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+      eventFindMany: async () => events,
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    expect(body.events[0]?.type).toBe("invalid_transition_attempt");
+    expect(body.events[0]?.payload).toEqual({ from: "RESOLVED", attempted: "acknowledge" });
+    await close();
+  });
+
+  it("returns 401 when no bearer token is presented", async () => {
+    const { url, close } = await startApp({ row: baseRow() });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`);
+    expect(res.status).toBe(401);
+    await close();
+  });
+
+  it("returns 403 when a Technician requests events for an incident they're not assigned to", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN", assigneeUserId: OTHER_TECH_ID }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForTech(TECH_ID)}` },
+    });
+    expect(res.status).toBe(403);
+    await close();
+  });
+
+  it("returns 403 when a Technician requests events for an unassigned incident", async () => {
+    // Patch #11 (code-review 2026-08-27): unassigned incidents are
+    // also restricted from Tech view. The timeline endpoint must
+    // honor the same contract.
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN", assigneeUserId: null }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Technician")}` },
+    });
+    expect(res.status).toBe(403);
+    await close();
+  });
+
+  it("returns 200 for an assigned Technician (Tech-only-mine allow)", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "INSPECTING", assigneeUserId: TECH_ID }),
+      eventFindMany: async () => [],
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForTech(TECH_ID)}` },
+    });
+    expect(res.status).toBe(200);
+    await close();
+  });
+
+  it("returns 404 when the parent incident does not exist", async () => {
+    // The findUnique mock returns null; the timeline findMany is
+    // never reached.
+    const { close } = await startApp({ row: baseRow() });
+    const app: Express = express();
+    app.use(express.json({ limit: "32kb" }));
+    app.use(authenticate);
+    let findManyCalled = false;
+    app.use(
+      buildIncidentsRouter({
+        audit: { emit: () => undefined },
+        repo: {
+          incident: {
+            findUnique: async () => null,
+            findMany: async () => [],
+            updateMany: async () => ({ count: 1 }),
+          },
+          incidentEvent: {
+            create: async () => ({
+              id: "e",
+              incidentId: "",
+              actorUserId: null,
+              type: "acknowledge" as const,
+              payload: {},
+              createdAt: new Date(),
+            }),
+            findMany: async () => {
+              findManyCalled = true;
+              return [];
+            },
+          },
+          notification: { create: async () => ({ id: "n" }) },
+          $transaction: async <T>(cb: (tx: IncidentStateRepository) => Promise<T>) =>
+            cb({} as IncidentStateRepository),
+        },
+      }),
+    );
+    const server: Server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const addr = server.address() as AddressInfo;
+    const url404 = `http://127.0.0.1:${addr.port}`;
+    const res = await fetch(`${url404}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(404);
+    // Critical invariant: the timeline findMany is NEVER reached
+    // when the parent incident doesn't exist.
+    expect(findManyCalled).toBe(false);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await close();
+  });
+
+  it("returns 500 when the timeline findMany throws", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN" }),
+      eventFindMany: async () => {
+        throw new Error("prisma unreachable");
+      },
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(500);
+    await close();
+  });
+
+  it("accepts an Admin token (every authenticated role can read)", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN" }),
+      eventFindMany: async () => [],
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    await close();
+  });
+
+  it("returns 400 on a malformed UUID path segment (idPathSchema.safeParse rejection)", async () => {
+    // The timeline endpoint must reject non-UUID ids with a 400
+    // BEFORE attempting the parent-incident lookup — otherwise the
+    // .findUnique would surface a Prisma "invalid input syntax for
+    // type uuid" error (a 500 leak).
+    const { url, close } = await startApp({
+      row: baseRow({ state: "OPEN" }),
+      eventFindMany: async () => {
+        throw new Error("findMany should not be reached on malformed UUID");
+      },
+    });
+    const res = await fetch(`${url}/api/incidents/not-a-uuid/events`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("validation_error");
     await close();
   });
 });
