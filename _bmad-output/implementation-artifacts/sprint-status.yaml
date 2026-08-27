@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-26T18:30:00.000Z
+last_updated: 2026-08-27T00:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -94,18 +94,19 @@ development_status:
   3-5-alert-lifecycle: done
   3-6-auto-create-incident-from-warning-critical-alert: done
   3-7-admin-thresholds-admin-tab: done
+  epic-3-retrospective: done
 
   # ===== Epic 4 — Incidents & Workflow =====
-  epic-4: backlog
-  4-1-card-action-affordance-contract: backlog
-  4-2-incident-state-machine-implementation: backlog
+  epic-4: in-progress
+  4-1-card-action-affordance-contract: done
+  4-2-incident-state-machine-implementation: done
   4-3-kanban-column-projection: backlog
   4-4-incident-detail-page: backlog
   4-5-acknowledge-flow: backlog
   4-6-assign-technician-inspecting-transition: backlog
   4-7-submit-result-safe-unsafe-monitoring: backlog
   4-8-sticky-severitybanner-rbac: backlog
-  4-9-notification-writer: backlog
+  4-9-notification-writer: done
   4-10-notificationbell-dropdown: backlog
   4-11-reopen-path: backlog
   4-12-technician-filtered-kanban: backlog
@@ -758,6 +759,59 @@ stories:
       context: null
       review: null
 
+# Action items committed by retrospectives (status surfaced in the readiness view).
+# Owners assigned retro-time; not-started until Epic 4 begins.
+action_items:
+  - id: "AI-3.1"
+    epic: "3"
+    title: "File 3.5-test-fixture-drift story (triage 5 pre-existing test failures)"
+    status: open
+    owner: null
+    target: "Before Epic 4 begins"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.2"
+    epic: "3"
+    title: "Promote AC4 (incident auto-create observability log line) into Story 4.2 ACs"
+    status: open
+    owner: "Story 4.2 owner"
+    target: "Epic 4 Story 4.2"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.3"
+    epic: "3"
+    title: "Pin incident:opened socket event emission to Story 4.2"
+    status: open
+    owner: "Story 4.2 owner"
+    target: "Epic 4 Story 4.2"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.4"
+    epic: "3"
+    title: "Add 'shared predicates must live in @surakkha/shared' to PR review checklist"
+    status: open
+    owner: "Charlie"
+    target: "This week"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.5"
+    epic: "3"
+    title: "Add 'no defensive props — must be read by the child' to PR review checklist"
+    status: open
+    owner: "Charlie"
+    target: "This week"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.6"
+    epic: "3"
+    title: "Write Incident state-work Code Map at _bmad-output/planning-artifacts/epic-4-context.md"
+    status: open
+    owner: "Elena"
+    target: "Epic 4 kickoff"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+  - id: "AI-3.7"
+    epic: "3"
+    title: "Add L4 UX-completeness end-of-epic story to Epic 4 plan (carry-forward)"
+    status: open
+    owner: "Alice"
+    target: "Epic 4 plan"
+    source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
+
 # Retrospectives committed
 retrospectives:
   - id: "epic-1-retrospective"
@@ -773,6 +827,13 @@ retrospectives:
     epic: "2"
     shipped: "2026-08-24"
     output: "_bmad-output/implementation-artifacts/epic-2-retrospective.md"
+
+  - id: "epic-3-retrospective"
+    title: "Epic 3 — Rules & Alerts"
+    status: done
+    epic: "3"
+    shipped: "2026-08-27"
+    output: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
 
 # Epic-level summaries (preserved for the readiness gate + tracking view)
 epics:
