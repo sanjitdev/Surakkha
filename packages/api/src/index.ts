@@ -498,12 +498,20 @@ const thresholdsRepoWrapper: Parameters<typeof buildThresholdsRouter>[0]["repo"]
 };
 
 app.use("/admin/thresholds", buildThresholdsRouter({ audit, repo: thresholdsRepoWrapper }));
-
-// Final 404 — the same shape the Step 0 stub returned, so the Docker
-// healthcheck contract is unchanged.
-app.use((_req: Request, res: Response) => {
-  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
-});
+// NOTE: the catch-all 404 handler is mounted AFTER the incidents
+// router mount (see below). If the 404 handler is registered BEFORE
+// `app.use(buildIncidentsRouterMount(...))`, the handler fires on
+// every `/api/incidents/{active,:id,/:id/events,...}` request that
+// does not match a route registered EARLIER (e.g. `/recent`), and
+// the adapter's routes — added by the later `app.use` — never see
+// the request. We observed this exact bug in dev on 2026-08-27:
+// every incident endpoint except `/recent` returned 404.
+//
+// The handler's order matters because `app.use(handler)` is a
+// no-`next()` middleware: once it runs, it sends the 404 response
+// and short-circuits the chain. Moving it AFTER all router mounts
+// is the canonical Express pattern (matches the `404 after all
+// routes` guidance in the Express docs).
 
 /**
  * Story 2.2 — bind Socket.IO to the same HTTP server. `path` keeps
@@ -655,6 +663,14 @@ app.use(
     resolveActorUserId,
   }),
 );
+
+// Final 404 — registered AFTER every router mount (including the
+// incidents adapter above) so the catch-all only fires for paths
+// that no router matched. See the NOTE above the `admin/thresholds`
+// mount for the rationale.
+app.use((_req: Request, res: Response) => {
+  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+});
 
 /**
  * Story 3.2 — boot path for the rules engine.
