@@ -59,6 +59,33 @@ export const IncidentUpdatedEventSchema = z.object({
 });
 export type IncidentUpdatedEvent = z.infer<typeof IncidentUpdatedEventSchema>;
 
+/**
+ * Story 4.2 — IncidentOpenedEvent (closes AI-3.3 from the Epic 3
+ * retrospective). Emitted on the post-commit hook of
+ * `applyTransition.ts`'s auto-create-incident path (Story 3.6),
+ * once the `Incident` row is durable + the `Alert` row is durable.
+ * Distinct from `IncidentStateChangedEvent` because there is no
+ * `from_state` (the row was just created) and there is no
+ * `actor_user_id` (the path is system-driven by the rule engine,
+ * not by an operator).
+ *
+ * Listeners (Story 4.4 detail page, deferred) consume this to
+ * populate the timeline's first row without polling
+ * `/api/incidents/:id`.
+ */
+export const IncidentOpenedEventSchema = z.object({
+  incident_id: z.string().uuid(),
+  device_id: z.string().uuid(),
+  severity: z.enum(["info", "warning", "critical"]),
+  metric: z.string(),
+  value: z.number(),
+  opened_at: ISO8601,
+  // The Alert that triggered the auto-create is informational;
+  // listeners that don't need it can ignore the field.
+  alert_id: z.string().uuid().nullable(),
+});
+export type IncidentOpenedEvent = z.infer<typeof IncidentOpenedEventSchema>;
+
 export const IncidentStateChangedEventSchema = z.object({
   incident_id: z.string().uuid(),
   from_state: z.string(),

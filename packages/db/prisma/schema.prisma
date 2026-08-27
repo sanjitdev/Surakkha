@@ -29,37 +29,37 @@ datasource db {
 // simulator's local `devices.json`. Both columns are nullable to keep the
 // forward migration safe for any rows already in the table.
 model Device {
-  id         String    @id
-  lastSeenAt DateTime?
+  id             String              @id
+  lastSeenAt     DateTime?
   // Story 2.5: human-readable label (e.g. "DHAKA-SCHOOL-023") + the
   // currently assigned scenario. Nullable so an existing row that
   // predates Story 2.5 (only `id` + `lastSeenAt`) survives the
   // forward migration without a manual backfill step.
-  name       String?
-  scenario   String?
+  name           String?
+  scenario       String?
   // Story 2.7: geographic coordinates for the operator dashboard's
   // Leaflet map (`/api/devices` joins Device.lat / Device.lng into
   // the map's marker roster). Nullable so the forward migration is
   // safe for any rows that predate Story 2.7; the seed backfills the
   // six canonical device rows idempotently.
-  lat        Float?
-  lng        Float?
+  lat            Float?
+  lng            Float?
   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
   // matches the FK constraint in the migration; a removed Device
   // does not leave orphan Reading rows behind.
-  readings   Reading[] @relation("DeviceReadings")
+  readings       Reading[]           @relation("DeviceReadings")
   // Story 2.6: Incident rows owned by this Device. Same FK cascade
   // contract as `readings`; Story 4.2 may add additional incident
   // tables (IncidentEvent, IncidentAssignment) that branch off this
   // same DeviceId.
-  incidents  Incident[] @relation("DeviceIncidents")
+  incidents      Incident[]          @relation("DeviceIncidents")
   // Story 3.1: Rule rows scoped to this Device (NULL = global rule).
   // Same cascade contract as `readings` / `incidents`; Story 3.7's
   // admin tab edits rules via the `DeviceRules` relation.
-  rules      Rule[]     @relation("DeviceRules")
+  rules          Rule[]              @relation("DeviceRules")
   // Story 3.4: Alert rows owned by this Device. ON DELETE CASCADE
   // collapses the Device → Alert chain on a device remove.
-  alerts     Alert[]    @relation("DeviceAlerts")
+  alerts         Alert[]             @relation("DeviceAlerts")
   // Story 3.4: RuleDebounceState rows owned by this Device. Same
   // cascade contract; no ghost timers on device re-add.
   debounceStates RuleDebounceState[] @relation("DeviceRuleDebounceStates")
@@ -88,41 +88,241 @@ model Reading {
   // F-P8: enforce the device_id authority at the DB layer. The
   // matching migration FK is the runtime authority; this relation
   // attribute keeps the Prisma client honest.
-  device           Device   @relation("DeviceReadings", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  device Device @relation("DeviceReadings", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([deviceId, ts])
   @@index([deviceId, seq])
 }
 
-// Incident — Story 2.6 placeholder (real model lands in Story 4.2).
-// The dashboard's Recent Incidents preview needs a queryable Incident
-// table so `GET /api/incidents/recent` can return a non-empty shape
-// once rule-firing lands in Epic 3. Story 4.2 expands the full state
-// machine (architecture §5.1) — that story owns the OPEN /
-// ACKNOWLEDGED / INSPECTING / SAFE / UNSAFE / MONITORING / RESOLVED
-// column additions, the actor FK, the IncidentEvent audit table,
-// etc. This model is intentionally minimal: the minimum columns the
-// 2.6 wire shape needs (`id`, `device_id`, `severity`, `metric`,
-// `value`, `opened_at`).
-// `deviceId` references the canonical `Device.id` (UUIDv4). `severity`
-// is a free-form string here (NOT a Prisma enum) because Story 4.2
-// may pivot to a different canonical set; pinning the enum at the
-// Story 2.6 boundary would force a migration that Epic 4 then has
-// to undo. The api validates `severity ∈ {"info","warning","critical"}`
-// at the boundary (see `incidents/recentRouter`).
+// Incident — Story 2.6 placeholder expanded in Story 4.2.
+//
+// The dashboard's Recent Incidents preview (`/api/incidents/recent`,
+// Story 2.6) reads `(id, deviceId, severity, metric, value, openedAt)`
+// from this table — those 6 columns are the v1 dashboard contract.
+//
+// Story 4.2 (Epic 4) adds the 7-state machine (architecture §5.1):
+//   - `state` (Prisma enum) drives the write-side state machine
+//     (`packages/api/src/incidents/transitions.ts`).
+//   - `assigneeUserId` (FK to `User`) names the assigned Technician.
+//   - `acknowledgedAt` / `resolvedAt` are nullable DateTime stamps.
+//   - `events` and `notifications` and `attachments` are the
+//     forward-FK relations consumed by Stories 4.2 (IncidentEvent),
+//     4.9 (Notification), and 4.13 (Attachment).
+//
+// `severity` is intentionally a free-form `String` (NOT a Prisma enum)
+// because the dashboard bucket-set can pivot without forcing an
+// Incident migration. The api validates `severity ∈
+// {"info","warning","critical"}` at the wire boundary (see
+// `incidents/recentRouter`).
+//
 // Index:
-//   - (deviceId, openedAt DESC) — primary dashboard query path.
+//   - (deviceId, openedAt DESC) — primary dashboard query path (2.6).
+//   - (state, openedAt DESC) — Kanban query (4.3, deferred).
 model Incident {
-  id        String   @id @default(uuid())
-  deviceId  String
-  severity  String
-  metric    String
-  value     Float
-  openedAt  DateTime @default(now())
+  id             String         @id @default(uuid())
+  deviceId       String
+  severity       String
+  metric         String
+  value          Float
+  openedAt       DateTime       @default(now())
+  // Story 4.2 — state machine. `OPEN` is the default so an auto-created
+  // row from Story 3.6's path lands in OPEN without a write.
+  state          IncidentState_ @default(OPEN)
+  // Story 4.6 / 4.7 — the assigned Technician. NULL while unassigned.
+  // FK target: `User.id`. ON DELETE SET NULL because removing a user
+  // must NOT cascade-delete the incident — audit history requires the
+  // incident row to outlive its assignee.
+  assigneeUserId String?
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
 
-  device    Device   @relation("DeviceIncidents", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  device        Device          @relation("DeviceIncidents", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  assignee      User?           @relation("IncidentAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  events        IncidentEvent[] @relation("IncidentEvents")
+  notifications Notification[]  @relation("IncidentNotifications")
+  attachments   Attachment[]    @relation("IncidentAttachments")
 
   @@index([deviceId, openedAt])
+  @@index([state, openedAt])
+}
+
+// Story 4.2 — incident state enum. Mirrors `IncidentStateSchema` in
+// `packages/shared/src/incident.ts` 1:1 — kept distinct from the
+// Zod-extrapolated literal union so the wire-contract and the DB
+// stay in lockstep (same source-walk pattern as `RuleMetric`).
+//
+// `REOPENED` is a transition alias: the reopen path writes
+// `state: "OPEN"` rather than `REOPENED`. The enum member exists
+// so the schema can describe the wire-state if Story 4.11 changes
+// its mind; the Epics 1-3 README documents the alias.
+enum IncidentState_ {
+  OPEN
+  ACKNOWLEDGED
+  INSPECTING
+  SAFE
+  UNSAFE
+  MONITORING
+  RESOLVED
+  REOPENED
+}
+
+// Story 4.2 — audit event types. `__invalid_transition_attempt` is
+// the only synthetic type; the rest mirror the RBAC `Action` verbs
+// from `packages/shared/src/rbac.ts`.
+enum IncidentEventType_ {
+  acknowledge
+  assign
+  submit_result
+  resolve
+  reopen
+  invalid_transition_attempt
+}
+
+// Story 4.2 — IncidentEvent audit row. Every successful transition
+// writes one row in the SAME `$transaction` as the `Incident.update`
+// (atomicity pinned in `incident-state-machine.spec.ts`). Every
+// failed/rejected attempt ALSO writes a row with
+// `type: "__invalid_transition_attempt"` (the `payload` carries the
+// attempted action + the actual current state).
+//
+// `actorUserId` is FK to `User.id`; NULL is allowed ONLY when an
+// Actor is system-driven (e.g., the auto-create path from Story 3.6
+// has no human actor). Production routes should always set a real
+// actor; the NULL is a forward-compatible escape hatch for tests
+// and for cron-driven transitions Epic 6 owns.
+//
+// `@@index([incidentId, createdAt])` is the per-incident timeline
+// query path; the detail page (Story 4.4, deferred) consumes it
+// 1:1 with `ORDER BY createdAt ASC`.
+model IncidentEvent {
+  id          String             @id @default(uuid())
+  incidentId  String
+  actorUserId String?
+  type        IncidentEventType_
+  payload     Json
+  createdAt   DateTime           @default(now())
+
+  incident Incident @relation("IncidentEvents", fields: [incidentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  actor    User?    @relation("IncidentEventActor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([incidentId, createdAt])
+}
+
+// Story 4.9 — Notification table.
+//
+// Every `notification:critical` / `notification:warning` event
+// emitted by the engine lands here. The read view (`/admin/notifications`)
+// is Epic 5 Story 5.1; the bell dropdown is Story 4.10 (deferred).
+//
+// `idempotency`: the partial unique index on `(incidentId, severity) WHERE
+// "acknowledgedAt" IS NULL` enforces at-most-one-active-banner per
+// (incident, severity) key. Two concurrent `writeNotification` calls
+// collapse to a single Notification row (P2002 caught + refetch —
+// see `notificationWriter.ts` AC5).
+//
+// `alertId` is nullable because not every notification is incident-
+// backed (Epic 6 will introduce `notification:rate_limit` warnings
+// from the ingest path that carry no incident; the schema allows
+// that without a follow-up migration).
+model Notification {
+  id                   String                     @id @default(uuid())
+  severity             NotificationSeverity_
+  incidentId           String?
+  alertId              String?
+  recipientRole        NotificationRecipientRole_
+  createdAt            DateTime                   @default(now())
+  acknowledgedAt       DateTime?
+  acknowledgedByUserId String?
+
+  incident       Incident? @relation("IncidentNotifications", fields: [incidentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // Alert.id is added by the same migration that adds Notification
+  // (4.2 + 4.9 ship together); FK targets `Alert.id`. ON DELETE
+  // SET NULL because an alert can be hard-deleted without losing
+  // its notification history.
+  alert          Alert?    @relation("AlertNotifications", fields: [alertId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  acknowledgedBy User?     @relation("NotificationAcknowledger", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([recipientRole, createdAt])
+}
+
+// Story 4.9 — notification severity enum. Same triple as the wire
+// contract (`info | warning | critical`); 4.9 only emits warning +
+// critical (info reserved for Epic 6 cron warnings).
+enum NotificationSeverity_ {
+  info
+  warning
+  critical
+}
+
+// Story 4.9 — recipient role enum. Duplicated from `RoleSchema`
+// in `packages/shared/src/rbac.ts` because Prisma enums must be
+// declared in the schema file; the source-walk pin in
+// `packages/db/__tests__/notification-schema.spec.ts` (added in
+// 4.9) catches drift between the two surfaces.
+enum NotificationRecipientRole_ {
+  Admin
+  Operator
+  Technician
+  Viewer
+}
+
+// Story 4.13 — Attachment table. The WRITE endpoint ships in 4.13
+// (deferred). The TABLE lands in this migration so we don't pay a
+// second forward migration when 4.13 lands.
+//
+// `url` is a free-form `String`; v1 has no binary storage. The
+// application validates the URL scheme (`http`/`https` only,
+// no `javascript:`/`data:`) at the wire boundary — see deferred
+// Story 4.13 spec.
+model Attachment {
+  id               String   @id @default(uuid())
+  incidentId       String
+  url              String
+  label            String?
+  mime             String?
+  uploadedByUserId String?
+  createdAt        DateTime @default(now())
+
+  incident   Incident @relation("IncidentAttachments", fields: [incidentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  uploadedBy User?    @relation("AttachmentUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([incidentId, createdAt])
+}
+
+// Story 4.2 — User table.
+//
+// `id` is the JWT `sub` (UUIDv4 — the same value carried in the
+// login token). `role` is a closed Prisma enum matching the wire
+// contract (`Admin | Operator | Technician | Viewer`). The seed
+// script (`seedUsers.ts`) upserts the demo-user set on every
+// `pnpm db:seed`; the api also lazy-upserts on first JWT sight
+// (defense-in-depth — see `resolveActorUserId` in
+// `packages/api/src/index.ts`).
+//
+// `displayName` is the human-readable label used in the
+// Notification dropdown (4.10) and the assignment modal (4.6).
+model User {
+  id          String    @id
+  role        UserRole_
+  displayName String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  assignedIncidents     Incident[]      @relation("IncidentAssignee")
+  incidentEvents        IncidentEvent[] @relation("IncidentEventActor")
+  acknowledgedNotifs    Notification[]  @relation("NotificationAcknowledger")
+  uploadedAttachments   Attachment[]    @relation("AttachmentUploader")
+  alertAcknowledgements Alert[]         @relation("AlertAcknowledger")
+}
+
+// Story 4.2 — UserRole enum. Mirrors `RoleSchema` in
+// `packages/shared/src/rbac.ts` 1:1; drift is caught at the
+// boundary by the existing RBAC matrix lint rules.
+enum UserRole_ {
+  Admin
+  Operator
+  Technician
+  Viewer
 }
 
 // Story 3.1 — Rule enums (BRD §8.3.1, architecture §4.1).
@@ -198,33 +398,33 @@ enum RuleRuleType {
 // is the per-version disambiguator that lets Story 3.7 insert a new
 // `isActive: true` row alongside an `isActive: false` previous version.
 model Rule {
-  id                  String       @id @default(uuid())
-  deviceId            String?
-  metric              RuleMetric
-  operator            RuleOperator
-  threshold           Float
-  severity            RuleSeverity
-  ruleType            RuleRuleType
-  minDurationSeconds  Int
-  hysteresisSeconds   Int
-  version             Int          @default(1)
-  createdBy           String?
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-  isActive            Boolean      @default(true)
+  id                 String       @id @default(uuid())
+  deviceId           String?
+  metric             RuleMetric
+  operator           RuleOperator
+  threshold          Float
+  severity           RuleSeverity
+  ruleType           RuleRuleType
+  minDurationSeconds Int
+  hysteresisSeconds  Int
+  version            Int          @default(1)
+  createdBy          String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  isActive           Boolean      @default(true)
 
   // F-P8 (mirrors Reading/Incident FK contract): enforce the
   // device_id authority at the DB layer. A rule with a bogus
   // deviceId is rejected with a FK violation; ON DELETE CASCADE
   // keeps a removed Device from leaving orphan Rule rows behind.
-  device              Device?      @relation("DeviceRules", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  device Device? @relation("DeviceRules", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   // Story 3.4 — Alert rows reference the Rule that fired them.
   // ON DELETE CASCADE collapses the Device → Rule → Alert chain
   // on a device remove (a Rule independent of the Device that
   // fires against it does not cascade-delete; if the Rule itself
   // is removed, Alerts referencing it cascade).
-  alerts              Alert[]      @relation("RuleAlerts")
+  alerts Alert[] @relation("RuleAlerts")
 
   @@unique([deviceId, metric, operator, threshold, version])
 }
@@ -248,14 +448,14 @@ model Rule {
 // key) lives in the migration SQL — Prisma `@@unique` does not support
 // SQL WHERE predicates.
 model Alert {
-  id                     String       @id @default(uuid())
-  deviceId               String
-  ruleId                 String
-  severity               RuleSeverity
-  metric                 RuleMetric
-  openedAt               DateTime     @default(now())
-  clearedAt              DateTime?
-  acknowledgedAt         DateTime?
+  id                   String       @id @default(uuid())
+  deviceId             String
+  ruleId               String
+  severity             RuleSeverity
+  metric               RuleMetric
+  openedAt             DateTime     @default(now())
+  clearedAt            DateTime?
+  acknowledgedAt       DateTime?
   // Story 3.5 — operator who clicked the "Acknowledge" button. Plain
   // column, NOT a foreign key: the `User` table lands in Epic 5 and the
   // FK constraint is added in that migration. The column is nullable
@@ -263,10 +463,20 @@ model Alert {
   // acknowledge, both `acknowledgedAt` and `acknowledgedByUserId` are
   // set via a single compare-and-set `updateMany` (see
   // `packages/api/src/alerts/acknowledgeRouter.ts`).
-  acknowledgedByUserId   String?
+  acknowledgedByUserId String?
 
-  device          Device       @relation("DeviceAlerts", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  rule            Rule         @relation("RuleAlerts", fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  device         Device         @relation("DeviceAlerts", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  rule           Rule           @relation("RuleAlerts", fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  // Story 4.2 — back-fill the `acknowledgedByUserId` FK relation on
+  // the User model (`AlertAcknowledger`). The Alert column itself
+  // has been `String?` since Story 3.5; this relation makes the
+  // FK constraint live.
+  acknowledgedBy User?          @relation("AlertAcknowledger", fields: [acknowledgedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // Story 4.9 — notifications can attach to an Alert directly
+  // (warning notifications from auto-create). ON DELETE SET NULL
+  // because removing an alert must NOT cascade-delete its
+  // notification history.
+  notifications  Notification[] @relation("AlertNotifications")
 
   @@index([deviceId, metric, severity])
   @@index([deviceId, metric, severity, clearedAt])
@@ -284,14 +494,14 @@ model Alert {
 // `deviceId` FK CASCADE drops state rows on a removed Device (no ghost
 // timers on re-add).
 model RuleDebounceState {
-  id                 String       @id @default(uuid())
-  deviceId           String
-  metric             RuleMetric
-  severity           RuleSeverity
-  inViolationSince   DateTime?
-  clearedSince       DateTime?
+  id               String       @id @default(uuid())
+  deviceId         String
+  metric           RuleMetric
+  severity         RuleSeverity
+  inViolationSince DateTime?
+  clearedSince     DateTime?
 
-  device             Device       @relation("DeviceRuleDebounceStates", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  device Device @relation("DeviceRuleDebounceStates", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([deviceId, metric, severity])
 }

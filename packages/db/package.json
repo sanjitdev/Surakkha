@@ -11,6 +11,7 @@
     "migrate": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "seed": "tsx prisma/seed.ts",
+    "seed:users": "tsx prisma/seedUsers.ts",
     "generate": "prisma generate",
     "studio": "prisma studio",
     "test": "vitest run",
