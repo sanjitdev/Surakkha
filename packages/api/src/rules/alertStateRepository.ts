@@ -24,7 +24,17 @@ export interface AlertStateRepository {
         readonly deviceId: string;
         readonly OR: ReadonlyArray<{
           readonly metric: RuleMetric;
-          readonly severity: { in: ReadonlyArray<"info" | "warning" | "critical"> };
+          // Patch (spec-3-4 review 2026-08-27, P-L2-6 / BH-11): the
+          // narrow seam accepted only the `{ in: [...] }` form
+          // even though every caller passes a single severity.
+          // Accept the direct-equality form too so Prisma doesn't
+          // have to build a one-element IN clause, and so the
+          // call-site reads naturally.
+          readonly severity:
+            | "info"
+            | "warning"
+            | "critical"
+            | { in: ReadonlyArray<"info" | "warning" | "critical"> };
         }>;
       };
     }): Promise<

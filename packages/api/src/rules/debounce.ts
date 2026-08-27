@@ -113,7 +113,17 @@ export interface DebounceArgs {
  * separated so the lookup is unambiguous and matches the partial
  * unique index column order.
  */
-const slotKey = (metric: RuleMetric, severity: RuleSeverity): string => `${metric}|${severity}`;
+const slotKey = (metric: RuleMetric, severity: RuleSeverity): string =>
+  // Patch (spec-3-4 review 2026-08-27, P-L2-13 / ECH-06): NUL
+  // delimiter instead of `|`. NUL is illegal in every metric +
+  // severity literal (`RuleMetric` is a closed enum, `RuleSeverity`
+  // is one of three literals), so the slot key is unambiguous. The
+  // previous `|` worked because the closed enums can't contain it,
+  // but the seam is consumed by callers who do `key.split("|")` —
+  // a future addition to the enum that contains `|` would silently
+  // split a key. NUL is the canonical "never appears in user data"
+  // delimiter.
+  `${metric}\u0000${severity}`;
 
 /**
  * Returns true when the field is a valid finite, non-negative
@@ -122,7 +132,15 @@ const slotKey = (metric: RuleMetric, severity: RuleSeverity): string => `${metri
  * the rule's de-bounce config is unusable; skip the slot.
  */
 const isValidDuration = (v: unknown): v is number =>
-  typeof v === "number" && Number.isFinite(v) && v >= 0;
+  // Patch (spec-3-4 review 2026-08-27, P-L2-7 / BH-14 / ECH-08):
+  // require integer seconds. The schema column is `Int`, but a
+  // fractional value like `0.5` passes `Number.isFinite(v) && v >= 0`
+  // and Prisma will silently floor it on write — meaning the
+  // upstream `0.5` reads back as `0`, which then trips the boot
+  // guard on the next reload. Reject fractional values here so
+  // the rule is dropped (and a warn emitted) instead of being
+  // silently floored.
+  typeof v === "number" && Number.isFinite(v) && v >= 0 && Number.isInteger(v);
 
 /**
  * Convert seconds to milliseconds for arithmetic against `frameTs`.
@@ -194,7 +212,19 @@ const logClockSkew = (deviceId: string, frameTs: Date, lastSeenFrameTs: Date | n
  */
 const indexRulesBySlot = (rules: readonly EngineRule[]): Map<string, EngineRule> => {
   const rulesBySlot = new Map<string, EngineRule>();
-  for (const rule of rules) {
+  // Patch (spec-3-4 review 2026-08-27, P-L2-10 / ECH-03): sort the
+  // input list deterministically before the "first-wins" loop. For
+  // range rules on the same slot (e.g. two halves of a ph range)
+  // the iteration order of the upstream cache can differ across
+  // hot-reloads, which would silently flip the winner. Sorting by
+  // `(threshold, rule.id)` pins the winner to the rule with the
+  // lowest threshold first, falling back to lexicographic id — so
+  // the choice is stable across process restarts.
+  const sortedRules = [...rules].sort((a, b) => {
+    if (a.threshold !== b.threshold) return a.threshold - b.threshold;
+    return a.id.localeCompare(b.id);
+  });
+  for (const rule of sortedRules) {
     if (!isValidDuration(rule.minDurationSeconds) || !isValidDuration(rule.hysteresisSeconds)) {
       console.warn(
         `[debounce] skipped poison ruleId=${rule.id} minDurationSeconds=${rule.minDurationSeconds} hysteresisSeconds=${rule.hysteresisSeconds}`,

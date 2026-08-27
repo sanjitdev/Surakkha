@@ -141,17 +141,26 @@ const buildRig = (
   // across the frames via this map.
   const debounceState: DebounceStateMap = new Map();
   for (const r of initialDebounceState) {
-    debounceState.set(`${r.metric}|${r.severity}`, { ...r });
+    // P-L2-13 / ECH-06: slotKey delimiter is now NUL (`\u0000`), not
+    // pipe. The test fixture must use the same delimiter so
+    // `ruleDebounceStateFindMany`'s `key.split` returns the
+    // matching pair. The wire shape between `debounce.ts` and the
+    // IO layer is `metric\u0000severity`; tests mirror that.
+    debounceState.set(`${r.metric}\u0000${r.severity}`, { ...r });
   }
   const ruleDebounceStateFindMany = vi.fn(
     async (args: Parameters<AlertStateRepository["ruleDebounceState"]["findMany"]>[0]) => {
-      // Filter by `where.OR` clauses (the OR is an array of
-      // `{metric, severity: {in: [...]}}` predicates).
+      // Filter by `where.OR` clauses. Post P-L2-6 / BH-11 each
+      // predicate accepts either a direct equality
+      // (`severity: "warning"`) or the historical `{ in: [...] }`
+      // form. The mock normalizes both to a Set for matching.
       const predicates = args.where.OR;
       const matches: DebounceSlotRow[] = [];
       for (const [key, row] of debounceState.entries()) {
         for (const p of predicates) {
-          if (p.metric === row.metric && p.severity.in.includes(row.severity)) {
+          const sevSet =
+            typeof p.severity === "string" ? new Set([p.severity]) : new Set(p.severity.in);
+          if (p.metric === row.metric && sevSet.has(row.severity)) {
             matches.push({ ...row });
             break;
           }
@@ -163,7 +172,8 @@ const buildRig = (
   );
   const ruleDebounceStateUpsert = vi.fn(
     async (args: Parameters<AlertStateRepository["ruleDebounceState"]["upsert"]>[0]) => {
-      const key = `${args.where.deviceId_metric_severity.metric}|${args.where.deviceId_metric_severity.severity}`;
+      // P-L2-13 / ECH-06: NUL delimiter (matches `debounce.ts`).
+      const key = `${args.where.deviceId_metric_severity.metric}\u0000${args.where.deviceId_metric_severity.severity}`;
       const existing = debounceState.get(key);
       const next: DebounceSlotRow = {
         metric: args.where.deviceId_metric_severity.metric,
@@ -976,29 +986,49 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
     // are inviting the system to write Alert rows + emit on every
     // frame — that's the write-amplification scenario the guard
     // exists to prevent.
-    const rig = buildRig();
-    const cache = buildCache([
-      withMinDuration({
-        id: "33333333-3333-4333-8333-333333333333",
-        deviceId: null,
-        metric: "tds_ppm",
-        operator: "gte",
-        threshold: 300,
-        severity: "warning",
-        ruleType: "instant",
-        minDurationSeconds: 0,
-        hysteresisSeconds: 0, // BOTH zero → boot guard fires
-      }),
-    ]);
-    expect(() =>
-      installRuleEngineHooks({
-        cache,
-        prisma: rig.prisma,
-        readingRepository: rig.readingRepository,
-        alertReader: rig.alertReader,
-        alertState: rig.alertState,
-      }),
-    ).toThrow(WriteAmplificationError);
+    //
+    // Spec mandates a `console.warn` line with the literal prefix
+    // `[debounce] write-amplification guard:` BEFORE the throw so
+    // operators see which ruleId tripped the guard in the boot log.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const rig = buildRig();
+      const cache = buildCache([
+        withMinDuration({
+          id: "33333333-3333-4333-8333-333333333333",
+          deviceId: null,
+          metric: "tds_ppm",
+          operator: "gte",
+          threshold: 300,
+          severity: "warning",
+          ruleType: "instant",
+          minDurationSeconds: 0,
+          hysteresisSeconds: 0, // BOTH zero → boot guard fires
+        }),
+      ]);
+      expect(() =>
+        installRuleEngineHooks({
+          cache,
+          prisma: rig.prisma,
+          readingRepository: rig.readingRepository,
+          alertReader: rig.alertReader,
+          alertState: rig.alertState,
+        }),
+      ).toThrow(WriteAmplificationError);
+
+      // Pre-throw warn pin: must fire AT LEAST ONCE with the
+      // spec-mandated prefix and the offending ruleId in the body.
+      // Pinned against `hooks.ts:379-381`.
+      const warnCalls = warnSpy.mock.calls.filter(
+        (args) =>
+          typeof args[0] === "string" &&
+          args[0].startsWith("[debounce] write-amplification guard:"),
+      );
+      expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+      expect(warnCalls[0]?.[0]).toContain("33333333-3333-4333-8333-333333333333");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("(vi) BOOT_GUARD_ALLOWS: rules with min>=1 OR hysteresis>=1 install normally", async () => {
@@ -1041,6 +1071,89 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
         alertState: rig.alertState,
       }),
     ).not.toThrow();
+  });
+
+  it("(vi-bis) BOOT_GUARD_COLLECTS_ALL_OFFENDERS: multiple bad rules → error enumerates every ruleId", async () => {
+    // BH-05: fail-fast was changed to collect-all. Operators who
+    // ship a config with N misconfigured rules see N warn lines AND
+    // a single thrown error carrying all N ruleIds, not just the
+    // first one. The error message includes the count so the boot
+    // log is unambiguous about how many rules tripped the guard.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const rig = buildRig();
+      const cache = buildCache([
+        withMinDuration({
+          id: "66666666-6666-4666-8666-666666666666",
+          deviceId: null,
+          metric: "tds_ppm",
+          operator: "gte",
+          threshold: 300,
+          severity: "warning",
+          ruleType: "instant",
+          minDurationSeconds: 0,
+          hysteresisSeconds: 0,
+        }),
+        withMinDuration({
+          id: "77777777-7777-4777-8777-777777777777",
+          deviceId: null,
+          metric: "ph",
+          operator: "lt",
+          threshold: 6.5,
+          severity: "critical",
+          ruleType: "instant",
+          minDurationSeconds: 0,
+          hysteresisSeconds: 0,
+        }),
+        withMinDuration({
+          id: "88888888-8888-4888-8888-888888888888",
+          deviceId: null,
+          metric: "do_mgL",
+          operator: "gte",
+          threshold: 8.0,
+          severity: "warning",
+          ruleType: "instant",
+          minDurationSeconds: 0,
+          hysteresisSeconds: 0,
+        }),
+      ]);
+      let thrown: unknown = null;
+      try {
+        installRuleEngineHooks({
+          cache,
+          prisma: rig.prisma,
+          readingRepository: rig.readingRepository,
+          alertReader: rig.alertReader,
+          alertState: rig.alertState,
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(WriteAmplificationError);
+      const err = thrown as WriteAmplificationError;
+      expect(err.ruleIds).toHaveLength(3);
+      expect(err.ruleIds).toEqual(
+        expect.arrayContaining([
+          "66666666-6666-4666-8666-666666666666",
+          "77777777-7777-4777-8777-777777777777",
+          "88888888-8888-4888-8888-888888888888",
+        ]),
+      );
+      // 3 warn lines, one per offender.
+      const warnCalls = warnSpy.mock.calls.filter(
+        (args) =>
+          typeof args[0] === "string" &&
+          args[0].startsWith("[debounce] write-amplification guard:"),
+      );
+      expect(warnCalls.length).toBe(3);
+      // Error message mentions count + aggregated ruleIds.
+      expect(err.message).toContain("3 offender(s)");
+      expect(err.message).toContain("66666666-6666-4666-8666-666666666666");
+      expect(err.message).toContain("77777777-7777-4777-8777-777777777777");
+      expect(err.message).toContain("88888888-8888-4888-8888-888888888888");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("(vii) P2002_RACE_CATCH: alert.create throws P2002 → no throw, no emit, dup-suppress log", async () => {

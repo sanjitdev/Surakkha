@@ -77,7 +77,7 @@ describe("Story 3.4 — debounceBreaches — RISING_EDGE", () => {
     const inViolationSince = T0;
     const frameTs = new Date(T0.getTime() + 30_000);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince, clearedSince: null },
+      "tds_ppm\u0000warning": { inViolationSince, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [baseBreach({ observedAt: frameTs })],
@@ -107,7 +107,7 @@ describe("Story 3.4 — debounceBreaches — RISING_EDGE", () => {
     const inViolationSince = T0;
     const frameTs = new Date(T0.getTime() + 5_000);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince, clearedSince: null },
+      "tds_ppm\u0000warning": { inViolationSince, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [], // no breach on drop frame
@@ -118,7 +118,7 @@ describe("Story 3.4 — debounceBreaches — RISING_EDGE", () => {
       lastSeenFrameTs: null,
     });
     expect(result.transitions).toHaveLength(0); // no open, no clear yet (hysteresis=60s)
-    const next = result.nextState["tds_ppm|warning"];
+    const next = result.nextState["tds_ppm\u0000warning"];
     expect(next).toBeDefined();
     expect(next?.inViolationSince?.getTime()).toBe(inViolationSince.getTime()); // PAUSED
     expect(next?.clearedSince?.getTime()).toBe(frameTs.getTime()); // ADVANCED
@@ -128,7 +128,7 @@ describe("Story 3.4 — debounceBreaches — RISING_EDGE", () => {
     const inViolationSince = T0;
     const frameTs = new Date(T0.getTime() + 29_999); // 1ms short
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince, clearedSince: null },
+      "tds_ppm\u0000warning": { inViolationSince, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [baseBreach({ observedAt: frameTs })],
@@ -165,7 +165,7 @@ describe("Story 3.4 — debounceBreaches — FALLING_EDGE", () => {
     // inViolationSince = T0 (paused per AC1), clearedSince = T0 (rising cleared).
     const frameTs = new Date(T0.getTime() + 60_000);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince: T0, clearedSince: T0 },
+      "tds_ppm\u0000warning": { inViolationSince: T0, clearedSince: T0 },
     };
     const result = debounceBreaches({
       rawBreaches: [],
@@ -186,7 +186,7 @@ describe("Story 3.4 — debounceBreaches — FALLING_EDGE", () => {
   it("does NOT emit clear at < hysteresisSeconds * 1000 ms elapsed", () => {
     const frameTs = new Date(T0.getTime() + 59_999);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince: T0, clearedSince: T0 },
+      "tds_ppm\u0000warning": { inViolationSince: T0, clearedSince: T0 },
     };
     const result = debounceBreaches({
       rawBreaches: [],
@@ -226,7 +226,7 @@ describe("Story 3.4 — debounceBreaches — RANGE_RULE_SHARED_TIMER", () => {
     const inViolationSince = T0;
     const frameTs = new Date(T0.getTime() + 30_000);
     const state: DebounceState = {
-      "ph|critical": { inViolationSince, clearedSince: null },
+      "ph\u0000critical": { inViolationSince, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [baseBreach({ metric: "ph", severity: "critical", ruleId: "rule-ph-high" })],
@@ -258,8 +258,8 @@ describe("Story 3.4 — debounceBreaches — TWO_SEVERITIES_SAME_FRAME", () => {
     const inViolationSince = T0;
     const frameTs = new Date(T0.getTime() + 30_000);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince, clearedSince: null },
-      "tds_ppm|critical": { inViolationSince, clearedSince: null },
+      "tds_ppm\u0000warning": { inViolationSince, clearedSince: null },
+      "tds_ppm\u0000critical": { inViolationSince, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [
@@ -294,7 +294,7 @@ describe("Story 3.4 — debounceBreaches — REOPEN_AFTER_CLEAR", () => {
     const r1 = debounceBreaches({
       rawBreaches: [baseBreach({ observedAt: breachStart })],
       currentState: {
-        "tds_ppm|warning": { inViolationSince: null, clearedSince },
+        "tds_ppm\u0000warning": { inViolationSince: null, clearedSince },
       },
       rules: [baseRule({ minDurationSeconds: 30 })],
       frameTs: breachStart,
@@ -302,7 +302,7 @@ describe("Story 3.4 — debounceBreaches — REOPEN_AFTER_CLEAR", () => {
       lastSeenFrameTs: null,
     });
     expect(r1.transitions).toHaveLength(0);
-    const afterFrame1 = r1.nextState["tds_ppm|warning"];
+    const afterFrame1 = r1.nextState["tds_ppm\u0000warning"];
     expect(afterFrame1?.clearedSince).toBeNull(); // rising wins
     expect(afterFrame1?.inViolationSince?.getTime()).toBe(breachStart.getTime());
 
@@ -353,7 +353,7 @@ describe("Story 3.4 — debounceBreaches — POISON_VALUES", () => {
     for (const p of poisons) {
       const rule = baseRule(p);
       const state: DebounceState = {
-        "tds_ppm|warning": { inViolationSince: T0, clearedSince: T0 },
+        "tds_ppm\u0000warning": { inViolationSince: T0, clearedSince: T0 },
       };
       const frameTs = new Date(T0.getTime() + 60_000);
       const result = debounceBreaches({
@@ -378,7 +378,7 @@ describe("Story 3.4 — debounceBreaches — CLOCK_SKEW", () => {
     const prevInViolation = new Date(T0.getTime() + 10_000);
     const prevCleared = new Date(T0.getTime() + 20_000);
     const state: DebounceState = {
-      "tds_ppm|warning": {
+      "tds_ppm\u0000warning": {
         inViolationSince: prevInViolation,
         clearedSince: prevCleared,
       },
@@ -392,7 +392,7 @@ describe("Story 3.4 — debounceBreaches — CLOCK_SKEW", () => {
       deviceId: DEVICE_ID,
       lastSeenFrameTs: new Date(T0.getTime() + 30_000),
     });
-    const next = result.nextState["tds_ppm|warning"];
+    const next = result.nextState["tds_ppm\u0000warning"];
     expect(next?.inViolationSince?.getTime()).toBe(frameTs.getTime());
     expect(next?.clearedSince?.getTime()).toBe(frameTs.getTime());
     expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("[debounce] clock skew"));
@@ -427,7 +427,7 @@ describe("Story 3.4 — debounceBreaches — STALE_STATE_NO_RULE", () => {
     // slot (rule was deactivated in 3.7). Per spec, the state row
     // stays untouched.
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince: T0, clearedSince: null },
+      "tds_ppm\u0000warning": { inViolationSince: T0, clearedSince: null },
     };
     const result = debounceBreaches({
       rawBreaches: [baseBreach()],
@@ -438,7 +438,7 @@ describe("Story 3.4 — debounceBreaches — STALE_STATE_NO_RULE", () => {
       lastSeenFrameTs: null,
     });
     expect(result.transitions).toHaveLength(0);
-    const next = result.nextState["tds_ppm|warning"];
+    const next = result.nextState["tds_ppm\u0000warning"];
     expect(next?.inViolationSince?.getTime()).toBe(T0.getTime()); // unchanged
   });
 });
@@ -483,7 +483,7 @@ describe("Story 3.4 — BreachTransition shape", () => {
   it("clear carries clearedAt", () => {
     const frameTs = new Date(T0.getTime() + 60_000);
     const state: DebounceState = {
-      "tds_ppm|warning": { inViolationSince: T0, clearedSince: T0 },
+      "tds_ppm\u0000warning": { inViolationSince: T0, clearedSince: T0 },
     };
     const result = debounceBreaches({
       rawBreaches: [],

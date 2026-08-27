@@ -99,17 +99,23 @@ const EX_CONFIG = 78;
 
 /**
  * Boot-guard error. Thrown by `installRuleEngineHooks` when the
- * active Rule cache contains a rule with BOTH
+ * active Rule cache contains ONE OR MORE rules with BOTH
  * `minDurationSeconds === 0` AND `hysteresisSeconds === 0`. The api
  * boot path catches this error type and exits 78 (EX_CONFIG); any
  * other error falls back to `NOOP_HOOKS` (transient DB outages
  * degrade gracefully; configuration errors do not).
+ *
+ * `ruleIds` enumerates EVERY offending rule collected during the
+ * boot scan, not just the first. Operators with many bad configs
+ * see all of them in one boot failure rather than fixing one at a
+ * time. Kept as an array (not a single `ruleId`) so the error is a
+ * pure superset of the prior fail-fast behaviour.
  */
 export class WriteAmplificationError extends Error {
   override readonly name = "WriteAmplificationError";
-  constructor(public readonly ruleId: string) {
+  constructor(public readonly ruleIds: readonly string[]) {
     super(
-      `[debounce] write-amplification guard: ruleId=${ruleId} has min=0 AND hysteresis=0; refusing to install hooks`,
+      `[debounce] write-amplification guard: ${ruleIds.length} offender(s) with min=0 AND hysteresis=0: ruleIds=[${ruleIds.join(", ")}]; refusing to install hooks`,
     );
   }
 }
@@ -239,7 +245,11 @@ const buildDebounceState = (
 ): DebounceState => {
   const state: Record<string, { inViolationSince: Date | null; clearedSince: Date | null }> = {};
   for (const r of rows) {
-    state[`${r.metric}|${r.severity}`] = {
+    // P-L2-13 / ECH-06: NUL delimiter matches the pure module's
+    // `slotKey`. The state map's keys must use the same delimiter
+    // the pure module uses for `nextState`/`rulesBySlot` so a
+    // lookup `currentState[key]` finds the row.
+    state[`${r.metric}\u0000${r.severity}`] = {
       inViolationSince: r.inViolationSince,
       clearedSince: r.clearedSince,
     };
@@ -317,10 +327,10 @@ const runDebounce = async (args: {
     { metric: RuleMetric; severity: "info" | "warning" | "critical" }
   >();
   for (const r of rules as readonly EngineRule[]) {
-    slotSpecs.set(`${r.metric}|${r.severity}`, { metric: r.metric, severity: r.severity });
+    slotSpecs.set(`${r.metric}\u0000${r.severity}`, { metric: r.metric, severity: r.severity });
   }
   for (const b of rawBreaches) {
-    slotSpecs.set(`${b.metric}|${b.severity}`, { metric: b.metric, severity: b.severity });
+    slotSpecs.set(`${b.metric}\u0000${b.severity}`, { metric: b.metric, severity: b.severity });
   }
   const stateRows =
     slotSpecs.size > 0
@@ -329,7 +339,7 @@ const runDebounce = async (args: {
             deviceId: input.deviceId,
             OR: [...slotSpecs.values()].map((s) => ({
               metric: s.metric,
-              severity: { in: [s.severity] },
+              severity: s.severity,
             })),
           },
         })
@@ -361,32 +371,50 @@ const runDebounce = async (args: {
  *
  * Story 3.4 boot guard: scans the active Rule cache for any rule
  * with BOTH `minDurationSeconds === 0` AND `hysteresisSeconds === 0`.
- * If found, throws `WriteAmplificationError(ruleId)` so the api boot
- * path exits 78 (EX_CONFIG). The error type is recognized at the
- * catch site in `initializeRuleEngine` so the existing NOOP_HOOKS
+ * If found, throws `WriteAmplificationError(ruleIds)` enumerating
+ * EVERY offending rule (not just the first) so the api boot path
+ * exits 78 (EX_CONFIG). The error type is recognized at the catch
+ * site in `initializeRuleEngine` so the existing NOOP_HOOKS
  * fallback does NOT swallow it.
  */
 export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): IngestHooks => {
   // Boot guard — Story 3.4 AC12. Runs BEFORE the hook is installed.
-  // Iterates ALL rules in the cache (global + device-scoped). The
-  // first offending rule triggers the guard; subsequent rules are
-  // not checked (fail-fast). Emits the spec-required
-  // `console.warn('[debounce] write-amplification guard: ruleId=...')`
-  // line BEFORE throwing so operators see which rule triggered the
-  // refusal in the boot log.
+  // Iterates ALL rules in the cache (global + device-scoped) and
+  // collects EVERY offender with `min=0 AND hysteresis=0`, then
+  // throws a single error enumerating them all. Operators with many
+  // bad configs see every offending ruleId in one boot failure
+  // rather than fixing them one at a time. Emits one warn line per
+  // offender so the boot log shows each ruleId individually; the
+  // thrown error carries the aggregate list.
+  const offenders: string[] = [];
   for (const rule of deps.cache.byId.values()) {
     if (rule.minDurationSeconds === 0 && rule.hysteresisSeconds === 0) {
       console.warn(
         `[debounce] write-amplification guard: ruleId=${rule.id} has min=0 AND hysteresis=0`,
       );
-      throw new WriteAmplificationError(rule.id);
+      offenders.push(rule.id);
     }
+  }
+  if (offenders.length > 0) {
+    throw new WriteAmplificationError(offenders);
   }
 
   const broadcast: BroadcastTarget = deps.broadcast ?? noopBroadcast;
   // Process-local Map for clock-skew detection. Defensive only;
   // Postgres `inViolationSince` is authoritative (see Design Note
   // "lastSeenFrameTs restart semantics"). Override seam for tests.
+  //
+  // Patch (spec-3-4 review 2026-08-27, P-L2-15 / BH-16): in a
+  // multi-replica deployment each replica maintains its own
+  // `lastSeenFrameTs` map; replicas can disagree on whether a
+  // frame is "skewed" if their clocks drift relative to the
+  // ingest load balancer's frame ordering. The Postgres
+  // `inViolationSince` is the source of truth for de-bounce math;
+  // this map is a best-effort optimization for early skew
+  // detection (not an authoritative state). Scaling out does NOT
+  // require externalising this map — the de-bounce timer still
+  // converges correctly because the IO path (Alert row + state
+  // row) is per-row keyed.
   const lastSeenFrameTs: Map<string, Date> = deps.lastSeenFrameTs ?? new Map<string, Date>();
 
   const onRuleEvaluation = async (input: RuleEvaluationInput): Promise<readonly BreachResult[]> => {
@@ -406,49 +434,67 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
       rules,
       lastSeenFrameTs,
     });
-    // Update the process-local Map AFTER the pure call so the
-    // current frame's skew detection does not see itself.
-    lastSeenFrameTs.set(input.deviceId, observedAt);
+    // Patch (spec-3-4 review 2026-08-27, P-L2-5 / BH-10): update the
+    // process-local Map AT THE END of the IO path, not before, so a
+    // failed `applyTransition` / `persistStateSlot` does NOT skew
+    // the next frame's clock-skew detection. The previous code
+    // updated the Map before the IO; if IO threw, the next frame
+    // would compute `lastTs = observedAt` and miss the failed
+    // frame, silently dropping its breach from the de-bounce
+    // window. The try/finally keeps the original ordering invariant
+    // (the pure call must not see the current frame's ts) while
+    // ensuring IO failure does not leak into the next frame.
+    let ioSucceeded = false;
+    try {
+      // IO side effects — transitions are NOT returned; the hook's
+      // return type stays `Promise<readonly BreachResult[]>`. Each
+      // transition triggers an Alert row write + state upsert
+      // wrapped in a single `$transaction` (per spec line 84). The
+      // socket emit (open only) happens AFTER the transaction
+      // commits (per Design Note "Socket emit happens post-commit").
+      //
+      // For slots that have a transition, the state upsert lives
+      // inside the transaction — atomicity per the spec. For slots
+      // WITHOUT a transition but whose state changed (e.g. timer
+      // reset on a brief non-breach), the state upsert runs outside
+      // the transaction (best-effort; the next frame re-derives).
+      const transitionSlots = new Set<string>();
+      for (const transition of transitions) {
+        const key = `${transition.metric}\u0000${transition.severity}`;
+        const slot = nextState[key];
+        if (slot === undefined) continue; // pure module should always provide it
+        transitionSlots.add(key);
+        await applyTransition(deps, {
+          broadcast,
+          ctx: { deviceId: input.deviceId, metricValue },
+          transition,
+          slot,
+        });
+      }
 
-    // IO side effects — transitions are NOT returned; the hook's
-    // return type stays `Promise<readonly BreachResult[]>`. Each
-    // transition triggers an Alert row write + state upsert
-    // wrapped in a single `$transaction` (per spec line 84). The
-    // socket emit (open only) happens AFTER the transaction
-    // commits (per Design Note "Socket emit happens post-commit").
-    //
-    // For slots that have a transition, the state upsert lives
-    // inside the transaction — atomicity per the spec. For slots
-    // WITHOUT a transition but whose state changed (e.g. timer
-    // reset on a brief non-breach), the state upsert runs outside
-    // the transaction (best-effort; the next frame re-derives).
-    const transitionSlots = new Set<string>();
-    for (const transition of transitions) {
-      const key = `${transition.metric}|${transition.severity}`;
-      const slot = nextState[key];
-      if (slot === undefined) continue; // pure module should always provide it
-      transitionSlots.add(key);
-      await applyTransition(deps, {
-        broadcast,
-        ctx: { deviceId: input.deviceId, metricValue },
-        transition,
-        slot,
-      });
-    }
-
-    // Persist the updated state for the slots that did NOT
-    // transition. Best-effort: a transient DB outage on the state
-    // row write logs but does not fail the eval path (the next
-    // frame re-derives from `rawBreaches` + the prior on-disk
-    // state).
-    for (const [key, slot] of Object.entries(nextState)) {
-      if (transitionSlots.has(key)) continue; // already upserted inside the transaction
-      const [m, s] = key.split("|") as [RuleMetric, "info" | "warning" | "critical"];
-      await persistStateSlot(deps, {
-        deviceId: input.deviceId,
-        slotKey: { metric: m, severity: s },
-        slot,
-      });
+      // Persist the updated state for the slots that did NOT
+      // transition. Best-effort: a transient DB outage on the state
+      // row write logs but does not fail the eval path (the next
+      // frame re-derives from `rawBreaches` + the prior on-disk
+      // state).
+      for (const [key, slot] of Object.entries(nextState)) {
+        if (transitionSlots.has(key)) continue; // already upserted inside the transaction
+        const [m, s] = key.split("\u0000") as [RuleMetric, "info" | "warning" | "critical"];
+        await persistStateSlot(deps, {
+          deviceId: input.deviceId,
+          slotKey: { metric: m, severity: s },
+          slot,
+        });
+      }
+      ioSucceeded = true;
+    } finally {
+      // Only update the clock-skew guard if IO completed. On IO
+      // failure we leave the prior timestamp in place so the next
+      // frame re-evaluates against the same `lastTs`, treating the
+      // failed frame as if it never ran.
+      if (ioSucceeded) {
+        lastSeenFrameTs.set(input.deviceId, observedAt);
+      }
     }
 
     // Hook return type stays `Promise<readonly BreachResult[]>` —

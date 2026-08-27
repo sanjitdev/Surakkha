@@ -249,6 +249,24 @@ export const evaluateRules = (
   rules: readonly EngineRule[],
   observation: EngineObservation,
 ): readonly BreachResult[] => {
+  // Patch (spec-3-4 review 2026-08-27, P-L2-12 / ECH-05): the
+  // engine's type signature declares `value: number` on
+  // `EngineObservation`, but the wire format is JSON so a NaN,
+  // null, or string can arrive when an upstream sensor misbehaves.
+  // The previous behaviour was to silently return
+  // EMPTY_BREACH_RESULTS because every comparison returned false
+  // (NaN compared to anything is false). Now we log a warn so
+  // operators see the poison reading in the ingest log, then
+  // short-circuit to the empty result. The signature stays
+  // `number` because the public contract is "the engine never
+  // produces a non-number"; the warn is observability for the
+  // rejection.
+  if (typeof observation.value !== "number" || !Number.isFinite(observation.value)) {
+    console.warn(
+      `[engine] non-number metric value rejected: deviceId=${observation.deviceId} metric=${observation.metric} value=${JSON.stringify(observation.value)}`,
+    );
+    return EMPTY_BREACH_RESULTS;
+  }
   const out: BreachResult[] = [];
   for (const rule of rules) {
     const candidate = evaluateRule(rule, observation);

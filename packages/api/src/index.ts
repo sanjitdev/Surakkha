@@ -785,6 +785,20 @@ const boot = async (): Promise<void> => {
 };
 
 boot().catch((cause) => {
+  // Patch (spec-3-4 review 2026-08-27, P-L2-1): exit with EX_CONFIG=78
+  // when the boot guard rejects a misconfigured rule cache. Other
+  // failures (transient DB outage, JWT misconfiguration) keep the
+  // historical `process.exit(1)` contract. Pinned by the new
+  // `boot-exit-code.spec.ts`.
+  if (cause instanceof WriteAmplificationError) {
+    logger.error(
+      { err: cause, ruleIds: cause.ruleIds },
+      "api: boot refused (write-amplification guard tripped)",
+    );
+    // eslint-disable-next-line no-restricted-properties, no-magic-numbers
+    process.exit(78);
+    return;
+  }
   logger.error({ err: cause }, "api: boot failed");
   // eslint-disable-next-line no-restricted-properties
   process.exit(1);

@@ -480,6 +480,13 @@ model Alert {
 
   @@index([deviceId, metric, severity])
   @@index([deviceId, metric, severity, clearedAt])
+  // Patch (spec-3-4 review 2026-08-27, P-L2-22 / BH-02): index
+  // on ruleId alone so Story 3.5's "list alerts grouped by rule"
+  // query and the alert-manager seam don't seq-scan as the table
+  // grows. The partial unique index `Alert_open_unique_idx`
+  // (`deviceId, metric, severity WHERE clearedAt IS NULL`)
+  // doesn't help a query that filters by `ruleId` only.
+  @@index([ruleId])
 }
 
 // RuleDebounceState — Story 3.4 (architecture §5.1, FR-14).
