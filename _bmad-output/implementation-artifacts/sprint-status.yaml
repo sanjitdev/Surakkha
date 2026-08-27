@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-24T00:30:00.000Z
+# last_updated: 2026-08-27T02:15:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -100,7 +100,7 @@ development_status:
   epic-4: in-progress
   4-1-card-action-affordance-contract: done
   4-2-incident-state-machine-implementation: done
-  4-3-kanban-column-projection: in-progress
+  4-3-kanban-column-projection: done
   4-4-incident-detail-page: backlog
   4-5-acknowledge-flow: backlog
   4-6-assign-technician-inspecting-transition: backlog
@@ -473,10 +473,10 @@ stories:
 
   - id: "4.3"
     title: "Kanban Column Projection"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
+    commit: "12f1fb4"
+    shipped: 2026-08-27
     covers: []
     ledger:
       context: null

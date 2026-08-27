@@ -2,9 +2,10 @@
 title: "Story 4.3 — Kanban Column Projection"
 type: "feature"
 created: "2026-08-27"
-status: "in-progress"
+status: "done"
 review_loop_iteration: 0
 baseline_commit: "b0c944e" # chore(spec): mark Story 3.4 done + Suggested Review Order
+shipped_commit: "12f1fb4" # feat(epic-4): Story 4.3 Kanban Column Projection
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
