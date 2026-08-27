@@ -110,8 +110,36 @@ export interface AlertStateRepository {
         readonly metric: RuleMetric;
         readonly value: number;
         readonly openedAt: Date;
+        readonly state: "OPEN";
+        readonly assigneeUserId: null;
+        readonly acknowledgedAt: null;
+        readonly resolvedAt: null;
       };
     }): Promise<{ readonly id: string }>;
+  };
+  /**
+   * Story 4.9 — `notification:warning` write site. Lives on the
+   * SAME `$transaction` as the (Alert + Incident) pair so all
+   * three rows commit as one unit. The idempotent partial-unique
+   * index is the safety net for the race; the writer's P2002 catch
+   * is the deterministic outcome.
+   */
+  readonly notification: {
+    create(args: {
+      readonly data: {
+        readonly severity: "warning" | "critical";
+        readonly incidentId: string | null;
+        readonly alertId: string | null;
+        readonly recipientRole: "Admin" | "Operator" | "Technician" | "Viewer";
+      };
+    }): Promise<{ readonly id: string }>;
+    findFirst(args: {
+      readonly where: {
+        readonly incidentId: string;
+        readonly severity: "warning" | "critical";
+        readonly acknowledgedAt: null;
+      };
+    }): Promise<{ readonly id: string } | null>;
   };
   /**
    * Story 3.4 review-finding #3 + #4: `$transaction` wrapper.
@@ -154,6 +182,14 @@ export const resolveAlertStateRepository = (prisma: unknown): AlertStateReposito
     // rest of the call uses); tests inject a stub.
     incident: {
       create: (args) => client.incident.create(args) as Promise<{ readonly id: string }>,
+    },
+    // Story 4.9 — `notification:warning` write site. Production
+    // forwards to `client.notification.create(...)`; tests inject
+    // a stub that returns a stable row id.
+    notification: {
+      create: (args) => client.notification.create(args) as Promise<{ readonly id: string }>,
+      findFirst: (args) =>
+        client.notification.findFirst(args) as Promise<{ readonly id: string } | null>,
     },
     $transaction: <T>(cb: (tx: AlertStateRepository) => Promise<T>): Promise<T> =>
       client.$transaction(cb) as Promise<T>,

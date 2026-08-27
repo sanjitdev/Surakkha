@@ -1,24 +1,26 @@
 /**
- * Seeded user store — Surakkha api (Story 1.4).
+ * Seeded user store — Surakkha api (Story 1.4 + Story 4.2).
  *
- * Four canonical demo users (one per Role) with bcrypt-hashed passwords.
- * The hashes are produced at module-load time so the api can be tested
- * without touching the database. Persistence lands when the Prisma
- * `User` model arrives (Epic 3 device seeding work is the natural
- * moment to introduce it); the surface (`findUserByEmail`, `findUserById`)
- * stays stable so the swap is mechanical.
+ * Six canonical demo users matching the Prisma `seedUsers.ts` (1 Admin
+ * + 2 Operators + 2 Technicians + 1 Viewer). The hashes are produced
+ * at module-load time so the api can be tested without touching the
+ * database. Persistence lands when the Prisma `User` model is the
+ * source of truth at runtime (see Story 4.2's lazy-upsert in
+ * `packages/api/src/index.ts`); the surface (`findUserByEmail`,
+ * `findUserById`) stays stable so the swap is mechanical.
  *
  * Demo credentials (also documented in BRD §13):
  *   admin@surakkha.test    / demo-admin
  *   operator@surakkha.test / demo-operator
+ *   operator2@surakkha.test / demo-operator2
  *   technician@surakkha.test / demo-technician
+ *   technician2@surakkha.test / demo-technician2
  *   viewer@surakkha.test   / demo-viewer
  *
  * Cost factor 12 (Story 1.4 AC: "bcrypt cost factor 12").
  */
 import { type Role } from "@surakkha/shared/rbac";
 import bcrypt from "bcrypt";
-
 
 const BCRYPT_COST = 12;
 
@@ -54,11 +56,25 @@ const SEED_SPECS: readonly SeedSpec[] = [
     password: "demo-operator",
   },
   {
+    id: "00000000-0000-4000-8000-00000000a006",
+    email: "operator2@surakkha.test",
+    displayName: "Demo Operator 2",
+    role: "Operator",
+    password: "demo-operator2",
+  },
+  {
     id: "00000000-0000-4000-8000-00000000a003",
     email: "technician@surakkha.test",
     displayName: "Demo Technician",
     role: "Technician",
     password: "demo-technician",
+  },
+  {
+    id: "00000000-0000-4000-8000-00000000a007",
+    email: "technician2@surakkha.test",
+    displayName: "Demo Technician 2",
+    role: "Technician",
+    password: "demo-technician2",
   },
   {
     id: "00000000-0000-4000-8000-00000000a004",
@@ -94,7 +110,5 @@ export const findUserByEmail = (email: string): UserRecord | null => {
 export const findUserById = (id: string): UserRecord | null =>
   USERS.find((user) => user.id === id) ?? null;
 
-export const verifyPassword = async (
-  user: UserRecord,
-  password: string,
-): Promise<boolean> => bcrypt.compare(password, user.passwordHash);
+export const verifyPassword = async (user: UserRecord, password: string): Promise<boolean> =>
+  bcrypt.compare(password, user.passwordHash);

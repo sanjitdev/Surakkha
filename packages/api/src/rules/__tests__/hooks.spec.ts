@@ -210,6 +210,17 @@ const buildRig = (
     incident: {
       create: incidentCreate as unknown as AlertStateRepository["incident"]["create"],
     },
+    // Story 4.9 — `notification:warning` write site. Lives on the
+    // same `$transaction` as the (Alert + Incident) pair. Default
+    // no-op stub so the 3.4/3.6 hook tests don't have to know
+    // about it; the dedicated `notificationWriter.spec.ts`
+    // exercises the writer in isolation.
+    notification: {
+      create: (async () => ({
+        id: "notif-test-aaaa-bbbb-cccc-dddddddddddd",
+      })) as unknown as AlertStateRepository["notification"]["create"],
+      findFirst: (async () => null) as unknown as AlertStateRepository["notification"]["findFirst"],
+    },
     // Story 3.4 review-finding #3 + #4: the `$transaction` seam.
     // Production forwards to `prisma.$transaction(cb)`; tests
     // run the callback directly. The callback receives an
@@ -649,12 +660,24 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
     await callOnRuleEvaluation(rig, cache, frame2, broadcastStub.broadcast, lastSeen);
 
     expect(rig.alertCreate).toHaveBeenCalledTimes(1);
-    expect(broadcastStub.emits).toHaveLength(1);
-    const emit = broadcastStub.emits[0]!;
-    expect(emit.room).toBe(`device:${DEVICE_ID}`);
-    expect(emit.event).toBe("alert:opened");
+    // Story 4.2 — warning-severity auto-create fires the
+    // `alert:opened` emit AND `incident:opened` on BOTH the
+    // device room AND the per-incident room (3 emits total).
+    // The detail-page (Story 4.4) listens on
+    // `incident:<uuid>` for the timeline; the dashboard preview
+    // listens on `device:<uuid>`.
+    expect(broadcastStub.emits).toHaveLength(3);
+    const alertEmit = broadcastStub.emits[0]!;
+    expect(alertEmit.room).toBe(`device:${DEVICE_ID}`);
+    expect(alertEmit.event).toBe("alert:opened");
+    const incidentEmitDevice = broadcastStub.emits[1]!;
+    expect(incidentEmitDevice.room).toBe(`device:${DEVICE_ID}`);
+    expect(incidentEmitDevice.event).toBe("incident:opened");
+    const incidentEmitRoom = broadcastStub.emits[2]!;
+    expect(incidentEmitRoom.room).toBe(`incident:22222222-2222-4222-8222-222222222222`);
+    expect(incidentEmitRoom.event).toBe("incident:opened");
     // Wire payload shape (Story 3.4 loopback I-1 + I-2).
-    const payload = emit.payload as {
+    const payload = alertEmit.payload as {
       alert_id: string;
       device_id: string;
       metric: string;
