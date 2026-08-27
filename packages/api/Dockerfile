@@ -29,7 +29,8 @@ COPY packages/db/package.json packages/db/
 COPY packages/db/tsconfig.json packages/db/
 COPY packages/db/prisma packages/db/prisma
 COPY packages/db/scripts packages/db/scripts
-RUN pnpm install --frozen-lockfile --filter @surakkha/shared... --filter @surakkha/api... --filter @surakkha/db...
+RUN pnpm install --frozen-lockfile --filter @surakkha/shared... --filter @surakkha/api... --filter @surakkha/db... --ignore-scripts && \
+    cd /repo && pnpm rebuild --filter @surakkha/api... bcrypt
 
 FROM node:20-bookworm-slim AS build
 WORKDIR /repo
@@ -91,7 +92,8 @@ COPY --from=build /repo/packages/db/package.json ./packages/db/
 COPY --from=build /repo/packages/db/prisma/schema.prisma ./packages/db/prisma/schema.prisma
 COPY --from=build /repo/packages/db/prisma/migrations ./packages/db/prisma/migrations
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate \
-    && pnpm install --frozen-lockfile --filter @surakkha/api...
+    && pnpm install --frozen-lockfile --filter @surakkha/api... --ignore-scripts && \
+    cd /app && pnpm rebuild --filter @surakkha/api... bcrypt
 # Bring the pre-generated Prisma client across. The build stage ran
 # `prisma generate` from `packages/db/` (via `pnpm -F @surakkha/db exec`)
 # — Prisma's default output is `<schema_dir>/../node_modules/.prisma/client`,
