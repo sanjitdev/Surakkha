@@ -219,10 +219,16 @@ const indexRulesBySlot = (rules: readonly EngineRule[]): Map<string, EngineRule>
   // hot-reloads, which would silently flip the winner. Sorting by
   // `(threshold, rule.id)` pins the winner to the rule with the
   // lowest threshold first, falling back to lexicographic id — so
-  // the choice is stable across process restarts.
+  // the choice is stable across process restarts. Use plain
+  // string compare (NOT `localeCompare`): ICU collation is
+  // locale-dependent and can disagree across processes with
+  // different LANG/LC_COLLATE settings, which would defeat the
+  // determinism guarantee for multi-replica deploys.
   const sortedRules = [...rules].sort((a, b) => {
     if (a.threshold !== b.threshold) return a.threshold - b.threshold;
-    return a.id.localeCompare(b.id);
+    if (a.id < b.id) return -1;
+    if (a.id > b.id) return 1;
+    return 0;
   });
   for (const rule of sortedRules) {
     if (!isValidDuration(rule.minDurationSeconds) || !isValidDuration(rule.hysteresisSeconds)) {
