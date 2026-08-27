@@ -37,6 +37,7 @@ import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
 import { KpiStat } from "./components/KpiStat";
 import { Dashboard } from "./dashboard/Dashboard";
+import { KanbanBoard } from "./incidents/KanbanBoard";
 import { queryClient } from "./queryClient";
 import { AppShell } from "./shell/AppShell";
 
@@ -210,7 +211,11 @@ createRoot(root).render(
             element={
               <CurrentRoleProvider>
                 <AppShell>
-                  <PageStub name="Incidents" />
+                  {/* Story 4.3 — the real Kanban board replaces the
+                      PageStub. The `KanbanBoard` mounts its own
+                      socket subscription (page-scoped) and TanStack
+                      Query (cache key `["incidents", "active"]`). */}
+                  <KanbanBoard />
                 </AppShell>
               </CurrentRoleProvider>
             }

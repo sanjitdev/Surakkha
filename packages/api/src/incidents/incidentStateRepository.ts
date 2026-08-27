@@ -77,6 +77,24 @@ export interface IncidentStateRepository {
   readonly incident: {
     findUnique(args: { readonly where: { readonly id: string } }): Promise<IncidentRow | null>;
     /**
+     * Story 4.3 — read path for `/api/incidents/active`. Accepts the
+     * Prisma `findMany` argument shape (`{ where, orderBy, take,
+     * select }`) so the production adapter is a thin forwarder; tests
+     * can stub any of the four inputs independently. The active
+     * endpoint always returns the full `IncidentRow` (the active
+     * `IncidentPayload` consumes every column). `select` is present
+     * on the interface signature per the spec, but is intentionally
+     * `never` — a follow-up story that narrows the projection
+     * should add a separate narrow-typed `findManyLite` rather
+     * than thread a returned-shape union through this method.
+     */
+    findMany(args: {
+      readonly where?: { readonly state?: { readonly not: IncidentState } };
+      readonly orderBy?: { readonly openedAt: "desc" };
+      readonly take?: number;
+      readonly select?: never;
+    }): Promise<IncidentRow[]>;
+    /**
      * Story 4.2 — optimistic concurrency. The route layer passes
      * the row's `updatedAt` timestamp in `where`; if a concurrent
      * writer beat us to the row, the update returns `count: 0` and
@@ -145,6 +163,7 @@ export const resolveIncidentStateRepository = (prisma: unknown): IncidentStateRe
   return {
     incident: {
       findUnique: (args) => client.incident.findUnique(args) as Promise<IncidentRow | null>,
+      findMany: (args) => client.incident.findMany(args) as Promise<IncidentRow[]>,
       updateMany: (args) => client.incident.updateMany(args) as Promise<{ readonly count: number }>,
     },
     incidentEvent: {

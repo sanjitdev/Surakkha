@@ -22,8 +22,11 @@
  * .emit(event, payload)` chain.
  */
 
+import express, { type Router } from "express";
+
 import { type AuditLogger } from "../audit.js";
 
+import { type ActiveIncidentsDeps, buildActiveIncidentsRouter } from "./activeRouter.js";
 import {
   type IncidentStateRepository,
   resolveIncidentStateRepository,
@@ -34,7 +37,6 @@ import {
   type IncidentsRouterDeps,
 } from "./router.js";
 
-import type { Router } from "express";
 import type { Server as IOServer } from "socket.io";
 
 /**
@@ -76,6 +78,10 @@ const buildIncidentRepoResolver = (
         const repo = await ensure();
         return repo.incident.findUnique(args);
       },
+      findMany: async (args) => {
+        const repo = await ensure();
+        return repo.incident.findMany(args);
+      },
       updateMany: async (args) => {
         const repo = await ensure();
         return repo.incident.updateMany(args);
@@ -109,6 +115,15 @@ const buildIncidentRepoResolver = (
  * can lazy-upsert a `User` row on first JWT sight (defense-in-
  * depth against FK violations on audit writes for users that
  * have not yet been seeded).
+ *
+ * Story 4.3 — the mount also wires the `/api/incidents/active`
+ * read router (the Kanban feed) into the same router group. Both
+ * routers share the same lazy Prisma wrapper via the
+ * `IncidentStateRepository` slice, so a single `ensure()` call
+ * resolves the client on first request; the active router only
+ * needs the `incident.findMany` method and is mounted
+ * independently to keep its dependency surface narrow (no
+ * `incidentEvent` / `notification` access).
  */
 export const buildIncidentsRouterMount = (input: {
   readonly audit: AuditLogger;
@@ -116,11 +131,31 @@ export const buildIncidentsRouterMount = (input: {
   readonly resolvePrismaClient: () => Promise<unknown>;
   readonly resolveActorUserId: (jwtSub: string | null) => Promise<string | null>;
 }): Router => {
-  const deps: IncidentsRouterDeps = {
+  const { wrapper } = buildIncidentRepoResolver(input.resolvePrismaClient);
+  const transitionDeps: IncidentsRouterDeps = {
     audit: input.audit,
-    repo: buildIncidentRepoResolver(input.resolvePrismaClient).wrapper,
+    repo: wrapper,
     broadcast: buildIncidentBroadcastTarget(input.io),
     resolveActorUserId: input.resolveActorUserId,
   };
-  return buildIncidentsRouter(deps);
+  const activeDeps: ActiveIncidentsDeps = {
+    audit: input.audit,
+    repo: { incident: wrapper.incident },
+  };
+  // Both routers carry absolute paths (`/api/incidents/active` and
+  // `/api/incidents/:id/...`), so they must be mounted via `app.use`
+  // individually — wrapping them in a parent `Router` would
+  // double-prefix the path. We return a small adapter Router that
+  // delegates to both; the consumer calls `app.use(router)` once
+  // (mirrors the original single-router contract).
+  //
+  // Why an adapter Router (not a sibling `buildActiveMount`): the
+  // index.ts wiring site already calls `app.use(buildIncidentsRouterMount(...))`.
+  // Splitting the mounts would force index.ts to track two separate
+  // routers + their relative ordering (active before transition is
+  // irrelevant — the paths don't collide — but it's a footgun).
+  const adapter = express.Router();
+  adapter.use(buildActiveIncidentsRouter(activeDeps));
+  adapter.use(buildIncidentsRouter(transitionDeps));
+  return adapter;
 };

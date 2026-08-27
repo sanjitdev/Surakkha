@@ -100,7 +100,7 @@ development_status:
   epic-4: in-progress
   4-1-card-action-affordance-contract: done
   4-2-incident-state-machine-implementation: done
-  4-3-kanban-column-projection: backlog
+  4-3-kanban-column-projection: in-progress
   4-4-incident-detail-page: backlog
   4-5-acknowledge-flow: backlog
   4-6-assign-technician-inspecting-transition: backlog

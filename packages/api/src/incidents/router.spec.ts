@@ -89,6 +89,10 @@ const makeMockRepo = (opts: MockRepoOptions): IncidentStateRepository => {
       // default falls back to the pre-update row (so the response
       // shows the from-state for negative tests).
       findUnique: async () => opts.nextRow ?? opts.row,
+      // Story 4.3 — the active router reads via `findMany`. The
+      // transition router does not call it; this default returns
+      // an empty array so the tx-handler surface is complete.
+      findMany: async () => [],
       updateMany: opts.updateMany ?? (async () => ({ count: 1 })),
     },
     incidentEvent: {
@@ -113,6 +117,7 @@ const makeMockRepo = (opts: MockRepoOptions): IncidentStateRepository => {
   return {
     incident: {
       findUnique: async () => opts.row,
+      findMany: async () => [],
       updateMany: async () => ({ count: 1 }),
     },
     incidentEvent: txMock.incidentEvent,

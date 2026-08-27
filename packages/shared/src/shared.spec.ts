@@ -6,11 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  IncidentStateSchema,
-  TelemetryFrameSchema,
-  projectKanbanColumn,
-} from "./index.js";
+import { IncidentStateSchema, TelemetryFrameSchema, projectKanbanColumn } from "./index.js";
 
 describe("telemetry frame schema", () => {
   it("accepts a valid v1 frame", () => {
@@ -99,5 +95,34 @@ describe("incident state machine", () => {
 
   it("projects ACKNOWLEDGED to ACKNOWLEDGED column", () => {
     expect(projectKanbanColumn("ACKNOWLEDGED", "warning")).toBe("ACKNOWLEDGED");
+  });
+
+  // Story 4.3 — extended coverage for the 5 additional states the
+  // projection must fold into the existing columns. UNSAFE is the
+  // sticky-banner UX-DR-5 contract (always critical-priority
+  // regardless of severity).
+  it("projects INSPECTING to ACKNOWLEDGED column", () => {
+    expect(projectKanbanColumn("INSPECTING", "warning")).toBe("ACKNOWLEDGED");
+  });
+
+  it("projects SAFE to RESOLVED column", () => {
+    expect(projectKanbanColumn("SAFE", "warning")).toBe("RESOLVED");
+  });
+
+  it("projects UNSAFE to OPEN_CRITICAL column regardless of severity (sticky-banner UX-DR-5)", () => {
+    expect(projectKanbanColumn("UNSAFE", "warning")).toBe("OPEN_CRITICAL");
+    expect(projectKanbanColumn("UNSAFE", "critical")).toBe("OPEN_CRITICAL");
+  });
+
+  it("projects MONITORING to RESOLVED column", () => {
+    expect(projectKanbanColumn("MONITORING", "warning")).toBe("RESOLVED");
+  });
+
+  it("projects REOPENED warning to OPEN_WARNING column", () => {
+    expect(projectKanbanColumn("REOPENED", "warning")).toBe("OPEN_WARNING");
+  });
+
+  it("projects REOPENED critical to OPEN_CRITICAL column", () => {
+    expect(projectKanbanColumn("REOPENED", "critical")).toBe("OPEN_CRITICAL");
   });
 });
