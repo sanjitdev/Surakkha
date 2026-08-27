@@ -75,7 +75,7 @@ The code reads like it was written by a senior engineer who cared.
   diagnostic output.
 - **No commented-out code.** Delete it. Git remembers.
 - **No `TODO` without a date and an owner.** `// TODO: 2026-12-01
-  sanjit — handle empty case here` is acceptable. `// TODO` alone is
+sanjit — handle empty case here` is acceptable. `// TODO` alone is
   not.
 - **No magic numbers.** Named constants for every literal that is not
   `0`, `1`, `-1`, `true`, `false`, `null`, `""`. Thresholds come from
@@ -124,7 +124,7 @@ code, they will tell you what to do.
   Convert with `String(x)`, `JSON.stringify(x)`, or interpolate a
   primitive.
 - **Node builtins use the `node:` protocol**: `import { readFile }
-  from "node:fs"`, not `from "fs"`. Aligns with Node 20 conventions.
+from "node:fs"`, not `from "fs"`. Aligns with Node 20 conventions.
 - **Throw `new Error(...)`, not `Error(...)`**.
 - **`event.target` over `event.srcElement`** (the latter is legacy IE).
 - **No duplicate enum values**: typos like `enum X { A = 1, B = 1 }`
@@ -182,13 +182,13 @@ trigger has not been met, the ADR is still in force.
 
 This is a pnpm workspace monorepo. Five packages:
 
-| Package                | Purpose                                                |
-|------------------------|--------------------------------------------------------|
-| `packages/api`         | Express + Socket.IO, ingestion, rules, workflow       |
-| `packages/web`         | Vite + React + shadcn/ui dashboard                     |
-| `packages/simulator`   | Telemetry simulator (separate Node process)            |
-| `packages/shared`      | Wire contract, RBAC matrix, types, logger              |
-| `packages/db`          | Migrations, seeds, fixtures                            |
+| Package              | Purpose                                         |
+| -------------------- | ----------------------------------------------- |
+| `packages/api`       | Express + Socket.IO, ingestion, rules, workflow |
+| `packages/web`       | Vite + React + shadcn/ui dashboard              |
+| `packages/simulator` | Telemetry simulator (separate Node process)     |
+| `packages/shared`    | Wire contract, RBAC matrix, types, logger       |
+| `packages/db`        | Migrations, seeds, fixtures                     |
 
 **Cross-cutting rule** (ADR 0007, ESLint-enforced): no epic may
 import a type from another epic's directory. Cross-epic types live
@@ -287,8 +287,9 @@ flag the violation in the PR description. The PR template has a
 
 1. [`README.md`](README.md) — what this project is
 2. [`AGENTS.md`](AGENTS.md) (this file) — how to work on it
-3. [`docs/architecture.md`](docs/architecture.md) — the technical shape
-4. [`docs/adr/`](docs/adr/) — the "why" behind each decision
-5. [`CONTRIBUTING.md`](CONTRIBUTING.md) — day-to-day workflow
-6. [`docs/Surakkha-PRD.md`](docs/Surakkha-PRD.md) — what to build next
-7. `_bmad-output/planning-artifacts/epics.md` — the stories
+3. [`RUNBOOK.md`](RUNBOOK.md) — **if you were asked to "run the project", start here.** Documents the dev stack boot order, seed scripts, and the five operational pitfalls (catch-all 404 order, auth path is `/auth/login`, container can be "healthy" while api is dead, `--ignore-scripts` breaks bcrypt, cached image isn't recreated automatically).
+4. [`docs/architecture.md`](docs/architecture.md) — the technical shape
+5. [`docs/adr/`](docs/adr/) — the "why" behind each decision
+6. [`CONTRIBUTING.md`](CONTRIBUTING.md) — day-to-day workflow
+7. [`docs/Surakkha-PRD.md`](docs/Surakkha-PRD.md) — what to build next
+8. `_bmad-output/planning-artifacts/epics.md` — the stories

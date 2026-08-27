@@ -44,3 +44,14 @@ postgres-data/
 
 # Husky's internal cache (re-created on each `pnpm install`)
 .husky/_/
+
+# Scratch / diagnostic files (one-off agent probes, build logs,
+# image inspections). Not part of the project; recreate locally
+# from the recipes in RUNBOOK.md §5 / §9.
+tmp/
+
+# BMAD review placeholder files. The actual review artefacts live
+# under `_bmad-output/implementation-artifacts/.review-*/` and are
+# committed; `.review-target-*.txt` is just a marker the BMAD build
+# workflow drops at the repo root.
+.review-target-*.txt

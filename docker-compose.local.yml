@@ -1,0 +1,89 @@
+# Surakkha — local dev stack (cached images + same-network Postgres)
+#
+# Uses the cached images from a previous build:
+#   surakkha-dev-api        (cached)
+#   surakkha-dev-web        (cached)
+#   surakkha-dev-simulator  (cached)
+# plus a fresh postgres:15 with trust auth on a shared docker network.
+#
+# Brings up: docker compose -f docker-compose.local.yml up -d
+# Tears down: docker compose -f docker-compose.local.yml down
+#
+# Required env (set in shell before bringing up):
+#   JWT_SECRET       — 32+ char random string (matches api token signing)
+#   SIMULATOR_SECRET — 32+ char shared secret (api + simulator agree on this)
+
+name: surakkha-local
+
+services:
+  db:
+    image: postgres:15
+    container_name: surakkha-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: surakkha
+      POSTGRES_PASSWORD: surakkha
+      POSTGRES_DB: surakkha
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - surakkha-pgdata-local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U surakkha -d surakkha"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: surakkha-dev-api:latest
+    container_name: surakkha-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
+      DATABASE_URL: postgresql://surakkha:surakkha@db:5432/surakkha
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
+      SKIP_MIGRATIONS: "true"
+      NODE_ENV: production
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://localhost:3000/health'').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: surakkha-dev-web:latest
+    container_name: surakkha-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+  simulator:
+    image: surakkha-dev-simulator:latest
+    container_name: surakkha-simulator
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      API_URL: http://api:3000
+      SIMULATOR_API_URL: http://api:3000
+      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+
+volumes:
+  surakkha-pgdata-local:
