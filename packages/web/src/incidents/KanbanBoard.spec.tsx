@@ -39,7 +39,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 
 import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
 import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
@@ -425,6 +425,163 @@ describe("Story 4.3 — AC: 500 surfaces the retry button", () => {
     await waitFor(() => {
       expect(screen.getByTestId("kanban-board-error-state")).toBeInTheDocument();
     });
+  });
+});
+
+describe("Story 4.4 — AC: clicking a card navigates to the detail page", () => {
+  // Story 4.4 AC4 — clicking a card on `/incidents` navigates to
+  // `/incidents/:id`. The detail page is registered as a sibling
+  // route in `main.tsx`; the Kanban's `onClick` slot fires the
+  // navigation. This test mounts BOTH routes in a single test
+  // rig (using `<Routes>` + `<Route>`) so the navigation actually
+  // mounts the detail page; `renderBoard()` only mounts the Kanban.
+  it("navigates to /incidents/<id> when the card's detail button is clicked", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(
+          JSON.stringify({
+            incidents: [
+              baseIncident({
+                id: "11111111-1111-4111-8111-111111111111",
+                state: "OPEN",
+                severity: "warning",
+              }),
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/incidents/11111111-1111-4111-8111-111111111111")) {
+        return new Response(
+          JSON.stringify({
+            ...baseIncident({
+              id: "11111111-1111-4111-8111-111111111111",
+              state: "OPEN",
+              severity: "warning",
+            }),
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/incidents/11111111-1111-4111-8111-111111111111/events")) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    // Import lazily to avoid circular init — the detail page
+    // imports `cacheMutators.ts` which is fine but pulling it at
+    // top-level would couple the two spec files at module load.
+    const { IncidentDetailPage } = await import("./IncidentDetailPage");
+
+    const qc = buildQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/incidents"]}>
+          <CurrentRoleProvider initialRole="Operator">
+            <AppShell>
+              <Routes>
+                <Route path="/incidents" element={<KanbanBoard />} />
+                <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+              </Routes>
+            </AppShell>
+          </CurrentRoleProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("kanban-card-11111111-1111-4111-8111-111111111111"),
+      ).toBeInTheDocument();
+    });
+    const detailButton = screen.getByTestId("kanban-card-detail-button");
+    fireEvent.click(detailButton);
+    // The detail page mounts after navigation; the Kanban unmounts.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+  });
+
+  it("navigates with the EXACT path '/incidents/<id>' — pins the navigate() call argument", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(
+          JSON.stringify({
+            incidents: [
+              baseIncident({
+                id: "11111111-1111-4111-8111-111111111111",
+                state: "OPEN",
+                severity: "warning",
+              }),
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/incidents/11111111-1111-4111-8111-111111111111")) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith("/api/incidents/11111111-1111-4111-8111-111111111111/events")) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const { IncidentDetailPage } = await import("./IncidentDetailPage");
+
+    // Capture the `useParams()` value inside the detail page via a
+    // thin wrapper around the detail page. The wrapper renders the
+    // detail page AND a `data-testid="captured-route-param"` span
+    // that mirrors `useParams().id` — the assertion below pins the
+    // EXACT id the router landed on. A regression that drops the
+    // `${clickedId}` template interpolation would call
+    // `navigate("/incidents")`, the detail route would NOT match
+    // (because `MemoryRouter` is initialized at `/incidents` and
+    // never moved), and `useParams().id` would be undefined — the
+    // assertion would fail cleanly.
+    const CapturingDetailStub = () => {
+      const { id } = useParams<{ id: string }>();
+      return (
+        <div>
+          <span data-testid="captured-route-param">{id ?? "(none)"}</span>
+          <IncidentDetailPage />
+        </div>
+      );
+    };
+
+    const qc = buildQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/incidents"]}>
+          <CurrentRoleProvider initialRole="Operator">
+            <AppShell>
+              <Routes>
+                <Route path="/incidents" element={<KanbanBoard />} />
+                <Route path="/incidents/:id" element={<CapturingDetailStub />} />
+              </Routes>
+            </AppShell>
+          </CurrentRoleProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("kanban-card-11111111-1111-4111-8111-111111111111"),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("kanban-card-detail-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    // The router landed on EXACTLY /incidents/<id> — `useParams`
+    // inside the detail route returns the specific id, not the
+    // generic `/incidents` landing.
+    expect(screen.getByTestId("captured-route-param")).toHaveTextContent(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 });
 

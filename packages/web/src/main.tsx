@@ -37,6 +37,7 @@ import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
 import { KpiStat } from "./components/KpiStat";
 import { Dashboard } from "./dashboard/Dashboard";
+import { IncidentDetailPage } from "./incidents/IncidentDetailPage";
 import { KanbanBoard } from "./incidents/KanbanBoard";
 import { queryClient } from "./queryClient";
 import { AppShell } from "./shell/AppShell";
@@ -216,6 +217,23 @@ createRoot(root).render(
                       socket subscription (page-scoped) and TanStack
                       Query (cache key `["incidents", "active"]`). */}
                   <KanbanBoard />
+                </AppShell>
+              </CurrentRoleProvider>
+            }
+          />
+          <Route
+            path="/incidents/:id"
+            element={
+              <CurrentRoleProvider>
+                <AppShell>
+                  {/* Story 4.4 — read-only detail view. The
+                      `IncidentDetailPage` mounts its own socket
+                      subscription (page-scoped, keyed on the
+                      incident id) and TanStack Query (cache key
+                      `["incidents", "detail", id]`). NO action
+                      buttons — deferred to Stories 4.5 / 4.6 /
+                      4.7 / 4.11. */}
+                  <IncidentDetailPage />
                 </AppShell>
               </CurrentRoleProvider>
             }

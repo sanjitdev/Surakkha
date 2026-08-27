@@ -54,6 +54,7 @@ import {
 } from "@surakkha/shared/incident";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { RbacDenied } from "../access/RbacDenied";
@@ -169,6 +170,11 @@ export interface KanbanBoardProps {
 
 export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   const queryClient = useQueryClient();
+  // Story 4.4 — clicking a card navigates to the read-only
+  // detail page at `/incidents/:id`. The detail page handles
+  // 404 / 403 / 500 / loading / success; the Kanban stays focused
+  // on the active-list projection.
+  const navigate = useNavigate();
 
   // Mount the realtime subscription (per-page lifecycle).
   useKanbanBoardSocket(socketUrl);
@@ -266,7 +272,10 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
                 // the React tree remaps the SAME node into a NEW
                 // `<li>` parent, which preserves component state.
                 <li key={incident.id} className="list-none">
-                  <KanbanCard incident={incident} />
+                  <KanbanCard
+                    incident={incident}
+                    onClick={(clickedId) => navigate(`/incidents/${clickedId}`)}
+                  />
                 </li>
               ))}
             </ul>

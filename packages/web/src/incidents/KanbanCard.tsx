@@ -19,19 +19,25 @@
  */
 import { type IncidentPayload } from "@surakkha/shared/incident";
 
-const SEVERITY_DOT_BG: Record<IncidentPayload["severity"], string> = {
+/**
+ * Severity dot palette — Story 4.4 re-exports these so the detail
+ * page reuses the SAME palette without duplication. The values
+ * match `tailwind.config.js` semantic tokens (primary, warning,
+ * critical) so a future token rename propagates cleanly.
+ */
+export const SEVERITY_DOT_BG: Record<IncidentPayload["severity"], string> = {
   info: "#1E5BB8" /* primary */,
   warning: "#D97706" /* warning */,
   critical: "#DC2626" /* critical */,
 };
 
-const SEVERITY_LABEL: Record<IncidentPayload["severity"], string> = {
+export const SEVERITY_LABEL: Record<IncidentPayload["severity"], string> = {
   info: "Info",
   warning: "Warning",
   critical: "Critical",
 };
 
-const STATE_LABEL: Record<IncidentPayload["state"], string> = {
+export const STATE_LABEL: Record<IncidentPayload["state"], string> = {
   OPEN: "Open",
   ACKNOWLEDGED: "Acknowledged",
   INSPECTING: "Inspecting",
