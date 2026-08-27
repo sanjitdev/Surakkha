@@ -1,0 +1,142 @@
+[
+  {
+    "id": "BH-01",
+    "title": "Seed user UUIDs do not match the in-memory demo store, breaking the documented 'lazy-upsert' round-trip",
+    "severity": "high",
+    "detail": "packages/db/prisma/seedUsers.ts issues Operator 2 / Technician 2 with UUIDs 00000000-0000-4000-8000-00000000b002 and ...00000000c002, but packages/api/src/auth/users.ts issues tokens with ...00000000a006 (operator2) and ...00000000a007 (technician2). The header comment of users.ts promises: 'Six canonical demo users matching the Prisma seedUsers.ts'. They don't match. The header comment of users.ts also says 'Persistence lands when the Prisma User model is the source of truth at runtime (see Story 4.2's lazy-upsert in packages/api/src/index.ts)', but routerWiring.ts (the file that does the actual wiring for Story 4.2) contains no lazy-upsert at all. A login with operator2@surakkha.test / demo-operator2 mints a JWT with sub=...a006; if any FK lookup (Incident.assigneeUserId, Notification.acknowledgedByUserId) lands on that sub, the FK constraint added by the migration fails because no User row with that id was seeded. The matching claim in the code is dishonest and the wiring is missing.",
+    "location": "packages/api/src/auth/users.ts:46-65; packages/db/prisma/seedUsers.ts:4124-4151; packages/api/src/incidents/routerWiring.ts (whole file)"
+  },
+  {
+    "id": "BH-02",
+    "title": "Migration ALTER TABLE on Alert.acknowledgedByUserId will fail if existing rows have ids not in the new User table",
+    "severity": "high",
+    "detail": "packages/db/prisma/migrations/20260827000000_incident_state/migration.sql adds the FK Alert_acknowledgedByUserId_fkey with REFERENCES \"User\"(\"id\"). The User table is created fresh in the same migration, so there are no User rows when the FK is enforced. Story 3.5 (per the comment at schema.prisma:3997-4003) shipped acknowledgedByUserId as a free String? and the demo flow has had operators acknowledge alerts at runtime. If any non-null Alert.acknowledgedByUserId already exists in the prod-like DB and its string value isn't one of the six seeded UUIDs, migrate deploy will fail with a FK violation. The comment at schema.prisma:3995-3999 ('the User table lands in Epic 5 and the FK constraint is added in that migration') shows the original plan was to defer the FK — this migration reneges on that plan without a documented backfill.",
+    "location": "packages/db/prisma/migrations/20260827000000_incident_state/migration.sql:3577-3582 (the ALTER TABLE on Alert)"
+  },
+  {
+    "id": "BH-03",
+    "title": "TRANSITIONS table carries a 'sentinel' value that 'never used directly'",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/transitions.ts:2763 declares INSPECTING.submit_result: \"UNSAFE\" and the inline comment admits 'sentinel — never used directly; see INSPECTING branch below'. A sentinel in a truth table that isn't actually used is a code smell that bypasses the type system. The transition() function special-cases submit_result upstream of applyTableTransition, so the table cell is dead code that nonetheless satisfies the structural walk in transitions.spec.ts:2336-2370. A future maintainer who reads the table (the entire purpose of the truth-table design per the doc-comment at lines 2713-2720) will be confused about whether INSPECTING + submit_result -> UNSAFE is real.",
+    "location": "packages/api/src/incidents/transitions.ts:2763"
+  },
+  {
+    "id": "BH-04",
+    "title": "router.ts carries 'import-forcing anchor' markers that use void _x to defeat tree-shaking",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/router.ts:1535-1543 declares const _requireOwnerMarker = requireOwner; void _requireOwnerMarker; const _applyTransitionMarker = applyTransition; void _applyTransitionMarker;. The comments say these are 'source-walk anchor[s]' so 'a future refactor that drops the helper call surfaces immediately at the typecheck layer'. If a real refactor removes requireOwner from imports, tsc will fail on the unused import regardless of the marker — the marker is redundant with TypeScript's own noUnusedLocals rule. If a real refactor removes applyTransition, the same applies. The marker is a cargo-cult pattern that adds runtime bytes, clutters the file (the doc comment is longer than the code it guards), and confuses readers into thinking the linter doesn't already enforce this.",
+    "location": "packages/api/src/incidents/router.ts:1529-1543"
+  },
+  {
+    "id": "BH-05",
+    "title": "incident_transition log line is emitted from two different code paths",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/router.ts:1413-1423 emits the incident_transition console.warn inline in the success branch of buildTransitionHandler. packages/api/src/incidents/transitionHelpers.ts:2154-2167 defines a logTransition helper that emits the same JSON shape with the same keys. The helper exists but the inline code in router.ts never calls it. Result: two implementations of the same observability contract in the same Story, with the inline one being the path that's actually exercised (router.ts is the production entry point). If the contract ever drifts (e.g. one adds a new key), the dashboards / log forwarders reading the AC4 stream will see a mix of shapes depending on which path produced them.",
+    "location": "packages/api/src/incidents/router.ts:1413-1423; packages/api/src/incidents/transitionHelpers.ts:2154-2167"
+  },
+  {
+    "id": "BH-06",
+    "title": "computeTransition uses `as never` to bypass the type system on a Zod-validated field",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/transitionHelpers.ts:1985-1995: const outcome = body?.[\"outcome\"]; ... ...(outcome !== undefined ? { outcome: outcome as never } : {}),. The body has already passed submitResultBodySchema.safeParse which has narrowed outcome to InspectionOutcome (SAFE | UNSAFE | MONITORING). The `as never` cast is dishonest: it tells the compiler 'trust me, this is the never type' when in fact it's the narrowed enum. The correct pattern is `outcome: outcome as InspectionOutcome` (or pass through the narrowed shape from the parse step without re-reading from the raw body). A future refactor that changes the InspectionOutcome enum to add a new literal will silently produce a non-narrowed runtime value at this seam.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:1985-1995"
+  },
+  {
+    "id": "BH-07",
+    "title": "prepareTransitionContext and loadOrRespond share an in-band null sentinel for 'I already responded'",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/transitionHelpers.ts:2049-2064 returns null from loadOrRespond to signal 'handler should stop here, I wrote the response'. prepareTransitionContext (line 1877) propagates that null. The contract is fragile: a future helper inserted between loadOrRespond and the pipeline that returns null for any other reason will be silently swallowed by `if (currentRow === null) return null;` without any log. The sentinel mixes 'I responded with 404' and 'something went wrong upstream' in the same channel. A typed Result wrapper ({ ok: false, status: 404 } | { ok: true, row }) would make the control flow honest.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:1855-1881, 2049-2064"
+  },
+  {
+    "id": "BH-08",
+    "title": "buildIncidentRepoResolver has an unsynchronized lazy-init race",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/routerWiring.ts:1616-1657 caches the resolved IncidentStateRepository in a module-scoped cached variable with no mutex. The first N requests to hit the API after boot will each call ensure(), each will await resolvePrismaClient(), and each will assign cached. The race is benign if resolveIncidentStateRepository is idempotent (it is — it just narrows the client), so the final cached value wins and prior calls' narrow views become orphaned. Functionally harmless, but each loser's wrapper retains a closure over a now-stale instance; if resolvePrismaClient() ever returns distinct clients (e.g. connection pooling), the first loser's events would be routed to a dead client. Worth a `let pending: Promise<...>` to deduplicate concurrent first-resolves.",
+    "location": "packages/api/src/incidents/routerWiring.ts:1616-1657"
+  },
+  {
+    "id": "BH-09",
+    "title": "writeInvalidAttemptEvent loses audit trail on DB error without surfacing to the caller",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/transitionHelpers.ts:2244-2261 wraps the incidentEvent.create for invalid_transition_attempt in a try/catch that swallows the error and only logs console.error. The doc comment at line 2241-2243 says 'a failed event write should not block the response'. That is a defensible choice for availability, but it means: (a) the 409 response can return to the client while no audit row exists, and (b) the error is invisible to the operator unless someone is watching logs. For an audit trail whose entire purpose is forensic reconstruction of 'who tried what when and was rejected', silently dropping the row on a transient DB blip is a regression. At minimum, the console.error should be a structured audit.alert payload that a monitor can pick up.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:2244-2261"
+  },
+  {
+    "id": "BH-10",
+    "title": "assign body assignment is not validated against an existing User row",
+    "severity": "high",
+    "detail": "packages/api/src/incidents/transitionHelpers.ts:2116 forwards assigneeUserId to applyTransition without verifying the target User exists. The Prisma FK Incident.assigneeUserId -> User.id (added by this same migration at line 3577-3579 with ON DELETE SET NULL) will reject the write at the DB layer with a P2003 — which is NOT caught (only OptimisticConcurrencyError is caught at line 2121), so the response will be a generic 500 internal_error. The route's strict-Zod body schema validates UUID shape but not existence. A typo in the body (assignee_user_id from a different story's contract) or a deleted-user race will surface as 500 instead of 400/404. The test at router.spec.ts (baseRow({ assigneeUserId: TECH_ID }) then assign with a different TECH_ID is not exercised; the closest negative path tests UUID shape only).",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:2106-2140; packages/api/src/incidents/router.spec.ts:743-770"
+  },
+  {
+    "id": "BH-11",
+    "title": "critical-notification recipient is hardcoded 'Operator' even when a Technician is already assigned",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/incidentStateRepository.ts:344-352 writes the notification:critical row with recipientRole: \"Operator\". The spec comment at line 2114 says 'fires on UNSAFE only (Story 4.9 AC2)'. The transition into UNSAFE requires a Technician to have submitted the outcome (via submit_result), and submit_result is gated by Technician-only-mine — so by construction the assigning Technician is the actor. The actual UNSAFE finding may need to escalate to a different role (e.g., the Operator on duty to dispatch a follow-up, OR the original assigner's manager). Hardcoding Operator may violate the intent of Story 4.9 AC2 if 'Operator' was meant as a default rather than a policy. No test exercises a notification row for a non-UNSAFE transition; the only assertion is severity === 'critical' and incidentId === INCIDENT_ID.",
+    "location": "packages/api/src/incidents/incidentStateRepository.ts:344-352; packages/api/src/incidents/router.spec.ts:891-920"
+  },
+  {
+    "id": "BH-12",
+    "title": "projectNextIncident's reassignee semantics are reversed from the live applyTransition logic",
+    "severity": "high",
+    "detail": "packages/api/src/incidents/transitions.ts:3027-3042 (projectNextIncident): assignee_user_id: assigneeUserId !== null ? assigneeUserId : current.assignee_user_id. packages/api/src/incidents/incidentStateRepository.ts:308-312 (applyTransition writer): const newAssignee = input.result.event_type === \"assign\" ? (assigneeUserId ?? null) : currentRow.assigneeUserId. For submit_result, reopen, acknowledge, resolve, projectNextIncident would overwrite the existing assignee with null (because the route passes assigneeUserId: null for non-assign verbs), but the writer preserves the existing value. The route tests pin the writer's behavior; nothing pins projectNextIncident. The discrepancy only matters if projectNextIncident is ever called from production code — looking at the diff it appears to be used only in transitions.spec.ts for AC9 timing tests, where the inconsistency is masked by the assignee_user_id: TECH_ID being preserved by the writer path. But the helper's docstring (line 3021-3024) says it's 'used by the route layer's post-update projection' — which is FALSE; the route layer uses applied.nextRow from the writer (line 1434). Dead helper with misleading docstring + divergent semantics.",
+    "location": "packages/api/src/incidents/transitions.ts:3027-3042 (projectNextIncident) vs incidentStateRepository.ts:308-312 (applyTransition)"
+  },
+  {
+    "id": "BH-13",
+    "title": "incident:opened event payload omits actor_user_id while incident:state_changed includes it",
+    "severity": "low",
+    "detail": "packages/api/src/rules/applyTransition.ts:3293-3308 emits incident:opened with { incident_id, device_id, severity, metric, value, opened_at, alert_id } — no actor_user_id. The schema in packages/shared/src/events.ts:4222-4232 (IncidentOpenedEventSchema) confirms this. The comment at lines 4213-4216 says 'there is no actor_user_id (the path is system-driven by the rule engine, not by an operator)' — but the incident:state_changed event (router.ts:1426-1433) DOES include actor_user_id. Listeners that consume both event types will have to special-case the system-driven path to fill in a null. Either include actor_user_id: null explicitly in incident:opened for shape parity, or document the asymmetry in the consumer-facing events doc.",
+    "location": "packages/shared/src/events.ts:4222-4232; packages/api/src/rules/applyTransition.ts:3293-3308"
+  },
+  {
+    "id": "BH-14",
+    "title": "TRANSITIONS truth-table structural-walk test asserts the wrong invariant",
+    "severity": "low",
+    "detail": "packages/api/src/incidents/transitions.spec.ts:2336-2370: for (const state of allStates) { const cell = TRANSITIONS[state]; for (const verb of allVerbs) { const next = cell[verb]; ... expect(typeof next === \"string\" || next === undefined).toBe(true); } }. The test asserts that next is either string or undefined. Both are acceptable per the test — the structural walk never fails. So this 'coverage matrix' test passes regardless of what's actually in TRANSITIONS (including an empty table). The doc comment at line 2281-2285 calls it 'AC2 ... has entries for every (state, verb) cell, with a sensible next state' — but the assertion only checks the type, not the presence of an entry. The sentinel 'UNSAFE' (BH-03) trivially satisfies this test. The test as written provides no regression value for the truth table itself.",
+    "location": "packages/api/src/incidents/transitions.spec.ts:2336-2370"
+  },
+  {
+    "id": "BH-15",
+    "title": "Migration creates tables without IF NOT EXISTS guards but comment claims 'single forward migration'",
+    "severity": "low",
+    "detail": "packages/db/prisma/migrations/20260827000000_incident_state/migration.sql:3422-3425 says 'this is a single forward migration; no IF NOT EXISTS guards'. That means any partial-application scenario (Prisma migrate deploy interrupted halfway, manually-applied column added in a hotfix, etc.) produces a broken schema on the next attempt. The migration creates 4 enums + 4 tables + 4 indexes + 9 FKs as a single transactional unit, but Postgres DDL inside a single transaction with ADD CONSTRAINT FOREIGN KEY is not fully transactional in older Postgres versions (<11) for some constraint types. A 9-FK migration with no idempotency layer is a single point of failure for the entire Epic 4 backend.",
+    "location": "packages/db/prisma/migrations/20260827000000_incident_state/migration.sql:3422-3425 (and whole file)"
+  },
+  {
+    "id": "BH-16",
+    "title": "acknowledged_at / resolved_at clamping in applyTransition miscategorizes 'reopen -> OPEN' semantics",
+    "severity": "medium",
+    "detail": "packages/api/src/incidents/incidentStateRepository.ts:305-306: const ackedAt = currentRow.acknowledgedAt ?? (nextState !== \"OPEN\" && nextState !== \"REOPENED\" ? at : null); const resolvedAt = nextState === \"RESOLVED\" ? at : currentRow.resolvedAt. On reopen (RESOLVED -> OPEN), nextState === \"OPEN\", so ackedAt is currentRow.acknowledgedAt ?? null — but currentRow.acknowledgedAt is non-null for any incident that ever reached ACKNOWLEDGED, so ackedAt is preserved correctly. However, resolvedAt is preserved (currentRow.resolvedAt is set on the prior resolve). After reopen, the IncidentPayload reflects a row with state: OPEN AND resolvedAt: <historical> AND acknowledgedAt: <historical>. The wire-row helper incidentRowToPayload doesn't filter these, so consumers see an OPEN row that is also 'historically resolved'. The transitions.spec.ts:2651-2666 test pins this behavior as 'preserve', but no consumer-facing story doc explains the asymmetry. Kanban columns / dashboards that filter by state === OPEN && resolvedAt IS NULL (a common pattern) will incorrectly treat re-opened-but-never-acknowledged-again incidents as already-closed.",
+    "location": "packages/api/src/incidents/incidentStateRepository.ts:305-306; packages/api/src/incidents/incidentStateRepository.ts:382-406 (incidentRowToPayload)"
+  },
+  {
+    "id": "BH-17",
+    "title": "users.ts SEED_SPECS file header is out of sync with seedUsers.ts roster",
+    "severity": "medium",
+    "detail": "packages/api/src/auth/users.ts is the in-memory demo store used by /auth/login to mint JWTs for the dev/test path. The SEED_SPECS table adds two rows for operator2@surakkha.test / demo-operator2 (UUID ...a006) and technician2@surakkha.test / demo-technician2 (UUID ...a007). packages/db/prisma/seedUsers.ts seeds Users with UUIDs ...b001/b002/c001/c002 for the same roles. The two rosters are now in open disagreement: login via the in-memory store issues JWTs with subs that don't match any DB row. The header comment of users.ts claims the surface is stable so the swap is mechanical, but the swap is broken because the UUIDs aren't aligned. Either the in-memory store needs to match the seed (preferred — demo tokens should resolve to seeded rows) or both need to be regenerated from a shared constant.",
+    "location": "packages/api/src/auth/users.ts:41-74; packages/db/prisma/seedUsers.ts:4118-4152"
+  },
+  {
+    "id": "BH-18",
+    "title": "schema.prisma reformatting churns unrelated models (Device, Reading, Rule, Alert)",
+    "severity": "low",
+    "detail": "packages/db/prisma/schema.prisma lines 3639-3700, 3683-3693, 3951-3999, 4004-4047: every model in this diff is re-aligned with extra whitespace and column widths. The Device, Reading, Rule, and Alert models have no semantic changes — just visual reformatting. This bloats the diff (multiple models lose their single-line declarations and gain multi-line alignment), making the actual Story 4.2 changes harder to review in PR. The Prisma formatter should be a pre-commit hook, not a manual hand-rewrite mixed with substantive changes.",
+    "location": "packages/db/prisma/schema.prisma:3639-4047"
+  },
+  {
+    "id": "BH-19",
+    "title": "story's central comment block in transitions.ts claims 'no default branch' but the implementation has hardcoded special cases that defeat the table",
+    "severity": "low",
+    "detail": "packages/api/src/incidents/transitions.ts:2742-2747 claims: 'There is no default branch — the transition() function returns INVALID for any (state, action) cell NOT in this table'. The actual function (line 2832-2850) delegates to three helpers: applySubmitResult, applyAssign, and applyTableTransition. Only applyTableTransition reads the table. For submit_result, the table has the INSPECTING.submit_result: \"UNSAFE\" sentinel (BH-03) which is never read — the special case is in applySubmitResult and checks from !== \"INSPECTING\". So the table is incomplete (it doesn't encode submit_result.toOutcome(outcome)), the special case is the truth, and the docstring misrepresents where the truth lives. A future maintainer who edits the table thinking it controls submit_result will silently break the behavior.",
+    "location": "packages/api/src/incidents/transitions.ts:2742-2747, 2832-2850, 2863-2881"
+  },
+  {
+    "id": "BH-20",
+    "title": "schema.prisma drops 'no-newline-at-end-of-file' but adds it back at the end (model RuleDebounceState block)",
+    "severity": "low",
+    "detail": "packages/db/prisma/schema.prisma:4069 shows No newline at end of file on the deleted side, then line 4071 (added side) shows the same content but without the marker. The diff at line 4070 (-} then +}) is essentially a newline-end fix unrelated to the Story 4.2 substantive changes. While this is a one-character clean-up, it pollutes the diff with a no-op churn that's hard to distinguish from a real change in git blame. The bulk realignment in BH-18 compounds this noise.",
+    "location": "packages/db/prisma/schema.prisma:4069-4071"
+  }
+]

@@ -118,3 +118,29 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-7-admin-thresholds-tab.md`
   summary: `deactivateRule`/`activateRule` P2025 (concurrent-delete-mid-flight) returns 500 instead of 404
   evidence: `packages/api/src/admin/thresholdsRouter.ts:1239-1274` — between `findUnique` (which gates 404) and `repo.rule.update`, a concurrent delete raises Prisma P2025, which falls into the generic `catch (err)` and returns 500. Race window is narrow (single-instance api, low write volume on thresholds). **Defer — narrow race; current 500 path is acceptable v1 behaviour. Wrap in a P2025-aware try/catch in a future hardening pass.**
+
+## Deferred from: code review of 4-2-incident-state-machine (2026-08-27 Group 1)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: `applyTransition` writer (ackedAt/resolvedAt stamping) has no direct unit test.
+  evidence: `packages/api/src/incidents/router.spec.ts` provides `nextRow` overrides that bypass the writer; `transitions.spec.ts` exercises only the pure projection. The mitigation belongs in the live-Prisma test rig (`incident-state-machine.spec.ts`) per spec risk-mitigation note 1.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: `applyTransition` rollback on `incidentEvent.create` failure is structurally claimed but not behaviourally pinned.
+  evidence: Same live-Prisma rig as F-4.2-1; spec acceptance is structurally satisfied.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: `incident:opened` socket emit has no fallback on `IncidentOpenedEventSchema` parse failure beyond a console.warn.
+  evidence: Mitigation is a consumer-side (Story 4.4) concern; the parse-failure case surfaces only if the schema drifts, which is a development-time warning.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: `loadOrRespond` does not enforce Technician ownership at read time.
+  evidence: Today only `GET /api/incidents/:id` consumes it; the inline ownership check in the GET handler covers the current call site. Defer until a second consumer lands.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: `prepareTransitionContext`/`loadOrRespond` in-band `null` sentinel is fragile.
+  evidence: Collapse "I responded with 404" and "something went wrong upstream" in the same channel. Refactor scope is non-trivial — wrap in a typed `Result` shape.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+  summary: No `incident-state.migration.spec.ts` exercises the new migration's table shapes, FKs, or partial unique index.
+  evidence: Owner: live-Prisma test rig (sibling of `alert-debounce.migration.spec.ts`); spec doesn't require it for 4.2 but it should land with the deferred-test sweep.

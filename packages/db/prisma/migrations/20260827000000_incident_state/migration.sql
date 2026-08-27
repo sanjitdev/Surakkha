@@ -228,6 +228,24 @@ ALTER TABLE "Attachment" ADD CONSTRAINT "Attachment_uploadedByUserId_fkey"
 -- the User table; this migration retrofits the FK constraint.
 -- ON DELETE SET NULL preserves the alert row even when the operator
 -- is removed.
+--
+-- Pre-emptive orphan-null backfill (code review 2026-08-27, decision 4):
+-- Story 3.5 demo flows populated Alert.acknowledgedByUserId with free
+-- strings that may not match any seeded User.id. Setting those rows to
+-- NULL before adding the FK constraint prevents the migration from
+-- aborting on a populated prod-like DB. The alert row + its clearedAt
+-- timestamp are preserved; only the now-orphan acknowledgedByUserId is
+-- cleared.
+DO $$
+BEGIN
+    UPDATE "Alert"
+    SET "acknowledgedByUserId" = NULL
+    WHERE "acknowledgedByUserId" IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM "User" WHERE "User"."id" = "Alert"."acknowledgedByUserId"
+      );
+END $$;
+
 ALTER TABLE "Alert" ADD CONSTRAINT "Alert_acknowledgedByUserId_fkey"
     FOREIGN KEY ("acknowledgedByUserId") REFERENCES "User"("id")
     ON DELETE SET NULL ON UPDATE CASCADE;

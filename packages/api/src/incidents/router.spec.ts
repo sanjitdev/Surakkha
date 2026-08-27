@@ -499,6 +499,10 @@ describe("Story 4.2 — POST /api/incidents/:id/submit-result", () => {
     const call = notificationSpy.mock.calls[0]?.[0];
     expect(call?.data.severity).toBe("critical");
     expect(call?.data.incidentId).toBe(INCIDENT_ID);
+    // Code review 2026-08-27 patch #10: pin recipientRole + alertId.
+    // Decision 5 pins recipientRole = "Operator" for v1.
+    expect(call?.data.recipientRole).toBe("Operator");
+    expect(call?.data.alertId).toBeNull();
     await close();
   });
 

@@ -18,6 +18,9 @@
     "lint": "eslint . --max-warnings 0",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@prisma/client": "5.20.0"
   },

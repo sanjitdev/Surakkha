@@ -48,10 +48,9 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
-import { authorize, type AuthorizedRequest, requireOwner } from "../middleware/authorize.js";
+import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
-  applyTransition,
   type IncidentRow,
   incidentRowToPayload,
   type IncidentStateRepository,
@@ -64,6 +63,7 @@ import {
   HTTP_OK,
   type PrepareCtxInput,
   prepareTransitionContext,
+  respondSuccess,
   runTransitionPipeline,
   type TransitionContext,
 } from "./transitionHelpers.js";
@@ -87,6 +87,16 @@ export interface IncidentsRouterDeps {
    * unit-test rig where the broadcast surface is irrelevant).
    */
   readonly broadcast?: IncidentBroadcast;
+  /**
+   * Patch (code review 2026-08-27 #18): lazy-upsert a `User` row
+   * on first JWT sight so audit writes do not fail with FK
+   * violations when an unrecognized `sub` claim appears (e.g.
+   * SSO-provisioned users not yet in the seed). Optional: omitting
+   * it falls back to `req.user?.id ?? null` (the JWT's `sub` claim
+   * directly). Production wires the helper from `src/index.ts`;
+   * the test rig omits it because it stubs `req.user` directly.
+   */
+  readonly resolveActorUserId?: (jwtSub: string | null) => Promise<string | null>;
 }
 
 /**
@@ -168,32 +178,29 @@ const buildTransitionHandler =
     if (pipeline === null) return;
     const { applied, result } = pipeline;
 
-    // Inline success response — small enough to live here without
-    // another helper extraction. Logs + emits + responds 200.
-    const actorUserId = req.user?.id ?? null;
-    console.warn(
-      JSON.stringify({
-        event: "incident_transition",
-        incident_id: currentRow.id,
-        from: currentRow.state,
-        to: result.next_state,
-        verb,
-        actor_user_id: actorUserId,
-        at: result.at,
-      }),
-    );
-    if (deps.broadcast !== undefined) {
-      const room = `incident:${currentRow.id}`;
-      deps.broadcast.to(room).emit("incident:state_changed", {
-        incident_id: currentRow.id,
-        from_state: currentRow.state,
-        to_state: result.next_state,
-        changed_at: result.at,
-        actor_user_id: actorUserId,
-      });
-    }
-    const payload: IncidentPayload = incidentRowToPayload(applied.nextRow);
-    res.status(HTTP_OK).json(payload);
+    // Patch (code review 2026-08-27 #18): resolve the actor via
+    // the lazy-upsert helper when wired (production). Falls back
+    // to the JWT `sub` claim in the test rig where the helper is
+    // omitted. Lazy-upsert is defense-in-depth against FK
+    // violations on audit writes for users not yet seeded.
+    const actorUserId =
+      deps.resolveActorUserId === undefined
+        ? (req.user?.id ?? null)
+        : await deps.resolveActorUserId(req.user?.id ?? null);
+
+    // Patch (code review 2026-08-27 #13): delegate to
+    // `respondSuccess` instead of inlining the AC4 log + emit +
+    // 200 response. The helper is the canonical path; the inline
+    // copy was a duplicate that risked drift.
+    respondSuccess({
+      deps,
+      currentRow,
+      result,
+      verb,
+      actorUserId,
+      applied,
+      res,
+    });
   };
 
 /**
@@ -231,11 +238,11 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
         return;
       }
       // Technician-only-mine ownership check.
-      if (
-        req.user?.role === "Technician" &&
-        row.assigneeUserId !== null &&
-        row.assigneeUserId !== req.user.id
-      ) {
+      // Patch (code review 2026-08-27 #11): remove the
+      // `row.assigneeUserId !== null` short-circuit so unassigned
+      // incidents are also restricted (Technicians only see
+      // incidents they're assigned to).
+      if (req.user?.role === "Technician" && row.assigneeUserId !== req.user.id) {
         deps.audit.emit({
           auditAction: "rbac_denied",
           userId: req.user.id,
@@ -287,21 +294,12 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
     buildReopenHandler(deps),
   );
 
-  // Touch `requireOwner` so the import isn't tree-shaken away
-  // during build-pruning. The runtime ownership check is inlined
-  // in `runOwnershipCheck` (above) so the response shape is
-  // identical to `requireOwner`'s. This marker is also a
-  // source-walk anchor: deleting it would force the build to
-  // also remove the ownership check.
-  const _requireOwnerMarker = requireOwner;
-  void _requireOwnerMarker;
-
-  // `applyTransition` is the transition writer called by the
-  // pipeline helpers. Same import-marker rationale as above:
-  // import-forcing anchor so a future refactor that drops the
-  // helper call surfaces immediately at the typecheck layer.
-  const _applyTransitionMarker = applyTransition;
-  void _applyTransitionMarker;
+  // Patch (code review 2026-08-27 #12): removed cargo-cult
+  // `_requireOwnerMarker` and `_applyTransitionMarker` declarations.
+  // TypeScript's `noUnusedLocals` rule already enforces import
+  // usage; the markers added runtime bytes without value. The
+  // runtime ownership check lives inline in `runOwnershipCheck`
+  // (`transitionHelpers.ts:526-546`).
 
   return router;
 };

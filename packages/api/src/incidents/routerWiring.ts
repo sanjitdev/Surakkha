@@ -103,16 +103,24 @@ const buildIncidentRepoResolver = (
  * Build the production `/api/incidents` router deps + Express
  * Router. Returns the Express Router so `src/index.ts` mounts it
  * via `app.use(router)`.
+ *
+ * Patch (code review 2026-08-27 #18): thread
+ * `resolveActorUserId` from `index.ts` so the transition handler
+ * can lazy-upsert a `User` row on first JWT sight (defense-in-
+ * depth against FK violations on audit writes for users that
+ * have not yet been seeded).
  */
 export const buildIncidentsRouterMount = (input: {
   readonly audit: AuditLogger;
   readonly io: IOServer;
   readonly resolvePrismaClient: () => Promise<unknown>;
+  readonly resolveActorUserId: (jwtSub: string | null) => Promise<string | null>;
 }): Router => {
   const deps: IncidentsRouterDeps = {
     audit: input.audit,
     repo: buildIncidentRepoResolver(input.resolvePrismaClient).wrapper,
     broadcast: buildIncidentBroadcastTarget(input.io),
+    resolveActorUserId: input.resolveActorUserId,
   };
   return buildIncidentsRouter(deps);
 };

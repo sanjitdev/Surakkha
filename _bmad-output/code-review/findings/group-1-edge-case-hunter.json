@@ -1,0 +1,79 @@
+[
+  {
+    "id": "EC-01",
+    "title": "Technician can read unassigned incidents",
+    "severity": "medium",
+    "detail": "In router.ts GET /api/incidents/:id handler, the Technician ownership check is: `if (req.user?.role === \"Technician\" && row.assigneeUserId !== null && row.assigneeUserId !== req.user.id)`. When row.assigneeUserId === null (unassigned incident in OPEN state), the early-out `row.assigneeUserId !== null` skips the check entirely, so any Technician — including unassigned ones — can read any unassigned incident. The intent of Technician-only-mine is to limit Technicians to incidents they're assigned to; unassigned incidents should be excluded too.\n\nGuard: change the check to `if (req.user?.role === \"Technician\" && row.assigneeUserId !== req.user.id)` so null-vs-undefined mismatch is correctly rejected.",
+    "location": "packages/api/src/incidents/router.ts:1473-1491"
+  },
+  {
+    "id": "EC-02",
+    "title": "P2002 race on notification:critical partial unique index not caught",
+    "severity": "high",
+    "detail": "In incidentStateRepository.ts applyTransition, the optional tx.notification.create({...}) writes a critical notification inside the $transaction. The migration defines a partial unique index Notification_incidentId_severity_active_unique_idx on (incidentId, severity) WHERE acknowledgedAt IS NULL. A concurrent UNSAFE submission collapses to a single Notification row (P2002). The repository doc-comment explicitly says 'the P2002 catch is the caller's responsibility'. The caller in transitionHelpers.ts commitTransition only catches OptimisticConcurrencyError, so a P2002 on the notification write becomes a generic 500 internal_error instead of being treated as a concurrent_modification conflict (409). Guard: in commitTransition, also catch the Prisma P2002 error code and treat it as a concurrent_modification conflict, or move the P2002 catch into applyTransition and re-throw as OptimisticConcurrencyError.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:2106-2140 + packages/api/src/incidents/incidentStateRepository.ts:343-354"
+  },
+  {
+    "id": "EC-03",
+    "title": "writeWarningNotification P2002 race not handled",
+    "severity": "high",
+    "detail": "In rules/applyTransition.ts, the auto-create path now calls writeWarningNotification(tx, ...) inside the $transaction. The writer (per the migration's partial unique index) enforces at-most-one-active-banner per (incidentId, severity). A second auto-create from the same alert-id race (or re-fire after a previous warning was acknowledged-then-resurfaced) yields a P2002 violation. The error propagates out of $transaction, rolling back the entire (Alert + Incident + Notification) commit. The caller (hook) does not appear to catch P2002 specifically. Result: a benign idempotency race becomes a hard transaction rollback and a 500-style failure for the ingest path.",
+    "location": "packages/api/src/rules/applyTransition.ts:163-179 + packages/db/prisma/migrations/20260827000000_incident_state/migration.sql:3565-3567"
+  },
+  {
+    "id": "EC-04",
+    "title": "Alert FK retrofit migration fails on legacy acknowledgedByUserId values",
+    "severity": "medium",
+    "detail": "The migration adds ALTER TABLE \"Alert\" ADD CONSTRAINT \"Alert_acknowledgedByUserId_fkey\" FOREIGN KEY (\"acknowledgedByUserId\") REFERENCES \"User\"(\"id\"). Per the migration comment, Alert.acknowledgedByUserId has been a free String since Story 3.5. If any existing Alert row has a non-null acknowledgedByUserId value that does not match a User.id row, the FK constraint addition fails and the entire forward migration aborts. Guard: in the migration, NULL-out legacy acknowledgedByUserId values that don't have a matching User before adding the FK, or wrap the ALTER in a DO block that pre-cleans orphans.",
+    "location": "packages/db/prisma/migrations/20260827000000_incident_state/migration.sql:3629-3631"
+  },
+  {
+    "id": "EC-05",
+    "title": "transition() trusts undefined assigneeUserId as INVALID, but empty string slips through",
+    "severity": "low",
+    "detail": "In transitions.ts applyAssign: `if ((from !== \"OPEN\" && from !== \"ACKNOWLEDGED\") || assignee === undefined || assignee === null) { return { ok: false, ... } }`. The check rejects undefined and null but allows empty string \"\". The Zod body schema (assignee_user_id: z.string().uuid()) would catch this upstream, but the pure state machine has no defense-in-depth. Guard: also reject falsy strings.",
+    "location": "packages/api/src/incidents/transitions.ts:2895-2913"
+  },
+  {
+    "id": "EC-06",
+    "title": "buildIncidentPayload accepts arbitrary severity string",
+    "severity": "low",
+    "detail": "In rules/incidentFromAlert.ts buildIncidentPayload, the input.severity passes through directly. The Prisma Incident.severity column is a free-form String (per the schema comment). If a future RuleSeverity literal appears before the wire-boundary validation is updated, the Incident row commits with an unknown severity that the IncidentSeveritySchema cannot parse on read. The downstream incidentRowToPayload then casts via row.severity as IncidentPayload[\"severity\"] — bypassing type safety. Guard: validate input.severity against the closed set at the top of buildIncidentPayload and throw on unknown values.",
+    "location": "packages/api/src/rules/incidentFromAlert.ts:104-124 + packages/api/src/incidents/incidentStateRepository.ts:382-406"
+  },
+  {
+    "id": "EC-07",
+    "title": "incident:opened emit skipped silently on schema parse failure",
+    "severity": "medium",
+    "detail": "In rules/applyTransition.ts the parsedIncident.safeParse failure path only logs console.warn; the Story 4.4 detail page listener never receives the event and there's no operator-facing observability beyond the console.warn. Guard: surface a metric/audit event when the schema parse fails, or fall back to emitting a minimal payload.",
+    "location": "packages/api/src/rules/applyTransition.ts:3303-3315"
+  },
+  {
+    "id": "EC-08",
+    "title": "commitTransition throws on P2002 from applyTransition becomes 500",
+    "severity": "high",
+    "detail": "transitionHelpers.ts commitTransition wraps applyTransition in try/catch that only catches OptimisticConcurrencyError. applyTransition can throw any Prisma error — including P2002 (race on partial unique index for the notification:critical write), P2003 (FK violation if a User was deleted between request validation and write), or transient connection errors. Only the OptimisticConcurrencyError sentinel is mapped to 409; all others become 500. The caller cannot distinguish a benign race (P2002) from a real outage.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:2118-2139"
+  },
+  {
+    "id": "EC-09",
+    "title": "seedUsers createdFresh heuristic is unreliable under fast re-seed",
+    "severity": "low",
+    "detail": "seedUsers.ts uses a 5-second threshold to classify inserts vs no-ops. On a slow DB or under clock skew, a freshly-upserted row's createdAt can be >5s old by the time the SELECT returns, misclassifying it as a no-op. Conversely, on a fast re-run within 5s, an existing row's createdAt may still be 'fresh enough' to be misclassified. The counter is purely diagnostic but misleading.",
+    "location": "packages/db/prisma/seedUsers.ts:4178-4183"
+  },
+  {
+    "id": "EC-10",
+    "title": "buildTransitionHandler runs RBAC at middleware layer only — no defense-in-depth in handler",
+    "severity": "low",
+    "detail": "The route layer in router.ts uses authorize({ action: ..., resource: 'Incident' }, deps.audit) middleware. If the middleware is misconfigured or replaced in a future refactor, the handlers themselves don't re-check the role. Compare to the inline Technician-only-mine check, which IS in the handler body.",
+    "location": "packages/api/src/incidents/router.ts:1503-1527"
+  },
+  {
+    "id": "EC-11",
+    "title": "loadOrRespond doesn't enforce Technician ownership at read time",
+    "severity": "medium",
+    "detail": "transitionHelpers.ts loadOrRespond returns the row unconditionally for any caller that reaches it. The GET /api/incidents/:id handler in router.ts DOES enforce Technician-only-mine, but the loadOrRespond helper itself has no such guard. If a future verb reuses loadOrRespond, the ownership check is bypassed unless the caller re-implements it.",
+    "location": "packages/api/src/incidents/transitionHelpers.ts:2049-2064"
+  }
+]

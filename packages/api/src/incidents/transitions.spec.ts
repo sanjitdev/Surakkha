@@ -101,6 +101,54 @@ describe("Story 4.2 — TRANSITIONS truth table is complete (AC2)", () => {
       }
     }
   });
+
+  // Code review 2026-08-27 patch #5: per-cell invalid sweep.
+  // Asserts `transition()` returns `ok: false` for every cell
+  // NOT covered by the valid transitions above. Catches a future
+  // drift where a cell is accidentally added to or removed from
+  // the table without updating the per-cell tests.
+  it("explicit per-cell INVALID sweep for every off-table (state, verb) cell", () => {
+    const offTableCells: ReadonlyArray<readonly [IncidentState, ActionVerb]> = [
+      // ACKNOWLEDGED: only `assign` is valid.
+      ["ACKNOWLEDGED", "acknowledge"],
+      ["ACKNOWLEDGED", "resolve"],
+      ["ACKNOWLEDGED", "reopen"],
+      ["ACKNOWLEDGED", "submit_result"],
+      // INSPECTING: only `submit_result` is valid (special-cased).
+      ["INSPECTING", "acknowledge"],
+      ["INSPECTING", "assign"],
+      ["INSPECTING", "resolve"],
+      ["INSPECTING", "reopen"],
+      // SAFE / UNSAFE / MONITORING: only `resolve` is valid.
+      ["SAFE", "acknowledge"],
+      ["SAFE", "assign"],
+      ["SAFE", "submit_result"],
+      ["SAFE", "reopen"],
+      ["UNSAFE", "acknowledge"],
+      ["UNSAFE", "assign"],
+      ["UNSAFE", "submit_result"],
+      ["UNSAFE", "reopen"],
+      ["MONITORING", "acknowledge"],
+      ["MONITORING", "assign"],
+      ["MONITORING", "submit_result"],
+      ["MONITORING", "reopen"],
+      // RESOLVED: only `reopen` is valid.
+      ["RESOLVED", "acknowledge"],
+      ["RESOLVED", "assign"],
+      ["RESOLVED", "resolve"],
+      ["RESOLVED", "submit_result"],
+    ];
+    for (const [fromState, verb] of offTableCells) {
+      const result = transition({
+        incident: makeIncident({ state: fromState, assignee_user_id: TECH_ID }),
+        action: verb,
+        actorUserId: ADMIN_ID,
+        assigneeUserId: TECH_ID,
+        outcome: "SAFE",
+      });
+      expect(result.ok, `${fromState} + ${verb} must be INVALID`).toBe(false);
+    }
+  });
 });
 
 describe("Story 4.2 — valid transitions (AC3)", () => {
@@ -367,7 +415,7 @@ describe("Story 4.2 — projectNextIncident time-bookkeeping (AC9)", () => {
     expect(next.assignee_user_id).toBe(TECH_ID);
   });
 
-  it("clears assignee_user_id to null on resolve if input is null", () => {
+  it("preserves assignee_user_id on resolve when route passes null", () => {
     const next = projectNextIncident({
       current: makeIncident({
         state: "SAFE",
@@ -382,7 +430,7 @@ describe("Story 4.2 — projectNextIncident time-bookkeeping (AC9)", () => {
     expect(next.assignee_user_id).toBe(TECH_ID); // preserved when route passes null
   });
 
-  it("reopen goes back to OPEN and preserves acknowledged_at", () => {
+  it("reopen goes back to OPEN, preserves acknowledged_at, and clears resolved_at", () => {
     const next = projectNextIncident({
       current: makeIncident({
         state: "RESOLVED",
@@ -396,6 +444,11 @@ describe("Story 4.2 — projectNextIncident time-bookkeeping (AC9)", () => {
     });
     expect(next.state).toBe("OPEN");
     expect(next.acknowledged_at).toBe(ACK_AT); // preserved
-    expect(next.resolved_at).toBe(RESOLVE_AT); // NOT cleared — reopen keeps the historical record
+    // Patch (code review 2026-08-27 #17): Decision 6B — reopen
+    // clears resolved_at so consumers can filter
+    // `state === "OPEN" && resolvedAt IS NULL` to find
+    // currently-open incidents. Audit history lives in
+    // IncidentEvent, not on the Incident row.
+    expect(next.resolved_at).toBeNull();
   });
 });

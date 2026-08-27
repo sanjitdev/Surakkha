@@ -16,12 +16,15 @@
  *
  * The seed deliberately uses deterministic UUIDs (not `crypto.randomUUID()`)
  * so the demo tokens issued by the api's `/auth/login` against the
- * seeded users always resolve to the same User row. The UUIDs mirror
- * the role names from `packages/shared/src/rbac.ts`:
- *   - 1 Admin: "Surakkha Admin"
- *   - 2 Operators: "Operator Alpha", "Operator Beta"
- *   - 2 Technicians: "Technician Alpha", "Technician Beta"
- *   - 1 Viewer: "Surakkha Viewer"
+ * seeded users always resolve to the same User row. **The UUIDs
+ * MUST match `packages/api/src/auth/users.ts`'s `SEED_SPECS`** —
+ * code review 2026-08-27 found a divergence that broke every demo
+ * login except Admin; both rosters now use the canonical a001..a007
+ * prefix reserved for demo users:
+ *   - 1 Admin: a001 (Surakkha Admin)
+ *   - 2 Operators: a002 (Operator Alpha), a006 (Operator Beta)
+ *   - 2 Technicians: a003 (Technician Alpha), a007 (Technician Beta)
+ *   - 1 Viewer: a004 (Surakkha Viewer)
  */
 import { PrismaClient } from "@prisma/client";
 
@@ -48,27 +51,27 @@ export const DEMO_USERS: readonly DemoUser[] = [
     displayName: "Surakkha Admin",
   },
   {
-    id: "00000000-0000-4000-8000-00000000b001",
+    id: "00000000-0000-4000-8000-00000000a002",
     role: "Operator",
     displayName: "Operator Alpha",
   },
   {
-    id: "00000000-0000-4000-8000-00000000b002",
+    id: "00000000-0000-4000-8000-00000000a006",
     role: "Operator",
     displayName: "Operator Beta",
   },
   {
-    id: "00000000-0000-4000-8000-00000000c001",
+    id: "00000000-0000-4000-8000-00000000a003",
     role: "Technician",
     displayName: "Technician Alpha",
   },
   {
-    id: "00000000-0000-4000-8000-00000000c002",
+    id: "00000000-0000-4000-8000-00000000a007",
     role: "Technician",
     displayName: "Technician Beta",
   },
   {
-    id: "00000000-0000-4000-8000-00000000d001",
+    id: "00000000-0000-4000-8000-00000000a004",
     role: "Viewer",
     displayName: "Surakkha Viewer",
   },

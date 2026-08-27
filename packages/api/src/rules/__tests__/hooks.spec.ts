@@ -692,6 +692,27 @@ describe("Story 3.4 — installRuleEngineHooks — DE-BOUNCING", () => {
     expect(payload.rule_id).toBe(RULE_ID_DEBOUNCE);
     expect(payload.value).toBe(312);
     expect(payload.opened_at).toBe(new Date(FRAME_TS_MS + 30_000).toISOString());
+    // Code review 2026-08-27 patch #7: pin incident:opened payload
+    // fields. AC5 closes AI-3.3; the wire-shape pin guards against
+    // silent drift in `IncidentOpenedEventSchema`.
+    const incidentPayloadDevice = incidentEmitDevice.payload as {
+      incident_id: string;
+      device_id: string;
+      metric: string;
+      severity: string;
+      value: number;
+      opened_at: string;
+      alert_id: string;
+    };
+    expect(incidentPayloadDevice.incident_id).toBe("22222222-2222-4222-8222-222222222222");
+    expect(incidentPayloadDevice.device_id).toBe(DEVICE_ID);
+    expect(incidentPayloadDevice.metric).toBe("tds_ppm");
+    expect(incidentPayloadDevice.severity).toBe("warning");
+    expect(incidentPayloadDevice.value).toBe(312);
+    expect(incidentPayloadDevice.alert_id).toBe(payload.alert_id);
+    const incidentPayloadRoom = incidentEmitRoom.payload as typeof incidentPayloadDevice;
+    expect(incidentPayloadRoom.incident_id).toBe("22222222-2222-4222-8222-222222222222");
+    expect(incidentPayloadRoom.alert_id).toBe(payload.alert_id);
   });
 
   it("(ii) FALLING_EDGE_DELAY: open alert exists, breach goes quiet, no clear until hysteresis elapses", async () => {

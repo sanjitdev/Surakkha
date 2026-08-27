@@ -19,6 +19,7 @@
 import {
   type ActionVerb,
   type IncidentPayload,
+  type InspectionOutcome,
   InspectionOutcomeSchema,
 } from "@surakkha/shared/incident";
 import { type Response } from "express";
@@ -301,13 +302,24 @@ type ComputeOutcome =
  */
 export const computeTransition = (input: ComputeInput): ComputeOutcome => {
   const { body, currentRow, verb, actorUserId } = input;
-  const outcome = body?.["outcome"];
+  // Patch (code review 2026-08-27 #14): drop `outcome as never`.
+  // `transition()` accepts `InspectionOutcome | undefined` and
+  // the route's strict-Zod schema has already narrowed `body` to
+  // the verb-specific shape; pass through the typed value instead
+  // of bypassing the type system.
+  const rawOutcome = body?.["outcome"];
+  const outcome: InspectionOutcome | undefined =
+    rawOutcome === undefined
+      ? undefined
+      : typeof rawOutcome === "string"
+        ? (rawOutcome as InspectionOutcome)
+        : undefined;
   const assigneeUserId = body?.["assignee_user_id"];
   const result = transition({
     incident: incidentRowToPayload(currentRow),
     action: verb,
     actorUserId,
-    ...(outcome !== undefined ? { outcome: outcome as never } : {}),
+    ...(outcome !== undefined ? { outcome } : {}),
     ...(assigneeUserId !== undefined && typeof assigneeUserId === "string"
       ? { assigneeUserId }
       : {}),
@@ -452,11 +464,44 @@ export const commitTransition = async (
       });
       return null;
     }
+    if (isPrismaErrorWithCode(err, "P2002")) {
+      // Patch (code review 2026-08-27 #1): partial-unique-index
+      // race on `notification:critical` is benign idempotency.
+      // Map to 409 instead of 500.
+      console.warn(
+        `api/incidents/${id}/${verb}: P2002 collapsed to existing row, treating as concurrent_modification`,
+      );
+      res.status(HTTP_CONFLICT).json({
+        error: "invalid_state_transition",
+        reason: "concurrent_modification",
+      });
+      return null;
+    }
+    if (isPrismaErrorWithCode(err, "P2003")) {
+      // Patch (code review 2026-08-27 #3): FK violation on
+      // assigneeUserId most likely means the User was deleted
+      // between request validation and write. Surface as 400
+      // not_found rather than 500.
+      console.warn(`api/incidents/${id}/${verb}: P2003 FK violation (likely missing assignee)`);
+      res.status(HTTP_BAD_REQUEST).json({ error: "invalid_assignee", reason: "not_found" });
+      return null;
+    }
     console.error(`api/incidents/${id}/${verb}: applyTransition failed`, err);
     res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
     return null;
   }
 };
+
+/**
+ * Narrow type guard for Prisma error code matching. The shape
+ * varies across Prisma versions; the minimal `code` check is
+ * what the writer layer relies on.
+ */
+const isPrismaErrorWithCode = (err: unknown, code: string): boolean =>
+  typeof err === "object" &&
+  err !== null &&
+  "code" in err &&
+  (err as { code?: unknown }).code === code;
 
 interface TransitionLogInput {
   readonly incidentId: string;
@@ -562,6 +607,17 @@ interface InvalidAttemptInput {
  */
 export const writeInvalidAttemptEvent = async (input: InvalidAttemptInput): Promise<void> => {
   const { deps, incidentId, actorUserId, from, attempted, at } = input;
+  // Patch (code review 2026-08-27 #16): emit a structured audit log
+  // alongside the IncidentEvent row. The row is the durable audit
+  // trail; the structured log line is the immediate observability
+  // hook (Story 5.6 will swap `index.ts`'s console transport for
+  // a real AuditLog writer — both surfaces stay in lockstep).
+  deps.audit.emit({
+    auditAction: "invalid_state_transition",
+    userId: actorUserId ?? undefined,
+    outcome: "failure",
+    context: { incidentId, from, attempted, at },
+  });
   try {
     await deps.repo.incidentEvent.create({
       data: {

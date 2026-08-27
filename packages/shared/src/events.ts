@@ -83,6 +83,13 @@ export const IncidentOpenedEventSchema = z.object({
   // The Alert that triggered the auto-create is informational;
   // listeners that don't need it can ignore the field.
   alert_id: z.string().uuid().nullable(),
+  // Patch (code review 2026-08-27 #15): parity with
+  // `IncidentStateChangedEventSchema`. The auto-create path is
+  // system-driven (rule engine, not an operator), so this is
+  // always null in v1 — but pinning the field shape keeps the
+  // socket-emit record uniform across the lifecycle and future-
+  // proofs a manual-create path.
+  actor_user_id: z.string().uuid().nullable(),
 });
 export type IncidentOpenedEvent = z.infer<typeof IncidentOpenedEventSchema>;
 
@@ -94,6 +101,27 @@ export const IncidentStateChangedEventSchema = z.object({
   actor_user_id: z.string().uuid().nullable(),
 });
 export type IncidentStateChangedEvent = z.infer<typeof IncidentStateChangedEventSchema>;
+
+/**
+ * The AC4 `incident_transition` observability log line is emitted
+ * with two shapes — operator-driven transitions carry one of the 5
+ * RBAC verbs (acknowledge, assign, submit_result, resolve, reopen)
+ * and auto-create-from-alert carries `verb: "auto_create"` (a
+ * system-driven value not in `ActionVerbSchema`). The literal is
+ * pinned here for documentation; the API's auto-create log path
+ * writes it via `console.warn` (lint allow-list excludes
+ * `console.info`).
+ *
+ * Code review 2026-08-27, decision 1.
+ */
+export const INCIDENT_TRANSITION_VERB_LITERALS = [
+  "acknowledge",
+  "assign",
+  "submit_result",
+  "resolve",
+  "reopen",
+  "auto_create",
+] as const;
 
 const NOTIFICATION_TITLE_MAX = 200;
 const NOTIFICATION_BODY_MAX = 2_000;

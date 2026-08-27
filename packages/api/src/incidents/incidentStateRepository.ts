@@ -219,7 +219,19 @@ export const applyTransition = async (
   // RESOLVED) preserve the value.
   const ackedAt =
     currentRow.acknowledgedAt ?? (nextState !== "OPEN" && nextState !== "REOPENED" ? at : null);
-  const resolvedAt = nextState === "RESOLVED" ? at : currentRow.resolvedAt;
+  // Stamp resolved_at on RESOLVED; clear it on reopen so consumers
+  // that filter `state === "OPEN" && resolvedAt IS NULL` correctly
+  // categorise a re-opened incident as in-flight again. The
+  // historical `resolved_at` is preserved in the `IncidentEvent`
+  // audit row (`type: "resolve"` + payload) — the row-level column
+  // reflects current state, not lifetime history.
+  // Code review 2026-08-27, decision 6 (option B).
+  const resolvedAt =
+    nextState === "RESOLVED"
+      ? at
+      : nextState === "OPEN" && currentRow.state === "RESOLVED"
+        ? null
+        : currentRow.resolvedAt;
 
   // For `assign`, the new assignee is set; for other verbs, the
   // current value is preserved.

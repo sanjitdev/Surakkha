@@ -55,6 +55,7 @@ import {
   resolveAlertListRepository,
 } from "./alerts/index.js";
 import { type AuditLogger } from "./audit";
+import { buildActorUserIdResolver } from "./auth/actorUserIdResolver";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
 import { buildDevicesRouter } from "./devices/router.js";
@@ -633,18 +634,25 @@ const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
   };
 };
 
+// Story 4.2 — `resolveActorUserId(jwt)` lazy-upsert helper.
+// Extracted to `auth/actorUserIdResolver.ts` to keep `index.ts`
+// under the lint `max-lines: 500` ceiling (Patch #18 from code
+// review 2026-08-27).
+const { resolveActorUserId } = buildActorUserIdResolver(resolvePrismaClient);
+
 // Story 4.2 — mount the `/api/incidents` transition router. The
-// mount sits AFTER `io` + `resolvePrismaClient` are declared so
-// the wiring helper can capture them directly (no closure deferral
-// needed). The router is mounted via the wiring helper
-// (`routerWiring.ts`) which wraps the production Prisma client in
-// the narrow `IncidentStateRepository` slice + the Socket.IO
-// `io` broadcast target.
+// mount sits AFTER `io` + `resolvePrismaClient` + `resolveActorUserId`
+// are declared so the wiring helper can capture them directly (no
+// closure deferral needed). The router is mounted via the wiring
+// helper (`routerWiring.ts`) which wraps the production Prisma
+// client in the narrow `IncidentStateRepository` slice + the
+// Socket.IO `io` broadcast target.
 app.use(
   buildIncidentsRouterMount({
     audit,
     io,
     resolvePrismaClient,
+    resolveActorUserId,
   }),
 );
 

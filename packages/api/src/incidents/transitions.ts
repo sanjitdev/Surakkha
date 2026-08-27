@@ -311,9 +311,11 @@ const actionToEventType = (action: ActionVerb): IncidentEventType => {
  * Project the next-state `IncidentPayload` (wire-row shape) for a
  * successful transition. Pure: same input → same output.
  *
- * Used by the repository layer's writer to assemble the updated
- * row before the `tx.incident.update` call. The pure version
- * keeps the live-Prisma test rig honest — the test asserts that
+ * **Used only by `transitions.spec.ts` for the AC9 time-bookkeeping
+ * coverage.** The production writer at
+ * `incidentStateRepository.ts:215-238` does its own in-transaction
+ * computation; the route layer does NOT call this helper. This
+ * pure version keeps the test rig honest — the test asserts that
  * `projectNextIncident(incident, "ACKNOWLEDGED", ...)` produces
  * exactly the row the writer commits.
  *
@@ -326,10 +328,16 @@ const actionToEventType = (action: ActionVerb): IncidentEventType => {
  *     (INSPECTING, SAFE, UNSAFE, MONITORING, RESOLVED).
  *
  *   - `resolved_at` is stamped only when `next_state === "RESOLVED"`.
+ *     On `reopen` (RESOLVED → OPEN), `resolved_at` is CLEARED so
+ *     consumers that filter `state === "OPEN" && resolvedAt IS NULL`
+ *     correctly categorise the incident as in-flight again. Audit
+ *     history is preserved in the `IncidentEvent` audit row.
  *
  *   - `assignee_user_id` is taken from the `assigneeUserId`
- *     argument (only set on `assign`). For all other verbs, the
- *     current value is preserved.
+ *     argument when non-null AND the next state is one where
+ *     assign is meaningful. For other verbs / null assignee, the
+ *     current value is preserved (matches the production writer's
+ *     logic).
  */
 /**
  * Input shape for `projectNextIncident`. Args-as-object keeps the
@@ -344,16 +352,30 @@ export interface ProjectNextIncidentInput {
 }
 
 /**
- * Project the next `IncidentPayload` from the current row + the
- * transition outcome. Used by the route layer's post-update
- * projection (e.g. for the `incident:state_changed` socket emit)
- * so the wire payload reflects the committed state.
+ * Pure test-only projection that mirrors the production writer's
+ * time-bookkeeping logic. Not called by the production route layer;
+ * `transitions.spec.ts` AC9 block asserts the test passes iff the
+ * writer mirrors this projection.
  */
 export const projectNextIncident = (input: ProjectNextIncidentInput): IncidentPayload => {
   const { current, nextState, at, assigneeUserId } = input;
   const ackedAt =
     current.acknowledged_at ?? (nextState !== "OPEN" && nextState !== "REOPENED" ? at : null);
-  const resolvedAt = nextState === "RESOLVED" ? at : current.resolved_at;
+  // Mirror the writer's reopen semantics: clear `resolved_at` when
+  // moving RESOLVED → OPEN so consumers can filter
+  // `state === "OPEN" && resolvedAt IS NULL`.
+  const resolvedAt =
+    nextState === "RESOLVED"
+      ? at
+      : nextState === "OPEN" && current.state === "RESOLVED"
+        ? null
+        : current.resolved_at;
+  // Mirror the writer's assignee semantics: only `assign` mutates
+  // the assignee; for other verbs, preserve the current value.
+  const newAssignee =
+    nextState === "INSPECTING" && assigneeUserId !== null
+      ? assigneeUserId
+      : current.assignee_user_id;
   return {
     id: current.id,
     device_id: current.device_id,
@@ -362,7 +384,7 @@ export const projectNextIncident = (input: ProjectNextIncidentInput): IncidentPa
     value: current.value,
     opened_at: current.opened_at,
     state: nextState,
-    assignee_user_id: assigneeUserId !== null ? assigneeUserId : current.assignee_user_id,
+    assignee_user_id: newAssignee,
     acknowledged_at: ackedAt,
     resolved_at: resolvedAt,
   };
