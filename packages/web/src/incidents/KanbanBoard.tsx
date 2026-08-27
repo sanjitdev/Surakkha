@@ -108,6 +108,17 @@ const IncidentPayloadWireSchema = z.object({
   resolved_at: z.string().datetime({ offset: true }).nullable(),
 });
 
+/**
+ * Re-export the wire schema for the test rig. The canonical
+ * `IncidentPayloadSchema` lives in `@surakkha/shared/incident`;
+ * this hand-rolled copy MUST stay structurally equivalent to it
+ * (see `KanbanBoard.spec.tsx`'s "structural equivalence" test).
+ * If a future change adds a field to the canonical schema, this
+ * copy must move in lock-step or the `safeParse` at the fetch
+ * site will start failing at runtime.
+ */
+export { IncidentPayloadWireSchema };
+
 const ActiveIncidentsEnvelopeSchema = z.object({
   incidents: z.array(IncidentPayloadWireSchema),
 });

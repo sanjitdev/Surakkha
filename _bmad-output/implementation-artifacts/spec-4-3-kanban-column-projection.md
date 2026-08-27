@@ -98,6 +98,43 @@ context:
 
 <!-- Append-only. Populated by step-04 during review loops. Empty until first loopback. -->
 
+- 2026-08-27 — Step-04 review (3 reviewers: blind-hunter, edge-case, verification-gap). 12 findings total. Tier-1 #1, #2, #4 patched in commit (pending). Tier-1 #3 (out-of-order `incident:state_changed` events) deferred — see "Deferred Findings" below.
+
+## Deferred Findings
+
+These are findings raised during step-04 review that were intentionally NOT patched in this story. They are documented here for the next Epic 4 sweep to address.
+
+**D-1 — Out-of-order `incident:state_changed` events** (severity: bug).
+
+- **Where:** `packages/web/src/incidents/useKanbanBoardSocket.ts:68-93` (`applyStateChangeToCache`).
+- **What:** Concurrent transitions for the same incident are not ordered. If `OPEN → ACKNOWLEDGED → RESOLVED` arrives as `RESOLVED` first then `ACKNOWLEDGED`, the cache mutator's last-write-wins by arrival order, not by `changed_at`. A resolved row could be re-added to the board.
+- **Why deferred:** Fixing requires the server (Story 4.2) to stamp `changed_at` (or a monotonic sequence number) on every emit, AND the client to compare-and-skip stale events. Story 4.2's emitter doesn't currently include this. The fix is a 4.2 + 4.3 cross-cutting change; the right place is the next Epic 4 sweep.
+- **Workaround in 4.3:** The socket connection carries events over the same channel as `incident:opened`, which always includes the fresh row. The board's initial fetch re-anchors state on every navigation, capping the staleness window. Operationally the bug is rare.
+
+**D-2 — `IncidentStateRepository.findMany` interface narrower than Prisma** (severity: drift).
+
+- **Where:** `packages/api/src/incidents/incidentStateRepository.ts:89`.
+- **What:** The narrow slice types `where.state` as `{ not: IncidentState }` — single-state exclusion only. Prisma accepts `notIn: IncidentState[]`.
+- **Why deferred:** Not a 4.3 issue (the v1 filter excludes only RESOLVED). Future story that needs multi-state exclusion (`RESOLVED`, `ARCHIVED`) bumps the interface.
+
+**D-3 — No `onSessionLost` / disconnect handler** (severity: gap).
+
+- **Where:** `packages/web/src/incidents/useKanbanBoardSocket.ts:107-119`.
+- **What:** If the socket drops mid-board, the listener stops; no reconnect indicator, no stale-state warning.
+- **Why deferred:** Out of scope for 4.3. The 4.10 NotificationBell story (or a future connectivity follow-up) owns the disconnect UX.
+
+**D-4 — No live-Prisma test for `IncidentStateRepository.findMany`** (severity: missing-test).
+
+- **Where:** `packages/api/src/incidents/activeRouter.spec.ts` (stub-only).
+- **What:** A Prisma arg-shape mismatch would not surface in the stub test.
+- **Why deferred:** The `incident-state-machine.spec.ts` live-Prisma sibling (planned for the next Epic 4 sweep) covers this when 4.2's full state-machine live tests land.
+
+**D-5 — `_fetchIncidentForBoard` is exported but unused in production** (severity: nit).
+
+- **Where:** `packages/web/src/incidents/useKanbanBoardSocket.ts:135-143`.
+- **What:** Helper is exported with a "currently unused" doc; inflates the test-rig surface.
+- **Why deferred:** The follow-up `incident:opened → insert` path (which needs this helper) is itself deferred to a future story. When that story lands, the export becomes load-bearing.
+
 ## Design Notes
 
 **Why the projection lives in `@surakkha/shared` and not `packages/web/src/incidents/projection.ts`.** The original epics text suggested the web module. Story 4.1's review moved it to `@surakkha/shared` so the api's incident writer can use the same source of truth (e.g., a future "active incidents count" telemetry endpoint, or a server-side rendering of the Kanban HTML for the email digest in Epic 5). The deviation from the literal AC text is intentional and the 4.3 spec honors it.

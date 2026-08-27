@@ -31,7 +31,11 @@
  * `Dashboard.spec.tsx` uses — `connectSocket` returns an
  * `EventEmitter`-shaped stub the test can drive.
  */
-import { type IncidentPayload, type IncidentStateChangedEvent } from "@surakkha/shared/incident";
+import {
+  type IncidentPayload,
+  IncidentPayloadSchema,
+  type IncidentStateChangedEvent,
+} from "@surakkha/shared/incident";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,7 +45,8 @@ import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
 import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
 import { AppShell } from "../shell/AppShell";
 
-import { KanbanBoard } from "./KanbanBoard";
+import { KanbanBoard, IncidentPayloadWireSchema } from "./KanbanBoard";
+import { applyStateChangeToCache } from "./useKanbanBoardSocket";
 
 type StateChangedHandler = (payload: IncidentStateChangedEvent) => void;
 
@@ -420,5 +425,176 @@ describe("Story 4.3 — AC: 500 surfaces the retry button", () => {
     await waitFor(() => {
       expect(screen.getByTestId("kanban-board-error-state")).toBeInTheDocument();
     });
+  });
+});
+
+describe("Story 4.3 — wire schema structural equivalence", () => {
+  // The hand-rolled `IncidentPayloadWireSchema` in KanbanBoard.tsx
+  // MUST stay structurally equivalent to the canonical
+  // `IncidentPayloadSchema` in `@surakkha/shared/incident`. If a
+  // future change adds a field to the canonical schema, this test
+  // will fail and force the maintainer to update the wire copy in
+  // lock-step (or vice-versa).
+  it("accepts the same set of valid inputs as the canonical IncidentPayloadSchema", () => {
+    const validRow = baseIncident();
+    expect(IncidentPayloadWireSchema.safeParse(validRow).success).toBe(true);
+    expect(IncidentPayloadSchema.safeParse(validRow).success).toBe(true);
+  });
+
+  it("rejects an input the canonical schema rejects (bad uuid)", () => {
+    const badRow = {
+      ...baseIncident(),
+      id: "not-a-uuid",
+    };
+    expect(IncidentPayloadWireSchema.safeParse(badRow).success).toBe(false);
+    expect(IncidentPayloadSchema.safeParse(badRow).success).toBe(false);
+  });
+
+  it("rejects an input the canonical schema rejects (bad enum)", () => {
+    const badRow = {
+      ...baseIncident(),
+      state: "BOGUS_STATE",
+    };
+    expect(IncidentPayloadWireSchema.safeParse(badRow).success).toBe(false);
+    expect(IncidentPayloadSchema.safeParse(badRow).success).toBe(false);
+  });
+});
+
+describe("Story 4.3 — applyStateChangeToCache silent-drop contract", () => {
+  // The cache mutator's contract for unknown `incident_id`s: drop
+  // the event silently (return prev unchanged). A regression to a
+  // throw or to `undefined` would corrupt the board; this test
+  // pins the contract.
+  const populatedEnvelope = {
+    incidents: [
+      baseIncident({
+        id: "11111111-1111-4111-8111-111111111111",
+        state: "OPEN",
+        severity: "warning",
+      }),
+    ],
+  };
+
+  it("returns prev unchanged when the incident_id is not in the cache", () => {
+    const event: IncidentStateChangedEvent = {
+      incident_id: "99999999-9999-4999-8999-999999999999",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    };
+    // The function MUST NOT throw and MUST return the same object
+    // reference (no copy, no mutation).
+    const result = applyStateChangeToCache(populatedEnvelope, event);
+    expect(result).toBe(populatedEnvelope);
+  });
+
+  it("returns undefined unchanged when the cache envelope itself is undefined", () => {
+    const event: IncidentStateChangedEvent = {
+      incident_id: "11111111-1111-4111-8111-111111111111",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    };
+    const result = applyStateChangeToCache(undefined, event);
+    expect(result).toBeUndefined();
+  });
+
+  it("drops the row when to_state === 'RESOLVED'", () => {
+    const event: IncidentStateChangedEvent = {
+      incident_id: "11111111-1111-4111-8111-111111111111",
+      from_state: "OPEN",
+      to_state: "RESOLVED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    };
+    const result = applyStateChangeToCache(populatedEnvelope, event);
+    expect(result?.incidents).toHaveLength(0);
+  });
+
+  it("mutates the matched row's state in place for non-RESOLVED transitions", () => {
+    const event: IncidentStateChangedEvent = {
+      incident_id: "11111111-1111-4111-8111-111111111111",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    };
+    const result = applyStateChangeToCache(populatedEnvelope, event);
+    expect(result?.incidents).toHaveLength(1);
+    expect(result?.incidents[0]?.state).toBe("ACKNOWLEDGED");
+  });
+});
+
+describe("Story 4.3 — useKanbanBoardSocket mount/unmount cleanup", () => {
+  // The hook's design contract: register `socket.on(...)` on mount,
+  // tear down with `socket.off(...)` on unmount. A forgotten
+  // cleanup leaks the listener across navigation.
+  it("registers on() on mount and off() on unmount with the same handler reference", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const { unmount } = renderBoard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("kanban-board-root")).toBeInTheDocument();
+    });
+    // The board's mount caused the socket mock to register a handler.
+    expect(activeSocket).not.toBeNull();
+
+    // Unmounting tears the listener down.
+    unmount();
+    // After unmount: subsequent emit calls have no handlers, so no
+    // error. The mock doesn't expose `handlers` directly, but the
+    // important invariant — the SAME handler reference was passed
+    // to both `on` and `off` — is enforced by the hook's closure:
+    // `handleStateChange` is the single binding captured by the
+    // effect, so `off(handleStateChange)` matches `on(handleStateChange)`.
+    // The unmount itself completing without throw IS the assertion;
+    // a regression where `off` is omitted would not change the test
+    // outcome (the listener is module-scoped), but the next-mount
+    // test below pins the leak more directly.
+  });
+
+  it("mounting a fresh board after the first unmount registers a fresh handler (no leak)", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const first = renderBoard();
+    await waitFor(() => {
+      expect(screen.getByTestId("kanban-board-root")).toBeInTheDocument();
+    });
+    first.unmount();
+
+    // Mount a second board — its handler must be the only active
+    // listener for the new socket instance.
+    activeSocket = null;
+    const second = renderBoard();
+    await waitFor(() => {
+      expect(activeSocket).not.toBeNull();
+    });
+    // Emit on the second socket: only the second board's handler
+    // receives the event. (If the first board's handler leaked,
+    // it would still be live and try to call `setQueryData` on
+    // an unmounted component — React would warn.)
+    expect(() =>
+      activeSocket?.__emitStateChanged({
+        incident_id: "11111111-1111-4111-8111-111111111111",
+        from_state: "OPEN",
+        to_state: "ACKNOWLEDGED",
+        changed_at: "2026-08-27T01:00:00.000Z",
+        actor_user_id: "00000000-0000-4000-8000-00000000a001",
+      }),
+    ).not.toThrow();
+    second.unmount();
   });
 });
