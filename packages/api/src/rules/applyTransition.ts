@@ -30,7 +30,16 @@
  * skipped and a `console.warn` is logged so operators can
  * diagnose wire drift (Finding #7).
  */
-import { AlertOpenedEventSchema, type RuleMetric } from "@surakkha/shared";
+import {
+  AlertOpenedEventSchema,
+  IncidentOpenedEventSchema,
+  type RuleMetric,
+} from "@surakkha/shared";
+
+import {
+  type NotificationWriterRepository,
+  writeWarningNotification,
+} from "../notifications/notificationWriter";
 
 import { type AlertStateRepository } from "./alertStateRepository";
 import { type BreachTransition } from "./debounce";
@@ -97,6 +106,10 @@ const applyOpenTransition = async (
   const { broadcast, ctx, slot } = args;
   const { deviceId, metricValue } = ctx;
   let alertId: string | null = null;
+  // Story 4.2 — capture the auto-created Incident's id so the
+  // post-commit `incident:opened` emit + the `notification:warning`
+  // write site can reference it.
+  let incidentId: string | null = null;
   let suppressedExisting = false;
 
   await deps.alertState.$transaction(async (tx) => {
@@ -151,8 +164,13 @@ const applyOpenTransition = async (
     // drift on the wire enum (e.g. a new severity literal) is a
     // closed-set refusal — the Incident is NOT created for unknown
     // severities.
+    //
+    // Story 4.2 — the auto-created Incident lands in `state: "OPEN"`
+    // (the schema's default; we pass it explicitly for self-documentation).
+    // The Incident id is captured for the post-commit
+    // `incident:opened` emit + the `notification:warning` write site.
     if (shouldCreateIncident(transition.severity)) {
-      await tx.incident.create({
+      const created = await tx.incident.create({
         data: buildIncidentPayload({
           deviceId,
           severity: transition.severity,
@@ -160,6 +178,16 @@ const applyOpenTransition = async (
           value: metricValue,
           openedAt: transition.openedAt,
         }),
+      });
+      incidentId = created.id;
+
+      // Story 4.9 — `notification:warning` write site. Lives
+      // INSIDE the same `$transaction` so the (Alert + Incident +
+      // Notification) rows commit as one unit. Idempotency via the
+      // partial unique index — see `notificationWriter.ts` AC5.
+      await writeWarningNotification(tx as unknown as NotificationWriterRepository, {
+        incidentId: created.id,
+        alertId: createdAlertId,
       });
     }
 
@@ -224,6 +252,55 @@ const applyOpenTransition = async (
   console.warn(
     `[alerts] opened device=${deviceId} alertId=${resolvedAlertId} ruleId=${transition.ruleId} severity=${transition.severity} openedAt=${transition.openedAt.toISOString()}`,
   );
+
+  // Story 4.2 — `incident:opened` socket emit (AI-3.3 closure).
+  // Fires ONLY when an Incident row was auto-created from this
+  // transition (warning or critical). The payload shape is locked
+  // in `IncidentOpenedEventSchema` (`@surakkha/shared/events.ts`).
+  // Listeners: Story 4.4 detail page (deferred), dashboard
+  // incidents preview.
+  if (incidentId !== null) {
+    const incidentPayload = {
+      incident_id: incidentId,
+      device_id: deviceId,
+      severity: transition.severity,
+      metric: transition.metric,
+      value: metricValue,
+      opened_at: transition.openedAt.toISOString(),
+      alert_id: resolvedAlertId,
+    };
+    const parsedIncident = IncidentOpenedEventSchema.safeParse(incidentPayload);
+    if (parsedIncident.success) {
+      broadcast.to(`device:${deviceId}`).emit("incident:opened", parsedIncident.data);
+      // Also broadcast on the per-incident room so the detail
+      // page (Story 4.4) can refresh without a separate device
+      // subscription.
+      broadcast.to(`incident:${incidentId}`).emit("incident:opened", parsedIncident.data);
+    } else {
+      console.warn(
+        `[incidents] opened emit skipped: IncidentOpenedEventSchema parse failed device=${deviceId} incidentId=${incidentId} metric=${transition.metric} severity=${transition.severity}`,
+        parsedIncident.error,
+      );
+    }
+    // AC4 (AI-3.2 closure) — observability log on every auto-created
+    // Incident. The same shape as the router-level
+    // `incident_transition` log; `verb: "auto_create"` distinguishes
+    // system-driven from operator-driven transitions. `console.warn`
+    // is intentional — `console.info` is not in the lint allow-list
+    // (the no-console rule allows `console.warn` for explicit
+    // observability signals).
+    console.warn(
+      JSON.stringify({
+        event: "incident_transition",
+        incident_id: incidentId,
+        from: null,
+        to: "OPEN",
+        verb: "auto_create",
+        actor_user_id: null,
+        at: transition.openedAt.toISOString(),
+      }),
+    );
+  }
 };
 
 /**

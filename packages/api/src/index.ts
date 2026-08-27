@@ -59,6 +59,7 @@ import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
 import { buildDevicesRouter } from "./devices/router.js";
 import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
+import { buildIncidentsRouterMount } from "./incidents/routerWiring.js";
 import { NOOP_HOOKS, setIngestHooks } from "./ingest/hooks";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
 import { handleSubscriberConnection } from "./ingest/subscriber";
@@ -279,6 +280,22 @@ const listRecentIncidentsFromPrisma = async (limit: number) => {
 };
 
 app.use(buildRecentIncidentsRouter({ audit, listRecent: listRecentIncidentsFromPrisma }));
+
+/**
+ * Story 4.2 — `/api/incidents/:id/...` transition router. The
+ * forwarder-shaped wrapper mirrors the `thresholdsRepoWrapper`
+ * pattern above: every method awaits the first-use Prisma
+ * resolution then forwards to the typed adapter. The router is
+ * mounted at boot with the wrapper, not the live adapter, so a
+ * transient DB outage at boot does not crash the api process.
+ *
+ * The `broadcast` target is a sibling of `alertBroadcastTarget` —
+ * `io.to(room).emit("incident:state_changed", payload)` is the
+ * same shape, just pointed at the per-incident room
+ * `incident:<uuid>`. The dashboard's `/dashboard` namespace
+ * subscribes to this room; the per-incident detail page (Story
+ * 4.4, deferred) will also subscribe to refresh the timeline.
+ */
 
 /**
  * Story 3.5 — `POST /api/alerts/:alert_id/acknowledge` +
@@ -615,6 +632,21 @@ const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
     },
   };
 };
+
+// Story 4.2 — mount the `/api/incidents` transition router. The
+// mount sits AFTER `io` + `resolvePrismaClient` are declared so
+// the wiring helper can capture them directly (no closure deferral
+// needed). The router is mounted via the wiring helper
+// (`routerWiring.ts`) which wraps the production Prisma client in
+// the narrow `IncidentStateRepository` slice + the Socket.IO
+// `io` broadcast target.
+app.use(
+  buildIncidentsRouterMount({
+    audit,
+    io,
+    resolvePrismaClient,
+  }),
+);
 
 /**
  * Story 3.2 — boot path for the rules engine.
