@@ -64,13 +64,7 @@ const IncidentEventEnvelopeSchema = z.object({
   events: z.array(IncidentEventPayloadSchema),
 });
 
-const IncidentDetailRowSchema = IncidentPayloadSchema;
-
 interface IncidentDetailEnvelope {
-  readonly incident: IncidentPayload;
-}
-
-interface IncidentDetailRow {
   readonly incident: IncidentPayload;
 }
 
@@ -133,8 +127,8 @@ export const IncidentDetailPage = () => {
 
   useIncidentDetailSocket(id ?? "");
 
-  const rowQuery = useQuery<IncidentDetailRow>({
-    queryKey: [...incidentDetailQueryKey(id ?? "")],
+  const rowQuery = useQuery<IncidentDetailEnvelope>({
+    queryKey: incidentDetailQueryKey(id ?? ""),
     enabled: id !== undefined,
     queryFn: async () => {
       const res = await apiFetch(`/api/incidents/${id}`);
@@ -151,13 +145,12 @@ export const IncidentDetailPage = () => {
       if (!res.ok) {
         throw new Error(`/api/incidents/${id} failed: ${res.status}`);
       }
-      const parsed = IncidentDetailRowSchema.safeParse(await res.json());
+      const parsed = IncidentPayloadSchema.safeParse(await res.json());
       if (!parsed.success) {
         console.error("incidents/:id wire-shape mismatch", parsed.error);
         throw new Error("incidents/:id wire-shape mismatch");
       }
-      const envelope: IncidentDetailEnvelope = { incident: parsed.data };
-      return envelope;
+      return { incident: parsed.data };
     },
   });
 
@@ -206,7 +199,7 @@ export const IncidentDetailPage = () => {
       timeline={timeline}
       onRetry={() => {
         void queryClient.invalidateQueries({
-          queryKey: [...incidentDetailQueryKey(id ?? "")],
+          queryKey: incidentDetailQueryKey(id ?? ""),
         });
       }}
     />
@@ -225,7 +218,7 @@ const IncidentDetailDispatch = ({
   timeline,
   onRetry,
 }: {
-  readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailRow>>;
+  readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
   readonly incident: IncidentPayload | undefined;
   readonly timeline: readonly IncidentEventPayload[];
   readonly onRetry: () => void;

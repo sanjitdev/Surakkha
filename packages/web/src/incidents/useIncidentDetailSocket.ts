@@ -51,7 +51,7 @@ export const incidentDetailQueryKey = (id: string): readonly unknown[] => [
   id,
 ];
 
-const KANBAN_SOCKET_URL = "/dashboard";
+const DEFAULT_SOCKET_URL = "/dashboard";
 
 interface DetailCacheEnvelope {
   readonly incident: IncidentPayload;
@@ -86,7 +86,7 @@ export const applyStateChangeToDetailCache = (
  * Tests pass a stub `url` (the socket itself is mocked at the
  * network layer via the `connectSocket` vi.mock pattern).
  */
-export const useIncidentDetailSocket = (id: string, url: string = KANBAN_SOCKET_URL): void => {
+export const useIncidentDetailSocket = (id: string, url: string = DEFAULT_SOCKET_URL): void => {
   const queryClient = useQueryClient();
 
   useEffect(() => {

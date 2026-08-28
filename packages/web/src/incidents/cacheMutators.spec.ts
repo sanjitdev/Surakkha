@@ -12,10 +12,17 @@
  *   - id mismatch returns `null` (silent drop)
  *   - id match returns a new row with `state` replaced
  *   - non-state fields are preserved verbatim
- *   - `to_state: "RESOLVED"` is NOT special-cased here (the
- *     per-hook wrapper decides drop-vs-keep)
+ *   - EVERY stable `to_state` value is NOT special-cased here
+ *     (the per-hook wrapper decides drop-vs-keep); parametrised
+ *     so a future contributor can't add per-state logic without
+ *     breaking the table.
  */
-import { type IncidentPayload, type IncidentStateChangedEvent } from "@surakkha/shared/incident";
+import {
+  type IncidentPayload,
+  type IncidentState,
+  type IncidentStateChangedEvent,
+  INCIDENT_STABLE_STATES,
+} from "@surakkha/shared/incident";
 import { describe, expect, it } from "vitest";
 
 import { applyTransitionToCachedRow } from "./cacheMutators";
@@ -79,20 +86,22 @@ describe("Story 4.4 — applyTransitionToCachedRow", () => {
     });
   });
 
-  it("does NOT special-case RESOLVED — the helper only swaps `state`", () => {
-    const row = baseRow({ state: "ACKNOWLEDGED" });
-    const event = baseEvent({
-      from_state: "ACKNOWLEDGED",
-      to_state: "RESOLVED",
-    });
-    const next = applyTransitionToCachedRow(row, event);
-    // The detail hook's wrapper decides drop-vs-keep. This helper
-    // just replaces the state field — pin that contract.
-    expect(next).toEqual({
-      ...row,
-      state: "RESOLVED",
-    });
-  });
+  // Structural pin for the "single source of truth" contract:
+  // every stable `to_state` is treated identically — the helper
+  // always returns the row with `state` replaced, never a drop.
+  // The per-hook wrapper decides drop-vs-keep; this table fails
+  // if anyone moves that decision INTO the shared helper.
+  describe.each(INCIDENT_STABLE_STATES)(
+    "does NOT special-case to_state=%s",
+    (toState: IncidentState) => {
+      it("returns the row with state replaced (no drop)", () => {
+        const row = baseRow({ state: "OPEN" });
+        const event = baseEvent({ from_state: "OPEN", to_state: toState });
+        const next = applyTransitionToCachedRow(row, event);
+        expect(next).toEqual({ ...row, state: toState });
+      });
+    },
+  );
 
   it("returns a NEW object (does not mutate the input row)", () => {
     const row = baseRow({ state: "OPEN" });

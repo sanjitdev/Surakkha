@@ -421,7 +421,7 @@ describe("Story 4.4 — AC: silent-drop on stale event for a different incident 
 });
 
 describe("Story 4.4 — AC: timeline-only failure modes", () => {
-  it("renders <NotFound /> when the row succeeds but the timeline returns 404", async () => {
+  it("renders the row + empty timeline (NOT <NotFound />) when the timeline returns 404", async () => {
     installFetch(async (url) => {
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
         return new Response(JSON.stringify(baseIncident()), { status: 200 });
@@ -434,25 +434,20 @@ describe("Story 4.4 — AC: timeline-only failure modes", () => {
 
     renderDetail();
 
-    // The row succeeded, but the timeline 404 should still surface
-    // <NotFound /> — the page's `rowQuery.isError` check does NOT
-    // gate this; the timeline query's error bubbles up and the
-    // `enabled: id !== undefined && !rowQuery.isError` guard must
-    // allow the timeline to fetch + fail.
+    // The timeline 404 fires a tagged error on the timeline query;
+    // the row query is successful so `rowQuery.isError` is false
+    // and the page renders the incident row. The timeline section
+    // renders the empty-state copy because the timeline query's
+    // `data` is `undefined`, which the `useMemo` projects to `[]`.
     //
-    // Per the current implementation, the timeline 404 only fires
-    // a tagged error on the timeline query; the row query is
-    // successful so `rowQuery.isError` is false and the page
-    // renders the incident row. The timeline section renders the
-    // empty-state copy (the query is in `isError`, so its `data`
-    // is `undefined`, which the `useMemo` projects to `[]`).
-    //
-    // This test pins the contract: timeline-only failure does NOT
-    // crash or hang — the row renders, the timeline section is
-    // empty.
+    // This test pins the actual contract — a timeline-only 404
+    // does NOT surface <NotFound />; only a row-level 404 does.
+    // A regression that lifted the NotFound dispatch to OR the
+    // two queries would break this assertion; that's the pin.
     await waitFor(() => {
       expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
     });
+    expect(screen.queryByTestId("not-found")).toBeNull();
     expect(screen.getByTestId("incident-detail-timeline-empty")).toHaveTextContent(
       "No audit events yet",
     );

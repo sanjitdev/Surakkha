@@ -295,7 +295,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
       try {
         row = await deps.repo.incident.findUnique({ where: { id } });
       } catch (err) {
-        console.error(`api/incidents/${id}/events: findUnique failed`, err);
+        console.error("api/incidents/:id/events: findUnique failed", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
         return;
       }
@@ -329,7 +329,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
           orderBy: { createdAt: "asc" },
         });
       } catch (err) {
-        console.error(`api/incidents/${id}/events: findMany failed`, err);
+        console.error("api/incidents/:id/events: findMany failed", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
         return;
       }

@@ -68,7 +68,7 @@ export const NotFound = ({
       <Link
         to={backHref}
         data-testid="not-found-back-link"
-        className="not-found-back mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
+        className="mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
         style={{
           backgroundColor: PRIMARY,
         }}
