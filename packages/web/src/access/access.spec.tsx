@@ -14,6 +14,7 @@
  *     stay in lockstep.
  */
 import { cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -22,11 +23,17 @@ import { RbacRoute } from "./RbacRoute";
 import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
 import { AppShell } from "../shell/AppShell";
 import { Sidebar } from "../shell/Sidebar";
-import {
-  NAV_GROUPS,
-  findNavItemForPath,
-  isPathAllowedForRole,
-} from "../shell/nav";
+import { NAV_GROUPS, findNavItemForPath, isPathAllowedForRole } from "../shell/nav";
+
+/**
+ * Story 4.8 — `<AppShell />` now mounts `<SeverityBanner />`, which
+ * reads `GET /api/incidents/active` via TanStack `useQuery`. The
+ * access spec doesn't care about the banner; every test wraps its
+ * tree in a fresh `QueryClientProvider` so the shared cache does not
+ * bleed between tests. The query sits in `idle` (no fetch mock
+ * needed; `data ?? []` → zero-count → null banner DOM, matching the
+ * 1.6 test contract).
+ */
 
 const setViewport = (width: number) => {
   Object.defineProperty(window, "innerWidth", {
@@ -138,13 +145,15 @@ describe("Story 1.6 — RbacRoute gate (AC2)", () => {
 
   const renderAuditRoute = (initialRole: "Admin" | "Viewer" | null) => (
     <MemoryRouter initialEntries={["/audit"]}>
-      <CurrentRoleProvider initialRole={initialRole}>
-        <AppShell>
-          <RbacRoute>
-            <div data-testid="audit-content">audit content</div>
-          </RbacRoute>
-        </AppShell>
-      </CurrentRoleProvider>
+      <QueryClientProvider client={new QueryClient()}>
+        <CurrentRoleProvider initialRole={initialRole}>
+          <AppShell>
+            <RbacRoute>
+              <div data-testid="audit-content">audit content</div>
+            </RbacRoute>
+          </AppShell>
+        </CurrentRoleProvider>
+      </QueryClientProvider>
     </MemoryRouter>
   );
 
@@ -168,13 +177,15 @@ describe("Story 1.6 — RbacRoute gate (AC2)", () => {
   it("renders the content for any role on /dashboard (Monitor, roles: null)", () => {
     render(
       <MemoryRouter initialEntries={["/dashboard"]}>
-        <CurrentRoleProvider initialRole="Viewer">
-          <AppShell>
-            <RbacRoute>
-              <div data-testid="dashboard-content">dashboard content</div>
-            </RbacRoute>
-          </AppShell>
-        </CurrentRoleProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          <CurrentRoleProvider initialRole="Viewer">
+            <AppShell>
+              <RbacRoute>
+                <div data-testid="dashboard-content">dashboard content</div>
+              </RbacRoute>
+            </AppShell>
+          </CurrentRoleProvider>
+        </QueryClientProvider>
       </MemoryRouter>,
     );
     expect(screen.getByTestId("dashboard-content")).toBeInTheDocument();
@@ -213,20 +224,22 @@ describe("Story 1.6 — RbacRoute integrates with React Router", () => {
   it("renders RbacDenied when the user navigates to /audit as a Viewer", () => {
     render(
       <MemoryRouter initialEntries={["/audit"]}>
-        <CurrentRoleProvider initialRole="Viewer">
-          <Routes>
-            <Route
-              path="/audit"
-              element={
-                <AppShell>
-                  <RbacRoute>
-                    <div data-testid="audit-content">audit content</div>
-                  </RbacRoute>
-                </AppShell>
-              }
-            />
-          </Routes>
-        </CurrentRoleProvider>
+        <QueryClientProvider client={new QueryClient()}>
+          <CurrentRoleProvider initialRole="Viewer">
+            <Routes>
+              <Route
+                path="/audit"
+                element={
+                  <AppShell>
+                    <RbacRoute>
+                      <div data-testid="audit-content">audit content</div>
+                    </RbacRoute>
+                  </AppShell>
+                }
+              />
+            </Routes>
+          </CurrentRoleProvider>
+        </QueryClientProvider>
       </MemoryRouter>,
     );
     expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();

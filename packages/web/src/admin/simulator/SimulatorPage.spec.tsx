@@ -14,14 +14,7 @@
  */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -111,9 +104,7 @@ const renderDeniedSimulator = (role: "Viewer" | "Operator" | "Technician" | null
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-const installFetch = (
-  handler: (url: string, init?: RequestInit) => Promise<Response>,
-): void => {
+const installFetch = (handler: (url: string, init?: RequestInit) => Promise<Response>): void => {
   globalThis.fetch = handler as unknown as typeof fetch;
 };
 
@@ -193,7 +184,19 @@ describe("Story 2.5 — RbacDenied for non-Admin roles", () => {
       await waitFor(() => {
         expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();
       });
-      expect(fetchSpy).not.toHaveBeenCalled();
+      // Story 4.8 — the AppShell now mounts `<SeverityBanner />`,
+      // which reads `GET /api/incidents/active`. This is a
+      // permissioned endpoint (not the simulator); the call is
+      // independent of the route gate's RBAC check. The simulator-
+      // specific endpoints (`/admin/simulator/status`,
+      // `/admin/simulator/devices`) MUST NOT be called when the
+      // route gate denies.
+      const simulatorCalls = fetchSpy.mock.calls.filter(
+        ([url]) =>
+          typeof url === "string" &&
+          (url.includes("/admin/simulator/status") || url.includes("/admin/simulator/devices")),
+      );
+      expect(simulatorCalls).toHaveLength(0);
     });
   }
 });
@@ -275,9 +278,7 @@ describe("Story 2.5 — Switch failure path", () => {
     });
 
     // The row's scenario badge starts at "Normal" (from DEVICE_LIST).
-    expect(
-      screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent,
-    ).toBe("Normal");
+    expect(screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent).toBe("Normal");
 
     // Change the select first so the no-change short-circuit
     // (G3-14) doesn't suppress the POST.
@@ -291,9 +292,7 @@ describe("Story 2.5 — Switch failure path", () => {
       expect(screen.getByTestId("simulator-toast-error")).toBeInTheDocument();
     });
     // The row's badge is unchanged — no optimistic update on failure.
-    expect(
-      screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent,
-    ).toBe("Normal");
+    expect(screen.getByTestId(`simulator-row-scenario-${DEVICE_A}`).textContent).toBe("Normal");
   });
 });
 
@@ -373,9 +372,7 @@ describe("Story 2.5 — Pause control", () => {
     });
     // After the error toast surfaces, the label MUST still be "Pause"
     // — no optimistic revert.
-    expect(
-      screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent,
-    ).toBe("Pause");
+    expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent).toBe("Pause");
   });
 });
 
@@ -407,10 +404,7 @@ describe("Story 2.5 — 409 switch_in_progress surfaces as an error toast", () =
     // Change the select first so the no-change short-circuit
     // (G3-14) doesn't suppress the POST. DEVICE_D's current
     // scenario is "ChlorineDrop".
-    await user.selectOptions(
-      screen.getByTestId(`simulator-row-select-${DEVICE_D}`),
-      "Normal",
-    );
+    await user.selectOptions(screen.getByTestId(`simulator-row-select-${DEVICE_D}`), "Normal");
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_D}`));
 
     await waitFor(() => {
@@ -491,10 +485,7 @@ describe("Story 2.5 — 400 invalid_scenario (AC5)", () => {
     // Change the select first so the no-change short-circuit
     // (G3-14) doesn't suppress the POST. DEVICE_A's current
     // scenario is "Normal".
-    await user.selectOptions(
-      screen.getByTestId(`simulator-row-select-${DEVICE_A}`),
-      "RisingTDS",
-    );
+    await user.selectOptions(screen.getByTestId(`simulator-row-select-${DEVICE_A}`), "RisingTDS");
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
 
     await waitFor(() => {
@@ -549,10 +540,7 @@ describe("Story 2.5 — 403 secret_mismatch (AC8) transitions to disabled banner
     // Change the select first so the no-change short-circuit
     // (G3-14) doesn't suppress the POST. DEVICE_A's current
     // scenario is "Normal".
-    await user.selectOptions(
-      screen.getByTestId(`simulator-row-select-${DEVICE_A}`),
-      "RisingTDS",
-    );
+    await user.selectOptions(screen.getByTestId(`simulator-row-select-${DEVICE_A}`), "RisingTDS");
     await user.click(screen.getByTestId(`simulator-row-switch-${DEVICE_A}`));
 
     // G3-04: the 403 transitions the page into the disabled-banner
@@ -700,9 +688,7 @@ describe("Story 2.5 — Pause success transitions label to 'Resume' (G3-07)", ()
       expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`)).toBeInTheDocument();
     });
 
-    expect(
-      screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent,
-    ).toBe("Pause");
+    expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent).toBe("Pause");
 
     await user.click(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`));
 
@@ -710,9 +696,7 @@ describe("Story 2.5 — Pause success transitions label to 'Resume' (G3-07)", ()
       expect(screen.getByTestId("simulator-toast-success")).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(
-        screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent,
-      ).toBe("Resume");
+      expect(screen.getByTestId(`simulator-row-pause-${DEVICE_C}`).textContent).toBe("Resume");
     });
   });
 });

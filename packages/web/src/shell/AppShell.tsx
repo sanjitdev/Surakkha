@@ -21,6 +21,7 @@ import { type Role } from "@surakkha/shared/rbac";
 import { type PropsWithChildren, useEffect, useState } from "react";
 
 import { useCurrentRole } from "../auth/CurrentRoleContext";
+import { SeverityBanner } from "../incidents/SeverityBanner";
 
 import { ConnectionStateBanner } from "./ConnectionStateBanner";
 import { Sidebar } from "./Sidebar";
@@ -39,9 +40,9 @@ const detectBreakpoint = (): Breakpoint => {
 };
 
 const CANVAS_PADDING: Record<Breakpoint, string> = {
-  lg: "px-6", /* 24px */
-  md: "px-4", /* 16px */
-  sm: "px-3", /* 12px */
+  lg: "px-6" /* 24px */,
+  md: "px-4" /* 16px */,
+  sm: "px-3" /* 12px */,
 };
 
 interface AppShellProps extends PropsWithChildren {
@@ -84,9 +85,14 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
         <ConnectionStateBanner />
       </div>
 
-      {/* SeverityBanner slot — Story 1.8 / Epic 4 wires the real
-          sticky banner here. Empty slot today. */}
-      <div data-testid="severity-banner-slot" />
+      {/* SeverityBanner slot — Story 4.8 wires the real sticky
+          banner here. The banner is its own direct child of the
+          slot — no wrapper elements — so the DOM-tree position
+          test stays a simple slot-vs-slot comparison (matches the
+          2.9 stacking convention for ConnectionStateBanner above). */}
+      <div data-testid="severity-banner-slot">
+        <SeverityBanner />
+      </div>
 
       <TopBar onHamburger={() => setDrawerOpen(true)} />
 
@@ -103,10 +109,7 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
 
         <main
           data-testid="app-canvas"
-          className={[
-            "min-h-[calc(100vh-56px)] flex-1",
-            CANVAS_PADDING[breakpoint],
-          ].join(" ")}
+          className={["min-h-[calc(100vh-56px)] flex-1", CANVAS_PADDING[breakpoint]].join(" ")}
         >
           {children}
         </main>

@@ -61,6 +61,7 @@ import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
 
 import { KanbanCard } from "./KanbanCard";
+import { KanbanRbacDeniedError } from "./KanbanRbacDeniedError";
 import { KANBAN_ACTIVE_QUERY_KEY, useKanbanBoardSocket } from "./useKanbanBoardSocket";
 
 const COLUMN_ORDER: readonly KanbanColumn[] = [
@@ -287,16 +288,15 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
 };
 
 /**
- * Tagged error type for RBAC denials. Distinct from a generic
- * `Error` so the parent board can render `<RbacDenied />` for
- * 403s while keeping the generic 500/empty path separate.
+ * Re-export `KanbanRbacDeniedError` from its dedicated module
+ * (`./KanbanRbacDeniedError`) for backward compat — Story 4.3
+ * defined it here originally; Story 4.8 extracted it to break
+ * the import cycle between `KanbanBoard.tsx` and
+ * `useSeverityBanner.ts`. The original export path stays
+ * available so external callers (tests + sibling modules) don't
+ * need to update imports.
  */
-export class KanbanRbacDeniedError extends Error {
-  constructor() {
-    super("RBAC denied for /api/incidents/active");
-    this.name = "KanbanRbacDeniedError";
-  }
-}
+export { KanbanRbacDeniedError };
 
 interface KanbanErrorStateProps {
   readonly onRetry: () => void;

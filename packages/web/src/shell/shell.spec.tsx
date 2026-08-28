@@ -14,6 +14,7 @@
  * the Admin group; an Operator sees Monitor + Operate but not Admin.
  */
 import { cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -45,14 +46,26 @@ const setViewport = (width: number) => {
   };
 };
 
-const renderShell = (role: "Admin" | "Operator" | "Technician" | "Viewer" | null = null) =>
-  render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
-      <AppShell currentRole={role}>
-        <div>canvas content</div>
-      </AppShell>
-    </MemoryRouter>,
+const renderShell = (role: "Admin" | "Operator" | "Technician" | "Viewer" | null = null) => {
+  // Story 4.8 — `<AppShell />` mounts `<SeverityBanner />` which
+  // reads `GET /api/incidents/active` via TanStack `useQuery`. The
+  // shell spec doesn't care about the banner (the 1.2b scope is
+  // layout-only); a fresh `QueryClient` per render keeps the test
+  // hermetic and lets the query sit in `idle` (no fetch mock
+  // needed; `data ?? []` → zero-count → null banner DOM).
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <AppShell currentRole={role}>
+          <div>canvas content</div>
+        </AppShell>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+};
 
 describe("Story 1.2b — sidebar at viewport >= 1024px", () => {
   beforeEach(() => setViewport(1280));
@@ -154,17 +167,13 @@ describe("Story 1.2b — topbar", () => {
     renderShell("Admin");
     const topbar = screen.getByTestId("topbar");
     expect(topbar.style.height).toBe("56px");
-    expect(topbar.style.boxShadow).toBe(
-      "0 1px 2px rgba(15, 23, 42, 0.04)",
-    );
+    expect(topbar.style.boxShadow).toBe("0 1px 2px rgba(15, 23, 42, 0.04)");
   });
 
   it("renders the brand mark with the primary gradient", () => {
     renderShell("Admin");
     const mark = screen.getByText("S");
     const parent = mark.parentElement;
-    expect(parent?.style.backgroundImage).toBe(
-      "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)",
-    );
+    expect(parent?.style.backgroundImage).toBe("linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)");
   });
 });
