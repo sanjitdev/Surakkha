@@ -45,6 +45,7 @@ import {
   IncidentEventPayloadSchema,
   type IncidentPayload,
   IncidentPayloadSchema,
+  type InspectionOutcome,
 } from "@surakkha/shared/incident";
 import { type Role } from "@surakkha/shared/rbac";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -56,6 +57,7 @@ import { NotFound } from "../access/NotFound";
 import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
+import { readUserIdFromStore } from "../auth/tokenStore";
 
 import { IncidentDetailActions } from "./IncidentDetailActions";
 import { IncidentDetailNotFoundError } from "./IncidentDetailNotFoundError";
@@ -65,6 +67,7 @@ import { ToastRegion, useToasts } from "./toast";
 import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
 import { type AssignMutationError, useAssignMutation } from "./useAssignMutation";
 import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
+import { type SubmitResultMutationError, useSubmitResultMutation } from "./useSubmitResultMutation";
 
 /** HTTP status code sentinels — RBAC denial + not-found. */
 const HTTP_FORBIDDEN = 403;
@@ -144,9 +147,19 @@ export const IncidentDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const viewerRole = useCurrentRole();
+  // `viewerUserId` is sourced from the access token's `sub` claim
+  // (mirroring how the api's `authorize` middleware reads
+  // `req.user.id`). Story 4.7 needs this so the detail page can
+  // pass it to `actionSlotsFor`'s third argument — the INSPECTING
+  // ownership gate (`slotsForInspecting` returns `["submit-result"]`
+  // only when `assignee_user_id === viewerUserId`). Synchronous
+  // read so the slot gate is consistent across the first render and
+  // re-renders; mirrors how `useCurrentRole` works for `viewerRole`.
+  const viewerUserId = readUserIdFromStore();
   const { toasts, pushToast } = useToasts();
   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
   const assignMutation = useAssignMutation(id ?? "");
+  const submitResultMutation = useSubmitResultMutation(id ?? "");
 
   useIncidentDetailSocket(id ?? "");
 
@@ -250,6 +263,25 @@ export const IncidentDetailPage = () => {
     );
   };
 
+  // Success + error handlers for the Submit Result mutation. Mirrors
+  // `handleAcknowledge` and `handleAssign` with verb-specific copy
+  // swapped. The mutation accepts the uppercase enum directly — the
+  // radio's `value` attribute is already uppercase, and the wire body
+  // uses the same uppercase enum per `InspectionOutcomeSchema`.
+  const handleSubmitResult = (outcome: InspectionOutcome): void => {
+    submitResultMutation.mutate(
+      { outcome },
+      {
+        onSuccess: () => {
+          pushToast("success", "Result submitted");
+        },
+        onError: (err: SubmitResultMutationError) => {
+          pushToast("error", err.message);
+        },
+      },
+    );
+  };
+
   return (
     <>
       <IncidentDetailDispatch
@@ -257,10 +289,13 @@ export const IncidentDetailPage = () => {
         incident={incident}
         timeline={timeline}
         viewerRole={viewerRole}
+        viewerUserId={viewerUserId}
         isAck={acknowledgeMutation.isPending}
         isAssign={assignMutation.isPending}
+        isSubmitting={submitResultMutation.isPending}
         onAcknowledge={handleAcknowledge}
         onAssign={handleAssign}
+        onSubmitResult={handleSubmitResult}
         onRetry={() => {
           void queryClient.invalidateQueries({
             queryKey: incidentDetailQueryKey(id ?? ""),
@@ -288,20 +323,26 @@ const IncidentDetailDispatch = ({
   incident,
   timeline,
   viewerRole,
+  viewerUserId,
   isAck,
   isAssign,
+  isSubmitting,
   onAcknowledge,
   onAssign,
+  onSubmitResult,
   onRetry,
 }: {
   readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
   readonly incident: IncidentPayload | undefined;
   readonly timeline: readonly IncidentEventPayload[];
   readonly viewerRole: Role | null;
+  readonly viewerUserId: string | null;
   readonly isAck: boolean;
   readonly isAssign: boolean;
+  readonly isSubmitting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
+  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
   readonly onRetry: () => void;
 }) => {
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
@@ -321,10 +362,13 @@ const IncidentDetailDispatch = ({
       incident={incident}
       timeline={timeline}
       viewerRole={viewerRole}
+      viewerUserId={viewerUserId}
       isAck={isAck}
       isAssign={isAssign}
+      isSubmitting={isSubmitting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
+      onSubmitResult={onSubmitResult}
     />
   );
 };
@@ -341,18 +385,24 @@ const IncidentDetailBody = ({
   incident,
   timeline,
   viewerRole,
+  viewerUserId,
   isAck,
   isAssign,
+  isSubmitting,
   onAcknowledge,
   onAssign,
+  onSubmitResult,
 }: {
   readonly incident: IncidentPayload;
   readonly timeline: readonly IncidentEventPayload[];
   readonly viewerRole: Role | null;
+  readonly viewerUserId: string | null;
   readonly isAck: boolean;
   readonly isAssign: boolean;
+  readonly isSubmitting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
+  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
 }) => (
   <div
     data-testid="incident-detail-root"
@@ -411,10 +461,13 @@ const IncidentDetailBody = ({
     <IncidentDetailActions
       incident={incident}
       viewerRole={viewerRole}
+      viewerUserId={viewerUserId}
       isAck={isAck}
       isAssign={isAssign}
+      isSubmitting={isSubmitting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
+      onSubmitResult={onSubmitResult}
     />
 
     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">

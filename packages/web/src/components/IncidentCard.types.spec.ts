@@ -139,6 +139,35 @@ describe("Story 4.1 — actionSlotsFor INSPECTING state (AC9)", () => {
     });
     expect(actionSlotsFor(incident, "Admin")).toEqual([]);
   });
+
+  // Story 4.7 regression pin: even when an Admin's `viewerUserId`
+  // matches the assignee (an edge case where the seeded Admin and
+  // Technician rows happen to share an id), the role gate still
+  // wins — Admin never sees the Technician-only `submit-result`
+  // slot. Same for Operator + Viewer.
+  it("Admin sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
+    const incident = makeIncident({
+      state: "INSPECTING",
+      assignee_user_id: TECH_ID,
+    });
+    expect(actionSlotsFor(incident, "Admin", TECH_ID)).toEqual([]);
+  });
+
+  it("Operator sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
+    const incident = makeIncident({
+      state: "INSPECTING",
+      assignee_user_id: TECH_ID,
+    });
+    expect(actionSlotsFor(incident, "Operator", TECH_ID)).toEqual([]);
+  });
+
+  it("Viewer sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
+    const incident = makeIncident({
+      state: "INSPECTING",
+      assignee_user_id: TECH_ID,
+    });
+    expect(actionSlotsFor(incident, "Viewer", TECH_ID)).toEqual([]);
+  });
 });
 
 describe("Story 4.1 — actionSlotsFor post-inspection states (SAFE / UNSAFE / MONITORING)", () => {

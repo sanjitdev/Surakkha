@@ -87,6 +87,12 @@ export const actionSlotsFor = (
 ): readonly ActionSlot[] => {
   if (viewerRole === null) return [];
   if (incident.state === "INSPECTING") {
+    // The submit-result slot is Technician-only-mine. The
+    // ownership rule (`assignee_user_id === viewerUserId`) lives
+    // in `slotsForInspecting`; the role gate lives here so the
+    // helper stays role-free (the helper itself doesn't read
+    // `viewerRole`).
+    if (viewerRole !== "Technician") return [];
     return slotsForInspecting(incident.assignee_user_id, viewerUserId);
   }
   const perRole = STATE_SLOTS[incident.state];

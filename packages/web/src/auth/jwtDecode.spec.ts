@@ -1,9 +1,10 @@
 /**
  * Story 1.7 — JWT decoder.
  *
- * The decoder extracts `role` and `exp` from the access token payload
- * (base64url-decoded). The signature is NOT verified client-side — the
- * api's `authenticate` middleware does that on every request.
+ * The decoder extracts `role`, `sub` (as `userId`), and `exp` from the
+ * access token payload (base64url-decoded). The signature is NOT verified
+ * client-side — the api's `authenticate` middleware does that on every
+ * request.
  */
 import { describe, expect, it } from "vitest";
 
@@ -35,6 +36,7 @@ describe("Story 1.7 — decodeAccessToken (JWT role claim)", () => {
     });
     expect(decodeAccessToken(token)).toEqual({
       role: "Admin",
+      userId: "00000000-0000-4000-8000-00000000a001",
       expiresAt: 9999999999,
     });
   });
@@ -66,16 +68,48 @@ describe("Story 1.7 — decodeAccessToken (JWT role claim)", () => {
   it("returns nulls for a malformed token (not 3 parts)", () => {
     expect(decodeAccessToken("not.a.real.token.extra")).toEqual({
       role: null,
+      userId: null,
       expiresAt: null,
     });
     expect(decodeAccessToken("only-one-part")).toEqual({
       role: null,
+      userId: null,
       expiresAt: null,
     });
   });
 
   it("returns nulls for an unparseable payload", () => {
     const token = `aaa.!!!not-base64!!!.sig`;
-    expect(decodeAccessToken(token)).toEqual({ role: null, expiresAt: null });
+    expect(decodeAccessToken(token)).toEqual({
+      role: null,
+      userId: null,
+      expiresAt: null,
+    });
+  });
+});
+
+describe("Story 4.7 — decodeAccessToken (JWT sub claim → userId)", () => {
+  it("returns the userId for a token with a string sub claim", () => {
+    const token = mint({
+      sub: "00000000-0000-4000-8000-00000000a003",
+      role: "Technician",
+      exp: 9999999999,
+    });
+    expect(decodeAccessToken(token).userId).toBe("00000000-0000-4000-8000-00000000a003");
+  });
+
+  it("returns userId=null when the sub claim is absent", () => {
+    const token = mint({ role: "Operator", exp: 100 });
+    expect(decodeAccessToken(token).userId).toBeNull();
+  });
+
+  it("returns userId=null when the sub claim is the empty string", () => {
+    const token = mint({ sub: "", role: "Admin", exp: 100 });
+    expect(decodeAccessToken(token).userId).toBeNull();
+  });
+
+  it("returns userId=null when the sub claim is a non-string type", () => {
+    const token = mint({ sub: 42, role: "Admin", exp: 100 });
+    expect(decodeAccessToken(token).userId).toBeNull();
   });
 });

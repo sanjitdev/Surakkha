@@ -1,40 +1,40 @@
 /**
- * `IncidentDetailActions` — Story 4.5 + Story 4.6.
+ * `IncidentDetailActions` — Story 4.5 + Story 4.6 + Story 4.7.
  *
  * The action region on the detail page. Mounted by
  * `<IncidentDetailBody />` between the `<dl>` and the audit timeline.
  *
- * Visibility gate: `actionSlotsFor(incident, viewerRole)` from
- * Story 4.1's contract module (`@/components/IncidentCard.types`).
- * The gate is the SAME single source of truth that Kanban cards
- * will eventually consume for card-level affordances (out of scope
- * for 4.5/4.6). Returns:
+ * Visibility gate: `actionSlotsFor(incident, viewerRole, viewerUserId)`
+ * from Story 4.1's contract module
+ * (`@/components/IncidentCard.types`). The gate is the SAME single
+ * source of truth that Kanban cards will eventually consume for card-
+ * level affordances (out of scope for 4.5/4.6/4.7). Returns:
  *
- *   - "acknowledge" in the slot list → render the Acknowledge button
- *   - "assign"      in the slot list → render the Assign inline form
- *   - otherwise                       → render nothing for that slot
+ *   - "acknowledge"   in the slot list → render the Acknowledge button
+ *   - "assign"        in the slot list → render the Assign inline form
+ *   - "submit-result" in the slot list → render the Submit Result form
+ *   - otherwise                         → render nothing for that slot
  *
- * Both buttons are `disabled` while their respective mutation is in
+ * Story 4.6 added the Assign inline form (Technician `<select>` of
+ * seeded ids + Assign button). Story 4.7 adds the Submit Result form
+ * (three radio inputs from `InspectionOutcomeSchema` + Submit button).
+ * Both forms share the gate pattern: gate-first, then per-slot render.
+ *
+ * All buttons are `disabled` while their respective mutation is in
  * flight (idempotent re-click protection; the api also rejects 409 on
  * second-call, but the disable prevents the round-trip + flash
  * entirely). On click, the mutation fires; success + error toasts
  * surface via the page's `useToasts()` queue.
  *
- * Story 4.6 adds the Assign control. The pick-a-Technician UI is an
- * inline `<select>` of seeded Technician ids (`SEEDED_TECHNICIAN_IDS`
- * from `seededTechnicians.ts`) plus an Assign button — no modal,
- * no portal, no focus trap. The button is disabled until a
- * Technician is selected from the inline form.
- *
- * Why both controls in one component (not two siblings): both share
- * the same `actionSlotsFor` gate and the same visibility matrix
- * (both Admin + Operator, both rendered inside the body between
- * `<dl>` and the audit timeline). Splitting would duplicate the
- * gate logic and force two parent components to coordinate state.
- * Per-button testids disambiguate (`incident-detail-acknowledge-button`,
- * `incident-detail-assign-button`).
+ * Why all three controls in one component (not three siblings): all
+ * share the same `actionSlotsFor` gate and the same visibility matrix
+ * (Acknowledge + Assign for Admin/Operator, Submit-Result for the
+ * assigned Technician; all rendered inside the body between `<dl>` and
+ * the audit timeline). Splitting would duplicate the gate logic and
+ * force three parent components to coordinate state. Per-button
+ * testids disambiguate.
  */
-import { type IncidentPayload } from "@surakkha/shared/incident";
+import { type IncidentPayload, type InspectionOutcome } from "@surakkha/shared/incident";
 import { type Role } from "@surakkha/shared/rbac";
 import { useState } from "react";
 
@@ -52,69 +52,91 @@ const TECH_LABEL_TAIL_LENGTH = 8;
 /**
  * Props for `<IncidentDetailActions />`.
  *
- * The Acknowledge and Assign mutations are owned by the page; this
- * component receives the `isAck` / `isAssign` in-flight flags plus
+ * The three mutations are owned by the page; this component receives
+ * the `isAck` / `isAssign` / `isSubmitting` in-flight flags plus
  * the click callbacks so the component controls button-disabled +
  * click forwarding without re-creating the mutations (the page owns
  * the mutation lifecycle). Pattern mirrors ThresholdsPage's
  * `onDeactivate` / `onActivate` props threaded through
  * `<ThresholdsPopulatedView />`.
  *
- * The `Acknowledge` callback has no argument (the verb is implicit);
- * the `Assign` callback receives the selected `assigneeUserId` (the
- * page forwards it into the mutation's `variables`).
+ * The `Acknowledge` callback has no argument (the verb is implicit).
+ * The `Assign` callback receives the selected `assigneeUserId` (the
+ * page forwards it into the mutation's `variables`). The
+ * `SubmitResult` callback receives the selected `outcome` (uppercase
+ * enum; passed straight into the wire body — no casing swap).
  *
- * Prop naming: `isAck` / `isAssign` instead of the more verbose
- * `isAckPending` / `isAssignPending` because the React lint rule
- * `react/boolean-prop-naming` rejects names like `isAckPending`
- * (it parses as two capitalized syllables — `isAck` + `Pending` —
- * which violates the convention). The trailing `Pending` is implied
- * by the React Query / mutation semantics; the page wires the
- * `.isPending` field straight through.
+ * `viewerUserId` is threaded through to `actionSlotsFor`'s third
+ * argument — the INSPECTING ownership gate
+ * (`slotsForInspecting` returns `["submit-result"]` only when
+ * `assignee_user_id === viewerUserId`). Optional because the gate
+ * already treats `null` as "no ownership" — 4.5 + 4.6 did not need
+ * the third argument; 4.7's Submit Result slot does.
+ *
+ * Prop naming rationale:
+ *   - `isAck` / `isAssign` — `is` + single capitalized word passes
+ *     the `react/boolean-prop-naming` rule (`^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])$`).
+ *   - `isSubmitting` — verb-form with the `is` prefix. The full
+ *     `isSubmitResult` form would parse as two capitalized syllables
+ *     (`isSubmit` + `Result`) and the rule rejects it. Truncating
+ *     to `isSubmitting` keeps the boolean semantics clear while
+ *     passing the regex. The trailing `Pending` is implied by the
+ *     React Query / mutation semantics; the page wires the
+ *     `.isPending` field straight through.
  */
 interface IncidentDetailActionsProps {
   readonly incident: IncidentPayload;
   readonly viewerRole: Role | null;
+  readonly viewerUserId: string | null;
   readonly isAck: boolean;
   readonly isAssign: boolean;
+  readonly isSubmitting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
+  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
 }
 
 /**
- * Render the action region (Acknowledge button + Assign inline form)
- * based on `actionSlotsFor`. Each slot renders independently:
+ * Render the action region (Acknowledge button + Assign inline form
+ * + Submit Result form) based on `actionSlotsFor`. Each slot renders
+ * independently:
  *
- *   - "acknowledge" slot present → render the Acknowledge button.
- *   - "assign"      slot present → render the inline form (Technician
- *                                       `<select>` + Assign button).
+ *   - "acknowledge" slot present   → render the Acknowledge button.
+ *   - "assign"      slot present   → render the Assign inline form
+ *                                     (Technician `<select>` + button).
+ *   - "submit-result" slot present → render the Submit Result form
+ *                                     (three radio inputs + button).
  *
  * Returns `null` only when NEITHER slot is available — we render
  * nothing rather than a disabled button with a tooltip, because:
  *
  *   - The detail page's header already surfaces the state pill; the
  *     "no button" affordance IS the read-only signal.
- *   - Future actions (submit-result / reopen in Stories 4.7 / 4.11)
- *     will gate the same way; rendering nothing for closed slots
- *     keeps the actions region consistent.
+ *   - All three actions share the gate; rendering nothing for closed
+ *     slots keeps the actions region consistent.
  *
- * Style choices mirror the ThresholdsPage palette so the operator
- * gets a consistent button affordance across the app. The button
- * copies are short imperative verbs — "Acknowledge", "Assign".
+ * Style choices mirror the ThresholdsPage palette so the operator /
+ * Technician gets a consistent button affordance across the app. The
+ * button copies are short imperative verbs — "Acknowledge",
+ * "Assign", "Submit result".
  */
 export const IncidentDetailActions = ({
   incident,
   viewerRole,
+  viewerUserId,
   isAck,
   isAssign,
+  isSubmitting,
   onAcknowledge,
   onAssign,
+  onSubmitResult,
 }: IncidentDetailActionsProps) => {
-  const slots = actionSlotsFor(incident, viewerRole);
+  const slots = actionSlotsFor(incident, viewerRole, viewerUserId);
   const canAcknowledge = slots.includes("acknowledge");
   const canAssign = slots.includes("assign");
+  const canSubmitResult = slots.includes("submit-result");
 
-  if (!canAcknowledge && !canAssign) return null;
+  if (!canAcknowledge && !canAssign && !canSubmitResult) return null;
 
   return (
     <div data-testid="incident-detail-actions" className="flex flex-col gap-3">
@@ -139,6 +161,9 @@ export const IncidentDetailActions = ({
         </button>
       ) : null}
       {canAssign ? <AssignForm isPending={isAssign} onAssign={onAssign} /> : null}
+      {canSubmitResult ? (
+        <SubmitResultForm isPending={isSubmitting} onSubmitResult={onSubmitResult} />
+      ) : null}
     </div>
   );
 };
@@ -220,5 +245,106 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
         </button>
       </div>
     </div>
+  );
+};
+
+/**
+ * The closed set of inspection outcomes — mirrors `InspectionOutcomeSchema`
+ * at `packages/shared/src/incident.ts:65-67`. Pinned here (not
+ * imported) because:
+ *
+ *   - The shape is closed + tiny (three values) and the radio
+ *     iteration is a stable build-time tuple.
+ *   - Importing the schema in this file would force every consumer of
+ *     `<IncidentDetailActions />` to re-import the zod runtime (and
+ *     would couple this UI module to the wire contract in a way the
+ *     spec explicitly avoids).
+ *
+ * The order matches the enum's canonical order (`SAFE → UNSAFE →
+ * MONITORING`) so the spec's I/O matrix entries line up with the
+ * rendered radio order top-to-bottom.
+ */
+const INSPECTION_OUTCOMES: readonly InspectionOutcome[] = ["SAFE", "UNSAFE", "MONITORING"];
+
+/**
+ * Inline Submit Result form — three radio inputs (one per outcome)
+ * + a single Submit button.
+ *
+ * Extracted as a sub-component (not inlined) so the form's local
+ * state (the selected outcome) is scoped cleanly. The form is
+ * intentionally minimal: the visible `<fieldset>` / `<legend>`
+ * covers the accessible-name requirement (the radio group's
+ * `name` attribute ties the inputs together; the legend labels
+ * the group). Validation copy is absent: the disabled-when-empty
+ * state IS the affordance.
+ *
+ * Why a single Submit button (not three, one per outcome): three
+ * buttons would let the Technician click "Submit UNSAFE" without
+ * picking UNSAFE first, racing the radio's default selection with
+ * the click intent. A single button + three radios forces a
+ * deliberate two-click workflow: pick outcome, then submit.
+ *
+ * Why no `confirm` dialog before firing: submit-result is the
+ * Technician's authoritative verb (the operator workflow assumes
+ * the Technician inspected the device before submitting). The 4.11
+ * reopen path is the rewind for genuine mistakes.
+ *
+ * The radio `value` attribute is the uppercase enum string itself
+ * (`"SAFE"`, `"UNSAFE"`, `"MONITORING"`) — the wire shape matches
+ * the form shape exactly. No camelCase/snake_case swap (unlike
+ * 4.6's `assignee_user_id`).
+ */
+interface SubmitResultFormProps {
+  readonly isPending: boolean;
+  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+}
+
+const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) => {
+  const [selectedOutcome, setSelectedOutcome] = useState<InspectionOutcome | null>(null);
+  const canFire = selectedOutcome !== null && !isPending;
+
+  return (
+    <fieldset
+      data-testid="incident-detail-submit-result-form"
+      disabled={isPending}
+      className="flex flex-col gap-2 self-start rounded-input border border-neutral-border bg-neutral-surface p-3"
+    >
+      <legend className="text-xs font-medium text-neutral-secondary">Inspection result</legend>
+      <div className="flex flex-col gap-1">
+        {INSPECTION_OUTCOMES.map((outcome) => (
+          <label
+            key={outcome}
+            className="flex items-center gap-2 text-sm text-neutral-body disabled:cursor-not-allowed"
+          >
+            <input
+              type="radio"
+              name="incident-detail-submit-result-outcome"
+              value={outcome}
+              data-testid={`incident-detail-submit-result-radio-${outcome}`}
+              checked={selectedOutcome === outcome}
+              disabled={isPending}
+              onChange={() => setSelectedOutcome(outcome)}
+              className="h-4 w-4 disabled:cursor-not-allowed"
+            />
+            <span>{outcome}</span>
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        data-testid="incident-detail-submit-result-button"
+        disabled={!canFire}
+        onClick={() => {
+          if (selectedOutcome !== null) onSubmitResult(selectedOutcome);
+        }}
+        className={[
+          "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
+          "border-slate-900 bg-slate-900 hover:bg-slate-700",
+          "disabled:bg-slate-400 disabled:cursor-not-allowed",
+        ].join(" ")}
+      >
+        {isPending ? "Submitting..." : "Submit result"}
+      </button>
+    </fieldset>
   );
 };

@@ -39,6 +39,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
 import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
+import { _resetTokenStore, useTokenStore } from "../auth/tokenStore";
 import { AppShell } from "../shell/AppShell";
 
 import { IncidentDetailPage } from "./IncidentDetailPage";
@@ -149,6 +150,12 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = ORIGINAL_FETCH;
   _resetApiClientConfig();
+  // Reset the token singleton between tests so a JWT injected by
+  // `setViewerAsTechnician()` does not leak into the next test's
+  // `readRoleFromStore()` / `readUserIdFromStore()` reads. The
+  // store is module-load-initialized once; without this reset, the
+  // token persists across tests and breaks RBAC pinning.
+  _resetTokenStore();
   // Always restore real timers between tests so a test that
   // enabled fake timers (e.g. the TTL pin) does not leak into
   // the next test's `waitFor` polling.
@@ -1639,6 +1646,611 @@ describe("Story 4.6 — AC: success toast leaves the DOM after TTL", () => {
       });
 
       // Region is now empty.
+      expect(region.children.length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ============================================================================
+// Story 4.7 — Submit Result Flow
+// ============================================================================
+//
+// Coverage matrix (each spec AC bullet → at least one `it(...)`):
+//
+//   AC "HAPPY_PATH" (SAFE)         — INSPECTING + assigned Technician +
+//                                   SAFE radio + click → POST 200 → toast
+//                                   "Result submitted" → row reconciles
+//                                   to SAFE → form disappears.
+//   AC "HAPPY_UNSAFE"              — UNSAFE radio + click → 200 → toast
+//                                   → row reconciles to UNSAFE.
+//   AC "HAPPY_MONITORING"          — MONITORING radio + click → 200 →
+//                                   toast → row reconciles to MONITORING.
+//   AC "NOT_INSPECTING"            — ACKNOWLEDGED row → Submit form NOT
+//                                   rendered.
+//   AC "RBAC_NOT_ASSIGNEE"         — INSPECTING + different Technician
+//                                   viewer → Submit form NOT rendered.
+//   AC "MUTATION_IN_FLIGHT"        — click Submit twice → second click
+//                                   no-op (button disabled during
+//                                   in-flight mutation).
+//   AC "CONFLICT_409"              — server returns 409 → error toast
+//                                   "Already submitted" → row
+//                                   reconciles to post-INSPECTING state.
+//   AC "SERVER_ERROR_500"          — server returns 500 → error toast
+//                                   "Failed to submit result. Try
+//                                   again." + button re-enables.
+//   AC "TOKEN_EXPIRED_401"         — 401 → "Session expired" toast,
+//                                   no row invalidation.
+//   AC "BODY_VALIDATION_400"       — 400 → "Invalid request" toast,
+//                                   row invalidates (4xx branch).
+//   AC "TOAST_TTL"                 — fake-timer 4s auto-dismiss.
+//
+// Mirrors the 4.5 + 4.6 test rig: same `installFetch`, same
+// `renderDetail(role)`, same `activeSocket.__emitStateChanged`
+// reconciliation pattern. The Technician id is the same
+// `ASSIGN_TECH_ID` from 4.6's assign tests.
+const SUBMIT_RESULT_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/submit-result`;
+const SUBMIT_RESULT_TECH_ID = "00000000-0000-4000-8000-00000000a003";
+
+/** Build a viewer token so the JWT decoder can read the user id. */
+const setViewerAsTechnician = (): void => {
+  // Mint a JWT with `sub: SUBMIT_RESULT_TECH_ID` + `role: "Technician"`.
+  // The shape mirrors the api's token issuer (`auth/login.ts`).
+  //
+  // Why `useTokenStore.setState(...)` and not a direct
+  // `localStorage.setItem(...)`: the token store is a zustand
+  // singleton created at module-load time via `readPersisted()`. By
+  // the time this helper runs, the singleton's `accessToken` field
+  // is `null` (or whatever the previous test left). Writing to
+  // `localStorage` after the fact does NOT update the singleton's
+  // in-memory state; `readUserIdFromStore()` reads from the
+  // singleton via `useTokenStore.getState().accessToken` and would
+  // still see the old value. We must push the JWT into the
+  // singleton directly. `afterEach` calls `_resetTokenStore()` so
+  // the token does not leak into subsequent tests.
+  const b64url = (input: string): string => {
+    const base64 =
+      typeof globalThis.btoa === "function"
+        ? globalThis.btoa(input)
+        : Buffer.from(input, "utf-8").toString("base64");
+    return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  };
+  const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = b64url(
+    JSON.stringify({
+      sub: SUBMIT_RESULT_TECH_ID,
+      role: "Technician",
+      exp: 9999999999,
+    }),
+  );
+  const token = `${header}.${payload}.sig`;
+  useTokenStore.setState({ accessToken: token, expiresAt: 9999999999000 });
+};
+
+/** Drive the Submit Result form: pick the outcome + click Submit. */
+const pickOutcomeAndSubmit = (outcome: "SAFE" | "UNSAFE" | "MONITORING"): void => {
+  fireEvent.click(screen.getByTestId(`incident-detail-submit-result-radio-${outcome}`));
+  fireEvent.click(screen.getByTestId("incident-detail-submit-result-button"));
+};
+
+/**
+ * Build an INSPECTING incident with the supplied assignee. Used by
+ * the 4.7 page-level tests so the Submit Result form renders for the
+ * assigned Technician. The page also needs the JWT to carry the
+ * matching `sub` claim — call `setViewerAsTechnician()` before
+ * `renderDetail("Technician")`.
+ */
+const inspectingIncidentForTech = (overrides: Partial<IncidentPayload> = {}): IncidentPayload => ({
+  ...baseIncident({
+    state: "INSPECTING",
+    assignee_user_id: SUBMIT_RESULT_TECH_ID,
+    acknowledged_at: "2026-08-27T01:00:00.000Z",
+  }),
+  ...overrides,
+});
+
+describe("Story 4.7 — AC: happy path SAFE (POST 200 → success toast → state reconciled)", () => {
+  it("fires POST with { outcome: 'SAFE' }, surfaces 'Result submitted' toast, and the row transitions to SAFE via socket event", async () => {
+    setViewerAsTechnician();
+    let submitCallCount = 0;
+    let submitBody: { outcome?: string } | null = null;
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        submitCallCount += 1;
+        expect(init?.method).toBe("POST");
+        submitBody = JSON.parse(init?.body as string) as { outcome?: string };
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    // Submit Result form visible; Acknowledge + Assign not.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
+
+    // Pick SAFE; click Submit.
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
+    });
+    expect(submitCallCount).toBe(1);
+    expect(submitBody?.outcome).toBe("SAFE");
+
+    // Socket-driven state mutation arrives; row's data-state
+    // updates to SAFE. The Submit Result form disappears because
+    // the `submit-result` slot returns null for SAFE.
+    expect(activeSocket).not.toBeNull();
+    activeSocket?.__emitStateChanged({
+      incident_id: INCIDENT_ID,
+      from_state: "INSPECTING",
+      to_state: "SAFE",
+      changed_at: "2026-08-27T02:00:00.000Z",
+      actor_user_id: SUBMIT_RESULT_TECH_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "SAFE");
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
+    });
+  });
+});
+
+describe("Story 4.7 — AC: happy path UNSAFE (POST 200 → success toast → state reconciled)", () => {
+  it("fires POST with { outcome: 'UNSAFE' } and the row transitions to UNSAFE", async () => {
+    setViewerAsTechnician();
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        expect(init?.method).toBe("POST");
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "UNSAFE" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("UNSAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
+    });
+
+    expect(activeSocket).not.toBeNull();
+    activeSocket?.__emitStateChanged({
+      incident_id: INCIDENT_ID,
+      from_state: "INSPECTING",
+      to_state: "UNSAFE",
+      changed_at: "2026-08-27T02:00:00.000Z",
+      actor_user_id: SUBMIT_RESULT_TECH_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "UNSAFE");
+    });
+  });
+});
+
+describe("Story 4.7 — AC: happy path MONITORING (POST 200 → success toast → state reconciled)", () => {
+  it("fires POST with { outcome: 'MONITORING' } and the row transitions to MONITORING", async () => {
+    setViewerAsTechnician();
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        expect(init?.method).toBe("POST");
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "MONITORING" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("MONITORING");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
+    });
+
+    expect(activeSocket).not.toBeNull();
+    activeSocket?.__emitStateChanged({
+      incident_id: INCIDENT_ID,
+      from_state: "INSPECTING",
+      to_state: "MONITORING",
+      changed_at: "2026-08-27T02:00:00.000Z",
+      actor_user_id: SUBMIT_RESULT_TECH_ID,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
+        "data-state",
+        "MONITORING",
+      );
+    });
+  });
+});
+
+describe("Story 4.7 — AC: NOT_INSPECTING (form absent for ACKNOWLEDGED row)", () => {
+  it("does NOT render the Submit Result form when state === 'ACKNOWLEDGED'", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
+  });
+});
+
+describe("Story 4.7 — AC: RBAC_NOT_ASSIGNEE (form absent for unassigned Technician)", () => {
+  it("does NOT render the Submit Result form when a Technician who is NOT the assignee views an INSPECTING incident", async () => {
+    // Set the viewer as a Technician whose `sub` differs from the
+    // row's `assignee_user_id`. The JWT carries the viewer's id
+    // directly; the slot gate (`slotsForInspecting`) returns `[]`
+    // because `viewerUserId !== assignee_user_id`.
+    setViewerAsTechnician();
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // `assignee_user_id` is a DIFFERENT Technician — the
+        // viewer is not the assignee.
+        return new Response(
+          JSON.stringify(
+            inspectingIncidentForTech({
+              assignee_user_id: "00000000-0000-4000-8000-00000000a007",
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+  });
+});
+
+describe("Story 4.7 — AC: MUTATION_IN_FLIGHT (Submit button disabled, double-click is a no-op)", () => {
+  it("disables the Submit button while in flight and a second click does not fire another POST", async () => {
+    setViewerAsTechnician();
+    let submitCallCount = 0;
+    let resolveSubmit: (() => void) | null = null;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        submitCallCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        });
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    try {
+      pickOutcomeAndSubmit("SAFE");
+
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-submit-result-button")).toBeDisabled();
+      });
+      expect(screen.getByTestId("incident-detail-submit-result-button")).toHaveTextContent(
+        "Submitting...",
+      );
+      expect(submitCallCount).toBe(1);
+
+      // Second click: button is `disabled`, fireEvent.click is a
+      // no-op for disabled buttons.
+      fireEvent.click(screen.getByTestId("incident-detail-submit-result-button"));
+      expect(submitCallCount).toBe(1);
+    } finally {
+      resolveSubmit?.();
+    }
+  });
+});
+
+describe("Story 4.7 — AC: CONFLICT_409 (error toast 'Already submitted' + row reconciles to SAFE)", () => {
+  it("surfaces the 'Already submitted' error toast, invalidates the row, and the row reconciles to SAFE on the next fetch", async () => {
+    setViewerAsTechnician();
+    let submitCallCount = 0;
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // First fetch: INSPECTING. Second fetch (after the
+        // mutation's `onError` invalidates the cache because 409
+        // is 4xx): SAFE — the world moved on.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+        }
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        submitCallCount += 1;
+        return new Response(
+          JSON.stringify({
+            error: "invalid_state_transition",
+            from: "SAFE",
+            attempted: "submit_result",
+          }),
+          { status: 409 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already submitted");
+    });
+    expect(submitCallCount).toBe(1);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "SAFE");
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
+    });
+    expect(rowFetchCount).toBe(2);
+  });
+});
+
+describe("Story 4.7 — AC: SERVER_ERROR_500 (error toast 'Failed to submit result. Try again.')", () => {
+  it("surfaces the retryable error toast and re-enables the Submit button for manual retry", async () => {
+    setViewerAsTechnician();
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        return new Response("internal", { status: 500 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
+        "Failed to submit result. Try again.",
+      );
+    });
+
+    // Button re-enables (mutation is no longer in flight) — and
+    // the form stays visible so the Technician can retry.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-button")).not.toBeDisabled();
+    });
+    expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+  });
+});
+
+describe("Story 4.7 — AC: TOKEN_EXPIRED_401 (error toast 'Session expired' — no row invalidation)", () => {
+  it("surfaces the 'Session expired' toast and does NOT re-fetch the row (5xx-class UX)", async () => {
+    setViewerAsTechnician();
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        rowFetchCount += 1;
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        return new Response(JSON.stringify({ error: "token_expired" }), { status: 401 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
+        "Session expired — please sign in again",
+      );
+    });
+
+    // 401 is 5xx-class: row is NOT invalidated. The page still
+    // shows the INSPECTING row (no re-fetch happened).
+    //
+    // Note on form visibility: the `apiClient` clears the
+    // singleton token store when its refresh attempt fails (401
+    // → /auth/refresh 404 in this test → clearTokens). On the
+    // next render `readUserIdFromStore()` returns null, so the
+    // slot matrix's INSPECTING ownership gate returns `[]` and
+    // the Submit Result form correctly disappears. That is the
+    // desired UX — the Technician is signed out, so the
+    // technician-only form must NOT stay visible. This differs
+    // from the 4.6 Assign form's TOKEN_EXPIRED_401 test, which
+    // incidentally keeps the form visible because the Assign
+    // slot does NOT depend on `viewerUserId`.
+    expect(rowFetchCount).toBe(1);
+    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "INSPECTING");
+  });
+});
+
+describe("Story 4.7 — AC: BODY_VALIDATION_400 (error toast 'Invalid request' — row invalidates)", () => {
+  it("surfaces the 'Invalid request' error toast (4xx class — row invalidates)", async () => {
+    setViewerAsTechnician();
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        rowFetchCount += 1;
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        // 400 is defense-in-depth — the client should not produce
+        // a malformed body. Toast copy is the distinct "Invalid
+        // request" line.
+        return new Response(JSON.stringify({ error: "invalid_request" }), { status: 400 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Invalid request");
+    });
+
+    // 400 is in the 4xx range and is NOT 401, so the mutation's
+    // `onError` invalidates the row query.
+    expect(rowFetchCount).toBe(2);
+    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "INSPECTING");
+  });
+});
+
+// ============================================================================
+// Story 4.7 — TTL pin at the integration level
+// ============================================================================
+//
+// Mirrors the 4.5 + 4.6 TTL pin: `act` + microtask flushing drives
+// the React reconciler under fake timers.
+describe("Story 4.7 — AC: success toast leaves the DOM after TTL", () => {
+  it("drops the success toast after 4001ms (the TTL contract at integration level)", async () => {
+    setViewerAsTechnician();
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    vi.useFakeTimers();
+    try {
+      pickOutcomeAndSubmit("SAFE");
+
+      // Flush the mutation's promise chain inside `act`.
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const region = screen.getByTestId("toast-region");
+      expect(region).toHaveTextContent("Result submitted");
+      expect(region.children.length).toBe(1);
+
+      act(() => {
+        vi.advanceTimersByTime(4_001);
+      });
+
       expect(region.children.length).toBe(0);
     } finally {
       vi.useRealTimers();

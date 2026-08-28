@@ -23,6 +23,7 @@ import { type Role } from "@surakkha/shared/rbac";
 
 export interface DecodedAccessToken {
   readonly role: Role | null;
+  readonly userId: string | null;
   readonly expiresAt: number | null;
 }
 
@@ -35,15 +36,13 @@ const decodeBase64Url = (input: string): string => {
   return globalThis.atob(padded);
 };
 
-const ROLE_VALUES: readonly Role[] = [
-  "Admin",
-  "Operator",
-  "Technician",
-  "Viewer",
-];
+const ROLE_VALUES: readonly Role[] = ["Admin", "Operator", "Technician", "Viewer"];
 
 const asRole = (value: unknown): Role | null =>
   ROLE_VALUES.includes(value as Role) ? (value as Role) : null;
+
+const asUserId = (value: unknown): string | null =>
+  typeof value === "string" && value.length > 0 ? value : null;
 
 const asExpiresAt = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -67,9 +66,10 @@ const extractPayload = (token: string): Record<string, unknown> | null => {
 
 export const decodeAccessToken = (token: string): DecodedAccessToken => {
   const payload = extractPayload(token);
-  if (payload === null) return { role: null, expiresAt: null };
+  if (payload === null) return { role: null, userId: null, expiresAt: null };
   return {
     role: asRole(payload["role"]),
+    userId: asUserId(payload["sub"]),
     expiresAt: asExpiresAt(payload["exp"]),
   };
 };

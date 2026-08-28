@@ -105,11 +105,24 @@ export const readRoleFromStore = (): Role | null => {
 };
 
 /**
+ * Read the viewer's user id from the current access token's `sub`
+ * claim. Synchronous; mirrors `readRoleFromStore`. Story 4.7 needs
+ * this so the detail page can pass `viewerUserId` to
+ * `actionSlotsFor`'s third argument (the INSPECTING ownership gate
+ * — Technicians only see `submit-result` for incidents they're
+ * assigned to).
+ */
+export const readUserIdFromStore = (): string | null => {
+  const { accessToken } = useTokenStore.getState();
+  if (accessToken === null) return null;
+  return decodeAccessToken(accessToken).userId;
+};
+
+/**
  * Read the raw access token. Used by the apiClient for the
  * `Authorization: Bearer <token>` header. Synchronous.
  */
-export const readAccessToken = (): string | null =>
-  useTokenStore.getState().accessToken;
+export const readAccessToken = (): string | null => useTokenStore.getState().accessToken;
 
 /**
  * Test helper. Resets the singleton store and the persisted entry.
