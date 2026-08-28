@@ -2,9 +2,10 @@
 title: "Story 4.7 — Submit Result (SAFE / UNSAFE / MONITORING)"
 type: "feature"
 created: "2026-08-28"
-status: "in-progress"
-review_loop_iteration: 0
+status: "done"
+review_loop_iteration: 1
 baseline_commit: "6a3146c"
+shipped_commit: "9132a08"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
@@ -104,15 +105,16 @@ context:
 
 **Execution:**
 
-- [ ] 1. Write spec doc (this file). Status: draft → ready-for-dev → in-progress → in-review → done.
-- [ ] 2. Modify `auth/jwtDecode.ts` to expose `userId` from the JWT `sub` claim.
-- [ ] 3. Create `packages/web/src/incidents/useSubmitResultMutation.ts` mirroring `useAssignMutation.ts` (4xx invalidates; 5xx + network throw do not; `SubmitResultMutationError` tagged class; status 0 sentinel).
-- [ ] 4. Extend `IncidentDetailActions.tsx` with the SubmitResultForm sub-component (three radio inputs + Submit button), gated by `actionSlotsFor` returning the `submit-result` slot. Existing Acknowledge / Assign logic stays untouched.
-- [ ] 5. Extend `IncidentDetailActions.spec.tsx` visibility matrix: INSPECTING + assigned Technician → SubmitResultForm visible; INSPECTING + unassigned Technician → nothing; INSPECTING + Admin/Operator → nothing; non-INSPECTING states + Technician → nothing. Add NO_OUTCOME_SELECTED + click-forwarding + MUTATION_IN_FLIGHT unit tests.
-- [ ] 6. Extend `IncidentDetailPage.tsx` to mount `useSubmitResultMutation`, define `handleSubmitResult`, thread `isSubmitResult` + `onSubmitResult` props through Dispatch → Body → Actions. Add `viewerUserId` lookup so the slot gate receives the third argument.
-- [ ] 7. Extend `IncidentDetailPage.spec.tsx` with ~10 submit-result tests (HAPPY_PATH for each of SAFE/UNSAFE/MONITORING, NOT_INSPECTING, RBAC_NOT_ASSIGNEE, MUTATION_IN_FLIGHT, CONFLICT_409, SERVER_ERROR_500, TOKEN_EXPIRED_401, BODY_VALIDATION_400, TOAST_TTL).
-- [ ] 8. Run `pnpm -F @surakkha/web test` (expected 338 + ~18 new = ~356 green), `pnpm -F @surakkha/api test` (no backend changes; existing ~green minus the pre-existing 5 Story 3.5 alerts/list failures — those are unrelated and were failing before 4.7 started), `pnpm -r typecheck` (clean across 4 packages). All green.
-- [ ] 9. Lint-fix + commit + sync sprint-status (mark 4-7 done).
+- [x] 1. Write spec doc (this file). Status: draft → ready-for-dev → in-progress → in-review → done.
+- [x] 2. Modify `auth/jwtDecode.ts` to expose `userId` from the JWT `sub` claim.
+- [x] 3. Create `packages/web/src/incidents/useSubmitResultMutation.ts` mirroring `useAssignMutation.ts` (4xx invalidates; 5xx + network throw do not; `SubmitResultMutationError` tagged class; status 0 sentinel).
+- [x] 4. Extend `IncidentDetailActions.tsx` with the SubmitResultForm sub-component (three radio inputs + Submit button), gated by `actionSlotsFor` returning the `submit-result` slot. Existing Acknowledge / Assign logic stays untouched.
+- [x] 5. Extend `IncidentDetailActions.spec.tsx` visibility matrix: INSPECTING + assigned Technician → SubmitResultForm visible; INSPECTING + unassigned Technician → nothing; INSPECTING + Admin/Operator → nothing; non-INSPECTING states + Technician → nothing. Add NO_OUTCOME_SELECTED + click-forwarding + MUTATION_IN_FLIGHT unit tests.
+- [x] 6. Extend `IncidentDetailPage.tsx` to mount `useSubmitResultMutation`, define `handleSubmitResult`, thread `isSubmitResult` + `onSubmitResult` props through Dispatch → Body → Actions. Add `viewerUserId` lookup so the slot gate receives the third argument.
+- [x] 7. Extend `IncidentDetailPage.spec.tsx` with ~10 submit-result tests (HAPPY_PATH for each of SAFE/UNSAFE/MONITORING, NOT_INSPECTING, RBAC_NOT_ASSIGNEE, MUTATION_IN_FLIGHT, CONFLICT_409, SERVER_ERROR_500, TOKEN_EXPIRED_401, BODY_VALIDATION_400, TOAST_TTL).
+- [x] 8. Run `pnpm -F @surakkha/web test` (expected 338 + ~18 new = ~356 green), `pnpm -F @surakkha/api test` (no backend changes; existing ~green minus the pre-existing 5 Story 3.5 alerts/list failures — those are unrelated and were failing before 4.7 started), `pnpm -r typecheck` (clean across 4 packages). All green.
+- [x] 9. Lint-fix + commit + sync sprint-status (mark 4-7 done).
+- [x] 10. **Step-04 review fixes** — 3 patches applied: (a) added FORBIDDEN_403 + NOT_FOUND_404 page-level tests for the submit-result mutation; (b) added `expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull()` assertion in the TOKEN_EXPIRED_401 test to pin the form-disappearance contract; (c) added `InspectionOutcomeSchema drift pin` regression test in `IncidentDetailActions.spec.tsx` to fail loudly if the schema grows past the mirrored `INSPECTION_OUTCOMES` literal.
 
 **Acceptance Criteria:**
 
@@ -170,5 +172,76 @@ context:
 - Switch role to a different Technician (not the assignee). Verify: Submit Result form does NOT render on the same INSPECTING incident.
 - Switch role to Admin. Verify: Submit Result form does NOT render (Technician-only verb).
 - Curl the row's state to RESOLVED manually. Verify: detail page's Submit Result form disappears on the next socket event.
+
+## Spec Change Log
+
+### Loop 1 (review_loop_iteration: 0 → 1)
+
+Applied at commit `<review-fix-commit>` on 2026-08-28 during step-04 review triage.
+
+**KEEP (no spec change required — these are forward-compat / out-of-scope; defer to follow-up):**
+
+- **422 / 412 / 429 / 503 explicit error-classifier branches** (`classifySubmitResultError`). The api only emits 400 / 401 / 403 / 404 / 409 / 500 today; these would be forward-compat. The catch-all `default` already routes them to the retryable bucket, which is the correct UX for a closed transition contract.
+- **SubmitResultForm local-state vs server-state divergence on socket-event-lands-mid-mutation**. The cache eventually converges in both orderings via `useIncidentDetailSocket`; no per-action guard needed.
+- **Late-login `viewerUserId` transition** (token arrives after first render). Page re-renders on token change; `useTokenStore.subscribe` is not needed for v1.
+- **"Session expired" inline surface replacing form-disappearance after 401**. The current contract is "form disappears, row remains visible until manual re-auth"; an inline CTA is a future Epic-5 polish concern.
+- **`useSubmitResultMutation` direct unit test**. Page-level coverage is consistent with the 4.5 + 4.6 pattern (those hooks also lack direct unit tests).
+- **`setViewerAsTechnician` test order leakage via auto-refresh race**. Speculative; no demonstrated regression.
+
+**PATCH (spec contract unchanged; test surface added to close verification gaps):**
+
+- **FORBIDDEN_403 page-level coverage added** — `IncidentDetailPage.spec.tsx` `Story 4.7 — AC: FORBIDDEN_403`. AC #8 was named in the I/O matrix but the diff did not include a test that fires the submit-result mutation with a 403 response. Closed.
+- **NOT_FOUND_404 page-level coverage added** — `IncidentDetailPage.spec.tsx` `Story 4.7 — AC: NOT_FOUND_404`. AC #9 was named in the I/O matrix but similarly lacked a test. Closed.
+- **TOKEN_EXPIRED_401 form-disappearance assertion added** — the existing test's prose comment claimed the form disappears, but no `queryByTestId` assertion captured it. Added `expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull()`. Mirrors the 4.6 mirror assertion for the opposite contract (`getByTestId(...assign-form).toBeInTheDocument()`).
+- **`InspectionOutcomeSchema` drift pin added** — `IncidentDetailActions.spec.tsx` `Story 4.7 — InspectionOutcomeSchema drift pin`. The `INSPECTION_OUTCOMES` literal at `IncidentDetailActions.tsx:267` deliberately mirrors the schema (zod-runtime-coupling rationale in the design notes), but is a drift risk: if the schema grows, the UI cannot produce the new value. The pin fails loudly on divergence by asserting the rendered radios match `InspectionOutcomeSchema.options` exactly.
+
+## Suggested Review Order
+
+**Spec**
+
+- Story 4.7 spec — intent, AC matrix, design notes (read first; mirrors 4.5 + 4.6 structure).
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:22-26`](spec-4-7-submit-result-safe-unsafe-monitoring.md#L22-L26) (Intent + 4.8 separation note)
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:51-65`](spec-4-7-submit-result-safe-unsafe-monitoring.md#L51-L65) (12-row I/O matrix)
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:69-101`](spec-4-7-submit-result-safe-unsafe-monitoring.md#L69-L101) (Code Map — web + backend = NO CHANGES)
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:103-129`](spec-4-7-submit-result-safe-unsafe-monitoring.md#L103-L129) (Tasks + 11 ACs)
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:132-150`](spec-4-7-submit-result-safe-unsafe-monitoring.md#L132-L150) (Design Notes)
+  [`spec-4-7-submit-result-safe-unsafe-monitoring.md:` Spec Change Log Loop 1](spec-4-7-submit-result-safe-unsafe-monitoring.md) (review findings triage + 3 patches)
+
+**Implementation (read top-to-bottom in this order)**
+
+1. `auth/jwtDecode.ts` + `auth/tokenStore.ts` — the only JWT/touchpoints that needed widening. Read the `userId` extraction first; everything else flows from it.
+   [`packages/web/src/auth/jwtDecode.ts:67-75`](packages/web/src/auth/jwtDecode.ts#L67-L75) (`decodeAccessToken` returns `userId`)
+   [`packages/web/src/auth/tokenStore.ts:115-119`](packages/web/src/auth/tokenStore.ts#L115-L119) (`readUserIdFromStore`)
+2. `useSubmitResultMutation.ts` — the new mutation hook. Header comment mirrors `useAssignMutation.ts`; the only deltas are URL, body shape (`{ outcome }`), toast copy, and error-classifier strings.
+   [`packages/web/src/incidents/useSubmitResultMutation.ts:60-150`](packages/web/src/incidents/useSubmitResultMutation.ts#L60-L150) (`classifySubmitResultError`)
+   [`packages/web/src/incidents/useSubmitResultMutation.ts:190-248`](packages/web/src/incidents/useSubmitResultMutation.ts#L190-L248) (mutationFn + invalidate semantics)
+3. `IncidentDetailActions.tsx` — the action region gained a `SubmitResultForm` sub-component. Read the gate-first rule at the top, then jump to `SubmitResultForm`.
+   [`packages/web/src/incidents/IncidentDetailActions.tsx:251-267`](packages/web/src/incidents/IncidentDetailActions.tsx#L251-L267) (`INSPECTION_OUTCOMES` literal — note the drift-pin design note)
+   [`packages/web/src/incidents/IncidentDetailActions.tsx:269-340`](packages/web/src/incidents/IncidentDetailActions.tsx#L269-L340) (`SubmitResultForm` — radios + Submit button)
+4. `IncidentDetailPage.tsx` — page wiring. `handleSubmitResult` at L271-283 mirrors `handleAcknowledge` + `handleAssign`; `isSubmitting` + `onSubmitResult` thread through `Dispatch` → `Body` → `<IncidentDetailActions />`.
+   [`packages/web/src/incidents/IncidentDetailPage.tsx:162`](packages/web/src/incidents/IncidentDetailPage.tsx#L162) (`useSubmitResultMutation(id)` mount)
+   [`packages/web/src/incidents/IncidentDetailPage.tsx:271-283`](packages/web/src/incidents/IncidentDetailPage.tsx#L271-L283) (`handleSubmitResult` — onSuccess/onError toast pattern)
+   [`packages/web/src/incidents/IncidentDetailPage.tsx:411-420`](packages/web/src/incidents/IncidentDetailPage.tsx#L411-L420) (Actions invocation)
+5. `IncidentCard.types.ts` — the role-gate addition closes the INSPECTING slot for non-Technician (defense-in-depth alongside the ownership gate). Read the new early return at L95.
+   [`packages/web/src/components/IncidentCard.types.ts:83-100`](packages/web/src/components/IncidentCard.types.ts#L83-L100) (`actionSlotsFor` with the new role gate)
+
+**Tests (read in the same implementation order)**
+
+6. `IncidentDetailActions.spec.tsx` — 16 visibility tests + 1 new drift pin.
+   [`packages/web/src/incidents/IncidentDetailActions.spec.tsx:`](packages/web/src/incidents/IncidentDetailActions.spec.tsx) (4.7 Submit Result visibility matrix — INSPECTING + assigned Tech, unassigned Tech, Admin, Operator, Viewer, non-INSPECTING states; HAPPY_PATH, NO_OUTCOME_SELECTED, MUTATION_IN_FLIGHT, click forwarding)
+   [`packages/web/src/incidents/IncidentDetailActions.spec.tsx:InspectionOutcomeSchema drift pin`](packages/web/src/incidents/IncidentDetailActions.spec.tsx) (regression pin added in step-04)
+7. `IncidentDetailPage.spec.tsx` — 45 tests. Start with HAPPY_PATH × 3 (SAFE/UNSAFE/MONITORING), then NOT_INSPECTING, then RBAC_NOT_ASSIGNEE, then the four 4xx-class buckets (CONFLICT_409, FORBIDDEN_403, NOT_FOUND_404, BODY_VALIDATION_400), then TOKEN_EXPIRED_401 (with the new form-disappearance assertion) + SERVER_ERROR_500, then the TTL integration test.
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:HAPPY_PATH (SAFE)`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (Submit happy path — body assertion)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:CONFLICT_409`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (409 invalidates + reconciles)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:FORBIDDEN_403`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (<RbacDenied /> re-render — added in step-04)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:NOT_FOUND_404`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (<NotFound /> re-render — added in step-04)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:BODY_VALIDATION_400`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (4xx invalidates)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:TOKEN_EXPIRED_401`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (5xx-class — no invalidation + form-disappearance pin)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:SERVER_ERROR_500`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (5xx — no invalidation)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:TOAST_TTL`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (fake-timer 4s auto-dismiss)
+
+**Backend — no changes**
+
+- `POST /api/incidents/:id/submit-result` lives at `packages/api/src/incidents/router.ts:359-363` (existed since Story 4.2). Coverage at `packages/api/src/incidents/router.spec.ts:370-540` (happy paths for SAFE/UNSAFE + Technician-ownership 403 + state-mismatch 409 + admin 403).
 
 </frozen-after-approval>

@@ -1,0 +1,2231 @@
+diff --git a/_bmad-output/implementation-artifacts/spec-4-7-submit-result-safe-unsafe-monitoring.md b/_bmad-output/implementation-artifacts/spec-4-7-submit-result-safe-unsafe-monitoring.md
+new file mode 100644
+index 0000000..de81bad
+--- /dev/null
++++ b/_bmad-output/implementation-artifacts/spec-4-7-submit-result-safe-unsafe-monitoring.md
+@@ -0,0 +1,174 @@
++---
++title: "Story 4.7 — Submit Result (SAFE / UNSAFE / MONITORING)"
++type: "feature"
++created: "2026-08-28"
++status: "in-progress"
++review_loop_iteration: 0
++baseline_commit: "6a3146c"
++context:
++  - _bmad-output/implementation-artifacts/epic-4-context.md
++  - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
++  - _bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md
++  - _bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md
++  - _bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md
++  - _bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md
++  - docs/architecture.md
++---
++
++<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
++
++## Intent
++
++**Problem:** Story 4.6 ships the Assign Technician button (Operator/Admin → INSPECTING). The row has now reached `state: "INSPECTING"` and the assigned Technician has the next move: inspect the device, then submit a result. The backend endpoint `POST /api/incidents/:id/submit-result` already exists at `packages/api/src/incidents/router.ts:359-363` with full RBAC (Technician-only-mine ownership at the transition level — verified by `RBAC_MATRIX.Technician.submit_result.Incident = Y` at `packages/shared/src/rbac.ts:255-257`), audit (writes `submit_result` `IncidentEvent` row + `incident_state_changed` audit log on success; `invalid_transition_attempt` audit log on rejection), state-machine (`INSPECTING → SAFE | UNSAFE | MONITORING` per `transitions.ts:178-207`), and `incident:state_changed` socket emit (post-commit). The slot is wired: `submit-result` returns from `actionSlotsFor` when `incident.state === "INSPECTING"` AND `viewerUserId === incident.assignee_user_id` (see `packages/web/src/components/IncidentCard.types.ts:145-153`). What's missing is the UI on the detail page.
++
++**Approach:** Add a Submit Result form on `/incidents/:id` — visible ONLY when the row's `state === "INSPECTING"` AND viewer is the assigned Technician. Three radio inputs (SAFE / UNSAFE / MONITORING) sourced from `InspectionOutcomeSchema` (`packages/shared/src/incident.ts:65-67`), plus a single "Submit result" button. On submit → `POST /api/incidents/:id/submit-result` with `{ outcome }` body. On 200: invalidate the row query; `useIncidentDetailSocket` reconciles via `incident:state_changed`. Success toast inline (matches 4.5 + 4.6 patterns; ~4s TTL, no library). Disabled while in flight. Errors render transient toast; row stays as-is on 5xx, reconciles on 4xx. Mirror 4.5 + 4.6 patterns verbatim: same `actionSlotsFor` gate, same per-verb `useMutation` shape, same inline toast primitive (`toast.tsx`), same `vi.useFakeTimers()` TTL test, same 401/403/404/409/500 error classification with 4xx invalidating row cache and 5xx preserving stale row. Mutation disabled in flight. Body schema at `transitionHelpers.ts:309-322` accepts `{ outcome: "SAFE" | "UNSAFE" | "MONITORING" }` (uppercase, per `InspectionOutcomeSchema`).
++
++**Note:** 4.8 ships the sticky `SeverityBanner` for `UNSAFE`. 4.7's UI for `UNSAFE` is purely "this Technician marked it unsafe" — the persistent banner is a separate surface in 4.8.
++
++## Boundaries & Constraints
++
++**Always:**
++
++- The form renders on the detail page only — NOT on Kanban cards. Same rationale as 4.5 + 4.6: the detail page is the Technician's "I'm inspecting this device" surface; the Kanban card is the read-only summary. Click → detail → act.
++- The form is gated by the SAME `actionSlotsFor(incident, viewerRole, viewerUserId)` contract from Story 4.1 (`packages/web/src/components/IncidentCard.types.ts:83-94`). For an INSPECTING incident viewed by the assigned Technician, this returns `["submit-result"]`. The detail page calls the same helper — single source of truth for which actions render.
++- The `viewerUserId` is sourced from the access-token JWT's `sub` claim (mirroring how the api's `authorize` middleware reads `req.user.id`). The web's `jwtDecode.ts` currently only extracts `role`; Story 4.7 widens it to expose `userId` so the detail page can pass it to the slot gate. This is the only JWT-decoder change.
++- The mutation is disabled while in flight (no double-click idempotency risk; the server already rejects 409 on second-call from a non-INSPECTING state).
++- Toast feedback is inline state (matching `ThresholdsPage.tsx:56-69` + the existing `toast.tsx` primitive from 4.5), NOT a library — the codebase has no toast dependency today.
++- The form visually disappears once the row's state is no longer INSPECTING (driven by the existing `useIncidentDetailSocket` subscription; the row cache mutation IS the optimistic surface via the existing `incident:state_changed` event).
++- The body of the existing `<IncidentDetailActions />` (added in 4.5, extended in 4.6) gains the Submit Result form alongside the Acknowledge button + Assign form — same parent component, same visibility gate, separate `useMutation` instance. All three controls render inside the existing `data-testid="incident-detail-actions"` region; per-button testids disambiguate (`incident-detail-acknowledge-button`, `incident-detail-assign-button`, `incident-detail-submit-result-button`, `incident-detail-submit-result-radio-SAFE`, `incident-detail-submit-result-radio-UNSAFE`, `incident-detail-submit-result-radio-MONITORING`).
++- The `outcome` value is one of three radio inputs — no text field, no modal, no confirmation. The Technician's inspection is the authoritative verb; the three outcomes are mutually exclusive. The radio group is wrapped in a single `name="incident-detail-submit-result-outcome"` for accessibility.
++- The body schema at `transitionHelpers.ts:309-322` reads `body?.["outcome"]` and accepts the uppercase string (`"SAFE" | "UNSAFE" | "MONITORING"` per `InspectionOutcomeSchema`). The mutation hook's `outcome` parameter mirrors the uppercase wire shape directly (no camelCase boundary — the radio values are already uppercase enum strings).
++
++**Ask First:**
++
++- None. The action surface, RBAC, error UX, and inline-form-vs-modal choice are all pinned by existing patterns (4.1 + 4.2 + 4.4 + 4.5 + 4.6). The single JWT-decoder widening is the minimum surface needed to thread `userId` to the slot gate; no new public API.
++
++**Never:**
++
++- Optimistic UI for the mutation. Server is authoritative; the cache mutation IS the optimistic surface via the existing `incident:state_changed` subscription (same as 4.5 + 4.6).
++- A Kanban card-level button. 4.4 design notes are explicit.
++- A new toast library. The codebase has none; the existing `toast.tsx` primitive from 4.5 is reused verbatim.
++- A new shared `useSubmitResultMutation` hook. 4.7 is the third consumer today (4.5 + 4.6 already have their own one-shot mutations); abstracting prematurely is YAGNI. Story 4.11 ships its own reopen mutation; the extraction is a future post-Epic-4 cleanup.
++- A modal. An inline form below the Submit button is simpler and matches 4.6's "assign is two clicks (pick tech → click)" pattern — submit-result is two clicks (pick outcome → click Submit) which is the minimum friction for the verb.
++- A `confirm` dialog. Submit-result is reversible (4.11 reopen can rewind it; the technician can submit a different outcome if the first was wrong — actually no: the server rejects submit-result from a non-INSPECTING state, so the only rewind path is reopen. But the operator workflow assumes the Technician inspected the device before submitting — confirmation friction is unjustified).
++- A `severityBanner` for UNSAFE. That is a Story 4.8 surface; 4.7's UNSAFE UI is purely "this Technician marked it unsafe" with the success toast.
++- Modifying `packages/api/`, `packages/shared/` (except the one-line `userId` widening on `jwtDecode.ts` — see note below), or the Prisma schema. 4.7 is web-only.
++
++> **JWT-decoder widening note.** The single change to a non-`packages/web/` package is `packages/web/src/auth/jwtDecode.ts` — the only JWT consumer on the web side. This stays inside `packages/web/`, not `packages/shared/`, so the "do NOT modify packages/shared/" rule holds. The decoder exposes the same field (`sub`) the api already reads from the token; no new wire contract.
++
++## I/O & Edge-Case Matrix
++
++| Scenario                   | Input / State                                                                                                              | Expected Output / Behavior                                                                                                                                                                                                                                                         | Error Handling                            |
++| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
++| `HAPPY_PATH` (SAFE)        | INSPECTING incident + assigned Technician viewer + SAFE radio picked                                                       | Button visible, enabled. Click → POST 200 with `{ outcome: "SAFE" }` → toast "Result submitted" → row re-fetched via cache invalid → socket event lands → row shows `state: "SAFE"`, `resolved_at` null (SAFE does not auto-resolve in v1 — that's a 4.11 verb) → form disappears. | N/A                                       |
++| `HAPPY_PATH` (UNSAFE)      | INSPECTING incident + assigned Technician viewer + UNSAFE radio picked                                                     | Button visible, enabled. Click → POST 200 with `{ outcome: "UNSAFE" }` → toast "Result submitted" → row reconciles to `state: "UNSAFE"`. The persistent SeverityBanner is a 4.8 surface; 4.7 only shows the inline toast confirming the submit.                                    | N/A                                       |
++| `HAPPY_PATH` (MONITORING)  | INSPECTING incident + assigned Technician viewer + MONITORING radio picked                                                 | Button visible, enabled. Click → POST 200 with `{ outcome: "MONITORING" }` → toast "Result submitted" → row reconciles to `state: "MONITORING"`.                                                                                                                                   | N/A                                       |
++| `NOT_INSPECTING`           | Incident in any state ≠ INSPECTING (OPEN, ACKNOWLEDGED, SAFE, UNSAFE, MONITORING, RESOLVED, REOPENED) + Technician viewer  | Form not rendered (gated by `actionSlotsFor` returning no `submit-result` slot for non-INSPECTING states). The Acknowledge / Assign slots may still be visible for other states — separate gates.                                                                                  | N/A                                       |
++| `RBAC_NOT_ASSIGNEE`        | INSPECTING incident + Technician viewer who is NOT the assigned Technician (or any Admin/Operator/Viewer)                  | Form not rendered (gated by `actionSlotsFor` — `slotsForInspecting` returns `[]` for non-matching `viewerUserId`).                                                                                                                                                                 | N/A                                       |
++| `MUTATION_IN_FLIGHT`       | User clicks Submit twice in quick succession                                                                               | First click fires POST; button becomes disabled (in-flight state). Second click is a no-op (button is `disabled`).                                                                                                                                                                 | N/A                                       |
++| `NO_OUTCOME_SELECTED`      | User clicks Submit before picking an outcome radio                                                                         | Button is disabled (no outcome selected). No POST fires. The radio group has no default selection.                                                                                                                                                                                 | N/A                                       |
++| `CONFLICT_409`             | Server returns 409 `invalid_state_transition` (state moved past INSPECTING between page load and click)                    | Error toast "Already submitted". Row cache invalidated; on next fetch the row shows the new state (SAFE / UNSAFE / MONITORING / RESOLVED) and the form disappears.                                                                                                                 | Toast; no row revert.                     |
++| `FORBIDDEN_403`            | Server returns 403 (token role drift between page load and click — viewer lost Technician role OR ownership)               | Error toast "Not authorized". Row cache invalidated; on next fetch, page renders `<RbacDenied />` (for Admin/Operator viewers) or the form is gone (for Viewer/Technician-non-assignee).                                                                                           | Toast → re-render to RBAC denied surface. |
++| `NOT_FOUND_404`            | Server returns 404 (incident deleted between page load and click)                                                          | Error toast "Incident not found". Row cache invalidated; page renders `<NotFound />`.                                                                                                                                                                                              | Toast → re-render to NotFound surface.    |
++| `SERVER_ERROR_500`         | Server returns 500                                                                                                         | Error toast "Failed to submit result. Try again." Button re-enables (mutation error state).                                                                                                                                                                                        | Toast; manual retry.                      |
++| `NETWORK_ERROR` (status 0) | `apiFetch` throws (offline / abort / DNS failure)                                                                          | Error toast "Failed to submit result. Try again." (the same retryable bucket as 500). Button re-enables.                                                                                                                                                                           | Toast; manual retry.                      |
++| `TOKEN_EXPIRED_401`        | Server returns 401 (`apiFetch`'s internal refresh has failed — Technician is effectively signed out)                       | Error toast "Session expired — please sign in again". Row cache NOT invalidated (5xx-class semantics; the Technician must re-auth before any further action). Button re-enables.                                                                                                   | Toast; no row revert; manual re-auth.     |
++| `BODY_VALIDATION_400`      | Server returns 400 (request body fails Zod validation — defensive only; client should not produce this with a valid radio) | Error toast "Invalid request". Row cache invalidated (4xx branch).                                                                                                                                                                                                                 | Toast; row re-fetch surfaces truth.       |
++| `SOCKET_EVENT`             | `incident:state_changed` arrives during/after the mutation                                                                 | Row cache updates via the existing `useIncidentDetailSocket` subscriber. Form re-renders based on the new state. No double-update race — TanStack Query reconciles the invalidate + the socket mutation.                                                                           | N/A                                       |
++
++</frozen-after-approval>
++
++## Code Map
++
++**Web (`packages/web/`):**
++
++- `incidents/useSubmitResultMutation.ts` — NEW. TanStack `useMutation` that wraps `apiFetch("/api/incidents/:id/submit-result", { method: "POST", body: JSON.stringify({ outcome }) })`. Returns `{ mutate, isPending, error }`. On success: invalidate `incidentDetailQueryKey(id)`. On 4xx: also invalidate `incidentDetailQueryKey(id)`. On 5xx / network throw: do NOT invalidate (row presumed unchanged; manual retry). The hook MUST catch throws from `apiFetch` and surface them as classified `SubmitResultMutationError` so `onError`'s status range check never reads `undefined`. Mirrors `useAssignMutation.ts` line for line, swapping the URL (`/submit-result`), the body shape (`{ outcome }` instead of `{ assignee_user_id }`), the toast copy ("Result submitted" / "Failed to submit result"), and the error-classifier strings ("Already submitted" / "Incident not found" / "Not authorized" / "Session expired — please sign in again" / "Failed to submit result. Try again.").
++- `incidents/IncidentDetailActions.tsx` — MODIFY. Extend with a `SubmitResultForm` sub-component alongside the existing `AcknowledgeButton` and `AssignForm`. Three radio inputs (SAFE / UNSAFE / MONITORING, sourced from `InspectionOutcomeSchema`) + a single "Submit result" button. Renders ONLY when `actionSlotsFor` includes the `submit-result` slot. Button is disabled while no outcome selected OR mutation in flight. Per-input testids (`incident-detail-submit-result-radio-SAFE`, `incident-detail-submit-result-radio-UNSAFE`, `incident-detail-submit-result-radio-MONITORING`) + button testid (`incident-detail-submit-result-button`). Single radio group `name="incident-detail-submit-result-outcome"` for accessibility. Add `isSubmitResult: boolean` and `onSubmitResult(outcome: InspectionOutcome)` props (note: `isSubmitResult` not `isSubmitResultPending` — ESLint rule `^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])*` rejects `Pending` suffix on a non-Boolean-naming-conforming base; mirrors the `isAck` / `isAssign` pattern from 4.5 + 4.6).
++- `incidents/IncidentDetailPage.tsx` — MODIFY. Mount `useSubmitResultMutation(id)` alongside `useAcknowledgeMutation` and `useAssignMutation`. Wire `handleSubmitResult(outcome)` that calls `submitResultMutation.mutate(outcome, { onSuccess → pushToast("success", "Result submitted"), onError → pushToast("error", err.message) })`. Thread `isSubmitResult={submitResultMutation.isPending}` + `onSubmitResult={handleSubmitResult}` through `IncidentDetailDispatch` → `IncidentDetailBody` → `<IncidentDetailActions />`. The page now needs to read the current viewer user id (token-derived) to pass into `actionSlotsFor`'s third argument — wire a tiny `useCurrentUserId()` hook (or extend `useCurrentRole` → expose both role + userId).
++- `incidents/IncidentDetailPage.spec.tsx` — MODIFY. Extend with ~10 submit-result tests at the page integration level: HAPPY_PATH (SAFE), HAPPY_UNSAFE, HAPPY_MONITORING, NOT_INSPECTING (button absent for ACKNOWLEDGED row), RBAC_NOT_ASSIGNEE (Technician viewer who is not the assignee → form NOT rendered), MUTATION_IN_FLIGHT (button disabled during mutate + no double-fire), CONFLICT_409 (toast + row reconciles to post-INSPECTING state), SERVER_ERROR_500 (toast + button re-enables + row preserved), TOKEN_EXPIRED_401 (no invalidate + "Session expired" toast), BODY_VALIDATION_400 (4xx invalidates + "Invalid request" toast), TOAST_TTL (fake-timer 4s auto-dismiss).
++- `incidents/IncidentDetailActions.spec.tsx` — MODIFY. Extend the visibility matrix to add: INSPECTING + assigned Technician → SubmitResultForm visible (Acknowledge/Assign NOT visible); INSPECTING + unassigned Technician → nothing visible; INSPECTING + Admin/Operator → nothing visible (Technician-only); ACKNOWLEDGED + Technician → nothing visible (no slot for that state for Technicians); SAFE/UNSAFE/MONITORING + Technician → nothing visible (Technician doesn't have resolve slot); HAPPY_PATH (SAFE radio + click → `onSubmitResult("SAFE")` fires); NO_OUTCOME_SELECTED (no radio picked, button disabled); MUTATION_IN_FLIGHT (button disabled while `isSubmitResult === true`).
++
++**Web — small auxiliary change:**
++
++- `auth/jwtDecode.ts` — MODIFY (1 line). Extend `DecodedAccessToken` to also expose `userId: string | null` (parsed from the `sub` claim). The api already reads `req.user.id` from this same JWT field; the web's decoder just needs to expose it so the detail page can pass it to `actionSlotsFor`. The page wires a `useCurrentUserId()` companion hook (or extends `useCurrentRole` to expose both fields). No new wire contract; no breaking change to existing `role` extraction.
++
++**Shared (`packages/shared/`):**
++
++- No changes. `ActionVerbSchema` at `incident.ts:114-121` already includes `"submit_result"`. `InspectionOutcomeSchema` at `incident.ts:65-67` already enumerates the three radio values. `ActionSlot` literal at `IncidentCard.types.ts:51` already includes `"submit-result"`. `actionSlotsFor`'s `slotsForInspecting` at `IncidentCard.types.ts:145-153` already returns `["submit-result"]` for the assigned Technician.
++
++**Backend (`packages/api/`):**
++
++- No changes. `POST /api/incidents/:id/submit-result` exists at `router.ts:359-363` with full RBAC (Technician via `RBAC_ACTION_BY_VERB.submit_result` at `router.ts:154`), audit, state-machine (`INSPECTING → SAFE | UNSAFE | MONITORING` per `transitions.ts:189-207`), and `incident:state_changed` emit. Body schema at `transitionHelpers.ts:309-322` accepts `{ outcome: "SAFE" | "UNSAFE" | "MONITORING" }`. Existing test coverage at `router.spec.ts:370-540` (Technician happy paths for SAFE / UNSAFE + Technician-ownership 403 + state-mismatch 409 + admin 403).
++
++## Tasks & Acceptance
++
++**Execution:**
++
++- [ ] 1. Write spec doc (this file). Status: draft → ready-for-dev → in-progress → in-review → done.
++- [ ] 2. Modify `auth/jwtDecode.ts` to expose `userId` from the JWT `sub` claim.
++- [ ] 3. Create `packages/web/src/incidents/useSubmitResultMutation.ts` mirroring `useAssignMutation.ts` (4xx invalidates; 5xx + network throw do not; `SubmitResultMutationError` tagged class; status 0 sentinel).
++- [ ] 4. Extend `IncidentDetailActions.tsx` with the SubmitResultForm sub-component (three radio inputs + Submit button), gated by `actionSlotsFor` returning the `submit-result` slot. Existing Acknowledge / Assign logic stays untouched.
++- [ ] 5. Extend `IncidentDetailActions.spec.tsx` visibility matrix: INSPECTING + assigned Technician → SubmitResultForm visible; INSPECTING + unassigned Technician → nothing; INSPECTING + Admin/Operator → nothing; non-INSPECTING states + Technician → nothing. Add NO_OUTCOME_SELECTED + click-forwarding + MUTATION_IN_FLIGHT unit tests.
++- [ ] 6. Extend `IncidentDetailPage.tsx` to mount `useSubmitResultMutation`, define `handleSubmitResult`, thread `isSubmitResult` + `onSubmitResult` props through Dispatch → Body → Actions. Add `viewerUserId` lookup so the slot gate receives the third argument.
++- [ ] 7. Extend `IncidentDetailPage.spec.tsx` with ~10 submit-result tests (HAPPY_PATH for each of SAFE/UNSAFE/MONITORING, NOT_INSPECTING, RBAC_NOT_ASSIGNEE, MUTATION_IN_FLIGHT, CONFLICT_409, SERVER_ERROR_500, TOKEN_EXPIRED_401, BODY_VALIDATION_400, TOAST_TTL).
++- [ ] 8. Run `pnpm -F @surakkha/web test` (expected 338 + ~18 new = ~356 green), `pnpm -F @surakkha/api test` (no backend changes; existing ~green minus the pre-existing 5 Story 3.5 alerts/list failures — those are unrelated and were failing before 4.7 started), `pnpm -r typecheck` (clean across 4 packages). All green.
++- [ ] 9. Lint-fix + commit + sync sprint-status (mark 4-7 done).
++
++**Acceptance Criteria:**
++
++1. The Submit Result form renders on `/incidents/:id` for an INSPECTING incident viewed by the assigned Technician (Technician viewer with `userId === incident.assignee_user_id`). Pinned in `IncidentDetailActions.spec.tsx`.
++2. The Submit Result form does NOT render when the row's state is not INSPECTING, regardless of viewer role. Pinned in `IncidentDetailActions.spec.tsx`.
++3. The Submit Result form does NOT render for an Admin, Operator, Viewer, OR a Technician viewer who is not the assigned Technician. Pinned in `IncidentDetailActions.spec.tsx`.
++4. The Submit Result button is disabled until one of the three radio inputs is selected. Pinned in `IncidentDetailPage.spec.tsx` (HAPPY_PATH pre-condition).
++5. Clicking the Submit Result button with an outcome selected fires `POST /api/incidents/:id/submit-result` exactly once; double-clicks are no-ops (button is disabled while in flight). Pinned in `IncidentDetailPage.spec.tsx` (HAPPY_PATH + MUTATION_IN_FLIGHT).
++6. On 200 (any of SAFE / UNSAFE / MONITORING): a success toast "Result submitted" appears, the row cache is invalidated, and the `incident:state_changed` socket event drives the cache mutation. The row shows the new state and the Submit Result form disappears. Pinned in `IncidentDetailPage.spec.tsx` (three HAPPY_PATH variants).
++7. On 409 (`invalid_state_transition`): an error toast "Already submitted" appears; row cache invalidated; on next fetch the row shows the post-INSPECTING state and the form disappears. Pinned in `IncidentDetailPage.spec.tsx`.
++8. On 403 (`forbidden`): an error toast "Not authorized" appears; row cache invalidated; on next fetch the page renders `<RbacDenied />`. Pinned in `IncidentDetailPage.spec.tsx`.
++9. On 404: an error toast "Incident not found" appears; on next fetch the page renders `<NotFound />`. Pinned in `IncidentDetailPage.spec.tsx`.
++10. On 401 (token refresh exhausted): an error toast "Session expired — please sign in again" appears; row cache NOT invalidated; button re-enables. Pinned in `IncidentDetailPage.spec.tsx`.
++11. On 500 / network throw: an error toast "Failed to submit result. Try again." appears; row cache NOT invalidated; button re-enables. Pinned in `IncidentDetailPage.spec.tsx`.
++12. On 400 (Zod body validation): an error toast "Invalid request" appears; row cache invalidated (4xx branch). Pinned in `IncidentDetailPage.spec.tsx`.
++
++## Design Notes
++
++**Why a radio group with three uppercase enum values, not a free-text field.** The server's `InspectionOutcomeSchema` (`packages/shared/src/incident.ts:65-67`) is a closed three-value enum: `SAFE | UNSAFE | MONITORING`. A free-text field would let the Technician submit any string, including nonsense like `"looks ok i think"`, and the server would reject it as 400. The radio group eliminates that whole class of failure: the only values the form can ever produce are the three that the server accepts. This is the same pattern as 4.6's `<select>` of seeded Technician ids — pick from a closed set, fire.
++
++**Why uppercase enum values directly (no camelCase boundary), unlike 4.6's `assignee_user_id` snake_case.** The radio values are uppercase strings (`"SAFE"` / `"UNSAFE"` / `"MONITORING"`), already matching `InspectionOutcomeSchema`. 4.6's `assigneeUserId` is camelCase at the hook boundary because `assignee_user_id` is snake_case per `IncidentPayloadSchema` (snake_case keys throughout the wire contract); the hook swaps casing to match. Here the wire shape is uppercase enum strings, so the mutation hook's `outcome` parameter is the same uppercase string the radio produces — no swap. The radio's `value` attribute is the wire value.
++
++**Why no optimistic UI for the mutation.** The server is authoritative; the cache mutation IS the optimistic surface via the existing `incident:state_changed` subscription (same as 4.5 + 4.6). Mirroring the rationale verbatim: if the technician sees `state: "SAFE"` flash before the server confirms, and the server later returns 409 (state moved past INSPECTING between page load and click), the operator has to mentally unwind the false-positive. The socket-driven reconcile is the source of truth; the mutation's `onSuccess` only invalidates the row query to nudge the next fetch if the socket event hasn't arrived yet.
++
++**Why a single Submit button, not three (one per outcome).** Three buttons would mean three radio-less actions — the operator could click "Submit UNSAFE" without picking UNSAFE first, which would race the radio's default selection with the click intent. A single button + three radios forces a deliberate two-click workflow: pick outcome, then submit. This is the minimum affordance for a one-shot mutation where the verb is "submit this outcome" and the noun is "the chosen radio value".
++
++**Why the SubmitResultForm lives in the same `<IncidentDetailActions />` as Acknowledge + Assign (not three siblings).** All three controls share the same `actionSlotsFor` gate and the same visibility matrix. Splitting them into three siblings would duplicate the gate logic and force three parent components to coordinate state. The 4.5 design note "extracting the action surface today keeps the body component under the lint `max-lines-per-function: 200` ceiling" applies equally to 4.7. The per-action visibility test stays trivial: mount one component, assert presence / absence per slot.
++
++**Why the JWT decoder widens to expose `userId` instead of fetching `/api/me`.** The api already knows the viewer's user id (`req.user.id` is the JWT `sub` claim); the web's `jwtDecode.ts` is the canonical mirror. Adding a `/api/me` round-trip would (a) duplicate data already in the JWT, (b) cost a network call on every detail-page mount, (c) introduce a new wire shape. The decoder widening is one line: `payload["sub"]` → `userId`. The page wires a `useCurrentUserId()` companion hook that reads from `useTokenStore.getState().accessToken` and decodes — same pattern as `readRoleFromStore` at `tokenStore.ts:101-105`.
++
++**Why 4xx invalidates but 5xx (and 401, and status-0 network throw) does not.** A 409 means another path advanced the row between page load and click — the row is now in a non-INSPECTING state and the next fetch surfaces the truth, which hides the form. A 404 means the row was deleted — the next fetch surfaces `<NotFound />`. A 403 means a token/role drift — the next fetch surfaces `<RbacDenied />`. A 400 means the request body was malformed — the next fetch surfaces the unchanged row (and the form stays visible so the operator can retry). All four are "the world moved on; tell me the new truth" — all four invalidate the row query. A 5xx (or network throw) is "the world is unchanged but the call failed" — invalidating would trigger a redundant refetch and the technician's manual retry would race with it. Preserving the stale row for retry is the correct UX. A 401 is its own class because `apiFetch`'s auto-refresh has already failed, the technician is effectively signed out, and any retry will 401 again until re-auth; invalidating would just produce a second toast.
++
++**Why 401 is classified explicitly, not folded into "try again."** `apiFetch` auto-refreshes the access token on 401 internally, so a 401 reaching `useSubmitResultMutation` means the refresh itself failed (the user is signed out). The toast copy must reflect this — "Session expired — please sign in again" — instead of the generic retryable bucket, which would prompt the technician to click a button that will never succeed. This is verbatim the 4.5 + 4.6 rationale.
++
++**Why `isSubmitResult` (not `isSubmitResultPending`) for the prop name.** ESLint rule `^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])*` rejects names like `isSubmitResultPending` because `Submit` + `Result` + `Pending` parses as three capitalized syllables — the convention is `is` + adjective + `Pending`, and "SubmitResult" isn't an adjective. Mirrors the `isAck` / `isAssign` prop names from 4.5 + 4.6 (both short verbs that the rule accepts). The trailing `Pending` is implied by the React Query / mutation semantics; the page wires `.isPending` straight through.
++
++## Verification
++
++**Commands:**
++
++- `pnpm -F @surakkha/web test` — expected: existing 338 + ~18 new (~7 IncidentDetailActions visibility + ~10 IncidentDetailPage submit-result + ~1 TTL = ~18) green.
++- `pnpm -F @surakkha/api test` — expected: green (no backend changes; existing submit-result coverage at `router.spec.ts:370-540` — happy paths for SAFE / UNSAFE + Technician-ownership 403 + state-mismatch 409 + admin 403).
++- `pnpm -r typecheck` — expected: clean.
++
++**Pre-existing failures (document, do NOT fix as part of 4.7):**
++
++- The 5 pre-existing Story 3.5 alerts/list test failures in `packages/api` (`pnpm -F @surakkha/api test`) were failing before 4.7 started (per `_bmad-output/implementation-artifacts/epic-3-retrospective.md` action item AI-3.1). They are unrelated to 4.7 — no submit-result, assign, or acknowledge test in `router.spec.ts` is affected. The deferred-work file already captures the ownership of those failures as AI-3.1 (target: Before Epic 4 begins). 4.7 does NOT attempt to fix them.
++
++**Manual checks (if no CLI):**
++
++- Boot api + web; seed incidents (per RUNBOOK.md §4); navigate to `/incidents`; click an OPEN card → land on `/incidents/:id`; click Acknowledge; verify state flips to ACKNOWLEDGED.
++- Reload (or wait for the socket event); pick a Technician from the Assign `<select>`; click Assign. Verify: success toast appears for ~4s; row's state pill flips to "INSPECTING"; `assignee_user_id` populates; both action buttons disappear; the Submit Result form appears (assuming you're logged in as that Technician).
++- Pick SAFE; click Submit result. Verify: success toast "Result submitted" for ~4s; row's state pill flips to "SAFE"; Submit Result form disappears.
++- Repeat with UNSAFE / MONITORING (note: no SeverityBanner yet — that's 4.8).
++- Switch role to a different Technician (not the assignee). Verify: Submit Result form does NOT render on the same INSPECTING incident.
++- Switch role to Admin. Verify: Submit Result form does NOT render (Technician-only verb).
++- Curl the row's state to RESOLVED manually. Verify: detail page's Submit Result form disappears on the next socket event.
++
++</frozen-after-approval>
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index f34bcf7..0ed3f71 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-08-21
+-# last_updated: 2026-08-28T01:00:00.000Z
++# last_updated: 2026-08-28T05:00:00.000Z
+ # project: Surakkha
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -104,7 +104,7 @@ development_status:
+   4-4-incident-detail-page: done
+   4-5-acknowledge-flow: done
+   4-6-assign-technician-inspecting-transition: done
+-  4-7-submit-result-safe-unsafe-monitoring: backlog
++  4-7-submit-result-safe-unsafe-monitoring: in-progress
+   4-8-sticky-severitybanner-rbac: backlog
+   4-9-notification-writer: done
+   4-10-notificationbell-dropdown: backlog
+diff --git a/packages/web/src/auth/jwtDecode.spec.ts b/packages/web/src/auth/jwtDecode.spec.ts
+index c2a5c7a..063a649 100644
+--- a/packages/web/src/auth/jwtDecode.spec.ts
++++ b/packages/web/src/auth/jwtDecode.spec.ts
+@@ -1,9 +1,10 @@
+ /**
+  * Story 1.7 — JWT decoder.
+  *
+- * The decoder extracts `role` and `exp` from the access token payload
+- * (base64url-decoded). The signature is NOT verified client-side — the
+- * api's `authenticate` middleware does that on every request.
++ * The decoder extracts `role`, `sub` (as `userId`), and `exp` from the
++ * access token payload (base64url-decoded). The signature is NOT verified
++ * client-side — the api's `authenticate` middleware does that on every
++ * request.
+  */
+ import { describe, expect, it } from "vitest";
+ 
+@@ -35,6 +36,7 @@ describe("Story 1.7 — decodeAccessToken (JWT role claim)", () => {
+     });
+     expect(decodeAccessToken(token)).toEqual({
+       role: "Admin",
++      userId: "00000000-0000-4000-8000-00000000a001",
+       expiresAt: 9999999999,
+     });
+   });
+@@ -66,16 +68,48 @@ describe("Story 1.7 — decodeAccessToken (JWT role claim)", () => {
+   it("returns nulls for a malformed token (not 3 parts)", () => {
+     expect(decodeAccessToken("not.a.real.token.extra")).toEqual({
+       role: null,
++      userId: null,
+       expiresAt: null,
+     });
+     expect(decodeAccessToken("only-one-part")).toEqual({
+       role: null,
++      userId: null,
+       expiresAt: null,
+     });
+   });
+ 
+   it("returns nulls for an unparseable payload", () => {
+     const token = `aaa.!!!not-base64!!!.sig`;
+-    expect(decodeAccessToken(token)).toEqual({ role: null, expiresAt: null });
++    expect(decodeAccessToken(token)).toEqual({
++      role: null,
++      userId: null,
++      expiresAt: null,
++    });
++  });
++});
++
++describe("Story 4.7 — decodeAccessToken (JWT sub claim → userId)", () => {
++  it("returns the userId for a token with a string sub claim", () => {
++    const token = mint({
++      sub: "00000000-0000-4000-8000-00000000a003",
++      role: "Technician",
++      exp: 9999999999,
++    });
++    expect(decodeAccessToken(token).userId).toBe("00000000-0000-4000-8000-00000000a003");
++  });
++
++  it("returns userId=null when the sub claim is absent", () => {
++    const token = mint({ role: "Operator", exp: 100 });
++    expect(decodeAccessToken(token).userId).toBeNull();
++  });
++
++  it("returns userId=null when the sub claim is the empty string", () => {
++    const token = mint({ sub: "", role: "Admin", exp: 100 });
++    expect(decodeAccessToken(token).userId).toBeNull();
++  });
++
++  it("returns userId=null when the sub claim is a non-string type", () => {
++    const token = mint({ sub: 42, role: "Admin", exp: 100 });
++    expect(decodeAccessToken(token).userId).toBeNull();
+   });
+-});
+\ No newline at end of file
++});
+diff --git a/packages/web/src/auth/jwtDecode.ts b/packages/web/src/auth/jwtDecode.ts
+index 71054b9..05fe8d7 100644
+--- a/packages/web/src/auth/jwtDecode.ts
++++ b/packages/web/src/auth/jwtDecode.ts
+@@ -23,6 +23,7 @@ import { type Role } from "@surakkha/shared/rbac";
+ 
+ export interface DecodedAccessToken {
+   readonly role: Role | null;
++  readonly userId: string | null;
+   readonly expiresAt: number | null;
+ }
+ 
+@@ -35,16 +36,14 @@ const decodeBase64Url = (input: string): string => {
+   return globalThis.atob(padded);
+ };
+ 
+-const ROLE_VALUES: readonly Role[] = [
+-  "Admin",
+-  "Operator",
+-  "Technician",
+-  "Viewer",
+-];
++const ROLE_VALUES: readonly Role[] = ["Admin", "Operator", "Technician", "Viewer"];
+ 
+ const asRole = (value: unknown): Role | null =>
+   ROLE_VALUES.includes(value as Role) ? (value as Role) : null;
+ 
++const asUserId = (value: unknown): string | null =>
++  typeof value === "string" && value.length > 0 ? value : null;
++
+ const asExpiresAt = (value: unknown): number | null =>
+   typeof value === "number" && Number.isFinite(value) ? value : null;
+ 
+@@ -67,9 +66,10 @@ const extractPayload = (token: string): Record<string, unknown> | null => {
+ 
+ export const decodeAccessToken = (token: string): DecodedAccessToken => {
+   const payload = extractPayload(token);
+-  if (payload === null) return { role: null, expiresAt: null };
++  if (payload === null) return { role: null, userId: null, expiresAt: null };
+   return {
+     role: asRole(payload["role"]),
++    userId: asUserId(payload["sub"]),
+     expiresAt: asExpiresAt(payload["exp"]),
+   };
+-};
+\ No newline at end of file
++};
+diff --git a/packages/web/src/auth/tokenStore.ts b/packages/web/src/auth/tokenStore.ts
+index f6f642f..a1f45dc 100644
+--- a/packages/web/src/auth/tokenStore.ts
++++ b/packages/web/src/auth/tokenStore.ts
+@@ -104,12 +104,25 @@ export const readRoleFromStore = (): Role | null => {
+   return decodeAccessToken(accessToken).role;
+ };
+ 
++/**
++ * Read the viewer's user id from the current access token's `sub`
++ * claim. Synchronous; mirrors `readRoleFromStore`. Story 4.7 needs
++ * this so the detail page can pass `viewerUserId` to
++ * `actionSlotsFor`'s third argument (the INSPECTING ownership gate
++ * — Technicians only see `submit-result` for incidents they're
++ * assigned to).
++ */
++export const readUserIdFromStore = (): string | null => {
++  const { accessToken } = useTokenStore.getState();
++  if (accessToken === null) return null;
++  return decodeAccessToken(accessToken).userId;
++};
++
+ /**
+  * Read the raw access token. Used by the apiClient for the
+  * `Authorization: Bearer <token>` header. Synchronous.
+  */
+-export const readAccessToken = (): string | null =>
+-  useTokenStore.getState().accessToken;
++export const readAccessToken = (): string | null => useTokenStore.getState().accessToken;
+ 
+ /**
+  * Test helper. Resets the singleton store and the persisted entry.
+@@ -120,4 +133,4 @@ export const _resetTokenStore = (): void => {
+   if (typeof globalThis.localStorage !== "undefined") {
+     globalThis.localStorage.removeItem(STORAGE_KEY);
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/packages/web/src/components/IncidentCard.types.spec.ts b/packages/web/src/components/IncidentCard.types.spec.ts
+index 6b058fe..db97844 100644
+--- a/packages/web/src/components/IncidentCard.types.spec.ts
++++ b/packages/web/src/components/IncidentCard.types.spec.ts
+@@ -139,6 +139,35 @@ describe("Story 4.1 — actionSlotsFor INSPECTING state (AC9)", () => {
+     });
+     expect(actionSlotsFor(incident, "Admin")).toEqual([]);
+   });
++
++  // Story 4.7 regression pin: even when an Admin's `viewerUserId`
++  // matches the assignee (an edge case where the seeded Admin and
++  // Technician rows happen to share an id), the role gate still
++  // wins — Admin never sees the Technician-only `submit-result`
++  // slot. Same for Operator + Viewer.
++  it("Admin sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
++    const incident = makeIncident({
++      state: "INSPECTING",
++      assignee_user_id: TECH_ID,
++    });
++    expect(actionSlotsFor(incident, "Admin", TECH_ID)).toEqual([]);
++  });
++
++  it("Operator sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
++    const incident = makeIncident({
++      state: "INSPECTING",
++      assignee_user_id: TECH_ID,
++    });
++    expect(actionSlotsFor(incident, "Operator", TECH_ID)).toEqual([]);
++  });
++
++  it("Viewer sees no slots even when viewerUserId matches the assignee (role gate wins)", () => {
++    const incident = makeIncident({
++      state: "INSPECTING",
++      assignee_user_id: TECH_ID,
++    });
++    expect(actionSlotsFor(incident, "Viewer", TECH_ID)).toEqual([]);
++  });
+ });
+ 
+ describe("Story 4.1 — actionSlotsFor post-inspection states (SAFE / UNSAFE / MONITORING)", () => {
+diff --git a/packages/web/src/components/IncidentCard.types.ts b/packages/web/src/components/IncidentCard.types.ts
+index b06b4a5..9bf3676 100644
+--- a/packages/web/src/components/IncidentCard.types.ts
++++ b/packages/web/src/components/IncidentCard.types.ts
+@@ -87,6 +87,12 @@ export const actionSlotsFor = (
+ ): readonly ActionSlot[] => {
+   if (viewerRole === null) return [];
+   if (incident.state === "INSPECTING") {
++    // The submit-result slot is Technician-only-mine. The
++    // ownership rule (`assignee_user_id === viewerUserId`) lives
++    // in `slotsForInspecting`; the role gate lives here so the
++    // helper stays role-free (the helper itself doesn't read
++    // `viewerRole`).
++    if (viewerRole !== "Technician") return [];
+     return slotsForInspecting(incident.assignee_user_id, viewerUserId);
+   }
+   const perRole = STATE_SLOTS[incident.state];
+diff --git a/packages/web/src/incidents/IncidentDetailActions.spec.tsx b/packages/web/src/incidents/IncidentDetailActions.spec.tsx
+index 02f5bfb..fd673c6 100644
+--- a/packages/web/src/incidents/IncidentDetailActions.spec.tsx
++++ b/packages/web/src/incidents/IncidentDetailActions.spec.tsx
+@@ -1,9 +1,10 @@
+ /**
+- * `IncidentDetailActions.spec.tsx` — Story 4.5 + Story 4.6.
++ * `IncidentDetailActions.spec.tsx` — Story 4.5 + Story 4.6 + Story 4.7.
+  *
+  * Unit tests for the Acknowledge button (Story 4.5) + Assign
+- * inline form (Story 4.6) visibility logic. Mirrors the Story 4.1
+- * contract: `actionSlotsFor(incident, viewerRole)` is the SINGLE
++ * inline form (Story 4.6) + Submit Result inline form (Story 4.7)
++ * visibility logic. Mirrors the Story 4.1 contract:
++ * `actionSlotsFor(incident, viewerRole, viewerUserId)` is the SINGLE
+  * source of truth for which actions render.
+  *
+  * Coverage matrix (parameterized over the four-role RBAC contract
+@@ -17,18 +18,33 @@
+  *   4. OPEN + Viewer         → Acknowledge NOT visible. (4.5 AC #3)
+  *   5. ACKNOWLEDGED + Operator → Acknowledge NOT visible. (4.5 AC #2 — past OPEN)
+  *
+- * Story 4.6 — Assign inline form (new):
++ * Story 4.6 — Assign inline form:
+  *   6. OPEN + Operator       → Assign NOT visible (4.1 slot matrix: OPEN+Operator = ["acknowledge"] only)
+  *   7. ACKNOWLEDGED + Admin  → Assign visible.   (4.6 AC #1)
+  *   8. ACKNOWLEDGED + Operator → Assign visible.   (4.6 AC #1)
+  *   9. ACKNOWLEDGED + Technician → Assign NOT visible. (4.6 AC #3)
+  *  10. ACKNOWLEDGED + Viewer → Assign NOT visible. (4.6 AC #3)
+  *
+- * The mutation wiring (`isAck`, `isAssign`,
+- * `onAcknowledge`, `onAssign`) is the `IncidentDetailPage.spec.tsx`'s
+- * job — those tests mount the full detail page so they can drive
+- * the buttons' real behavior. This spec file pins the visibility
+- * contract only.
++ * Story 4.7 — Submit Result inline form (new):
++ *  11. INSPECTING + assigned Technician → Submit Result visible. (4.7 AC #1)
++ *  12. INSPECTING + unassigned Technician → nothing. (4.7 AC #3, ownership)
++ *  13. INSPECTING + Admin       → nothing. (4.7 AC #3, slot matrix)
++ *  14. INSPECTING + Operator    → nothing. (4.7 AC #3, slot matrix)
++ *  15. INSPECTING + Viewer      → nothing. (4.7 AC #3, slot matrix)
++ *  16. OPEN + assigned Technician → nothing. (4.7 AC #2, state guard)
++ *  17. ACKNOWLEDGED + assigned Technician → nothing. (4.7 AC #2, state guard)
++ *  18. SAFE + assigned Technician → nothing. (4.7 AC #2, state guard)
++ *  19. UNSAFE + assigned Technician → nothing. (4.7 AC #2, state guard)
++ *  20. MONITORING + assigned Technician → nothing. (4.7 AC #2, state guard)
++ *  21. MUTATION_IN_FLIGHT: button disabled while isSubmitting === true. (4.7 AC #5)
++ *  22. NO_OUTCOME_SELECTED: button disabled until a radio is picked. (4.7 AC #4)
++ *  23. Click fires onSubmitResult with the selected outcome. (4.7 AC #5)
++ *
++ * The mutation wiring (`isAck`, `isAssign`, `isSubmitting`,
++ * `onAcknowledge`, `onAssign`, `onSubmitResult`) is the
++ * `IncidentDetailPage.spec.tsx`'s job — those tests mount the full
++ * detail page so they can drive the buttons' real behavior. This
++ * spec file pins the visibility contract only.
+  */
+ import { type IncidentPayload } from "@surakkha/shared/incident";
+ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+@@ -38,6 +54,8 @@ import { IncidentDetailActions } from "./IncidentDetailActions";
+ 
+ const INCIDENT_ID = "11111111-1111-4111-8111-111111111111";
+ const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
++const TECH_ID = "00000000-0000-4000-8000-00000000a003";
++const OTHER_TECH_ID = "00000000-0000-4000-8000-00000000a999";
+ 
+ const makeIncident = (overrides: Partial<IncidentPayload> = {}): IncidentPayload => ({
+   id: INCIDENT_ID,
+@@ -74,10 +92,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)",
+         <IncidentDetailActions
+           incident={incident}
+           viewerRole={role}
++          viewerUserId={TECH_ID}
+           isAck={false}
+           isAssign={false}
++          isSubmitting={false}
+           onAcknowledge={() => undefined}
+           onAssign={() => undefined}
++          onSubmitResult={() => undefined}
+         />,
+       );
+       if (expectVisible) {
+@@ -102,10 +123,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+@@ -117,10 +141,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={true}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     const button = screen.getByTestId("incident-detail-acknowledge-button");
+@@ -135,10 +162,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={onAcknowledge}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     screen.getByTestId("incident-detail-acknowledge-button").click();
+@@ -169,10 +199,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+         <IncidentDetailActions
+           incident={incident}
+           viewerRole={role}
++          viewerUserId={TECH_ID}
+           isAck={false}
+           isAssign={false}
++          isSubmitting={false}
+           onAcknowledge={() => undefined}
+           onAssign={() => undefined}
++          onSubmitResult={() => undefined}
+         />,
+       );
+       if (expectVisible) {
+@@ -199,10 +232,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     // OPEN + Operator slot matrix = ["acknowledge"]; Assign slot is absent.
+@@ -217,10 +253,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Admin"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     // INSPECTING state — 4.1's `slotsForInspecting` returns [] for non-Technician
+@@ -236,10 +275,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     const button = screen.getByTestId("incident-detail-assign-button");
+@@ -254,19 +296,23 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={false}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={onAssign}
++        onSubmitResult={() => undefined}
+       />,
+     );
+ 
+     // Pick the first seeded Technician from the select.
+     const select = screen.getByTestId("incident-detail-assign-select");
+-    const TECH_ID = (select.querySelector("option[value]:not([value=''])") as HTMLOptionElement)
+-      ?.value;
+-    expect(TECH_ID).toBeTruthy();
+-    fireEvent.change(select, { target: { value: TECH_ID } });
++    const seededTechId = (
++      select.querySelector("option[value]:not([value=''])") as HTMLOptionElement
++    )?.value;
++    expect(seededTechId).toBeTruthy();
++    fireEvent.change(select, { target: { value: seededTechId } });
+ 
+     // Button now enabled.
+     const button = screen.getByTestId("incident-detail-assign-button");
+@@ -274,7 +320,7 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+ 
+     button.click();
+     expect(onAssign).toHaveBeenCalledTimes(1);
+-    expect(onAssign).toHaveBeenCalledWith(TECH_ID);
++    expect(onAssign).toHaveBeenCalledWith(seededTechId);
+   });
+ 
+   it("disables the Assign button while the assign mutation is in flight (MUTATION_IN_FLIGHT)", () => {
+@@ -283,10 +329,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+       <IncidentDetailActions
+         incident={incident}
+         viewerRole="Operator"
++        viewerUserId={TECH_ID}
+         isAck={false}
+         isAssign={true}
++        isSubmitting={false}
+         onAcknowledge={() => undefined}
+         onAssign={() => undefined}
++        onSubmitResult={() => undefined}
+       />,
+     );
+     const button = screen.getByTestId("incident-detail-assign-button");
+@@ -294,3 +343,221 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)",
+     expect(button).toHaveTextContent("Assigning...");
+   });
+ });
++
++// ============================================================================
++// Story 4.7 — IncidentDetailActions visibility (Submit Result inline form)
++// ============================================================================
++//
++// Story 4.7 owns the Submit Result form. Pinned here (not just at the
++// page integration level) so a regression that introduced an inline
++// role check inside `IncidentDetailActions` (bypassing `actionSlotsFor`)
++// would fail at the unit-test seam.
++//
++// The `submit-result` slot is special-cased in `actionSlotsFor` —
++// `slotsForInspecting` returns `["submit-result"]` only when
++// `incident.assignee_user_id === viewerUserId` AND viewerRole is
++// Technician. Both halves of that gate are pinned below.
++describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline form)", () => {
++  it("renders the Submit Result form for INSPECTING + assigned Technician (AC #1)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    expect(screen.getByTestId("incident-detail-submit-result-button")).toBeInTheDocument();
++    // All three radios present + grouped under the same `name` for
++    // a11y.
++    expect(screen.getByTestId("incident-detail-submit-result-radio-SAFE")).toBeInTheDocument();
++    expect(screen.getByTestId("incident-detail-submit-result-radio-UNSAFE")).toBeInTheDocument();
++    expect(
++      screen.getByTestId("incident-detail-submit-result-radio-MONITORING"),
++    ).toBeInTheDocument();
++    // Acknowledge / Assign not visible — slots are absent for
++    // INSPECTING + assigned Technician per the 4.1 matrix.
++    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
++  });
++
++  it("does NOT render the Submit Result form for INSPECTING + unassigned Technician (AC #3 — ownership)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        // Different Technician viewer — `slotsForInspecting` returns [].
++        viewerUserId={OTHER_TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-submit-result-button")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++
++  it("does NOT render the Submit Result form for INSPECTING + Admin (AC #3 — slot matrix is Technician-only)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Admin"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++
++  it("does NOT render the Submit Result form for INSPECTING + Operator (AC #3 — slot matrix is Technician-only)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Operator"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++
++  it("does NOT render the Submit Result form for INSPECTING + Viewer (AC #3 — slot matrix is Technician-only)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Viewer"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++
++  // AC #2 — state guard: the submit-result slot is only available
++  // when `state === "INSPECTING"`. Pinned for each non-INSPECTING
++  // state the row can be in (Technician doesn't have a `resolve`
++  // slot either; the spec is explicit on the post-INSPECTING
++  // Technician's read-only surface).
++  for (const state of ["OPEN", "ACKNOWLEDGED", "SAFE", "UNSAFE", "MONITORING"] as const) {
++    it(`does NOT render the Submit Result form for ${state} + assigned Technician (AC #2 — state guard)`, () => {
++      const incident = makeIncident({ state, assignee_user_id: TECH_ID });
++      render(
++        <IncidentDetailActions
++          incident={incident}
++          viewerRole="Technician"
++          viewerUserId={TECH_ID}
++          isAck={false}
++          isAssign={false}
++          isSubmitting={false}
++          onAcknowledge={() => undefined}
++          onAssign={() => undefined}
++          onSubmitResult={() => undefined}
++        />,
++      );
++      expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    });
++  }
++
++  it("disables the Submit button while no outcome is selected (AC #4 — NO_OUTCOME_SELECTED)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    const button = screen.getByTestId("incident-detail-submit-result-button");
++    expect(button).toBeDisabled();
++    expect(button).toHaveTextContent("Submit result");
++  });
++
++  it("disables the Submit button while the submit-result mutation is in flight (AC #5 — MUTATION_IN_FLIGHT)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={true}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={() => undefined}
++      />,
++    );
++    const button = screen.getByTestId("incident-detail-submit-result-button");
++    expect(button).toBeDisabled();
++    expect(button).toHaveTextContent("Submitting...");
++  });
++
++  it("fires onSubmitResult with the selected outcome when a radio is picked + Submit is clicked (AC #5)", () => {
++    const incident = makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID });
++    const onSubmitResult = vi.fn();
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        viewerUserId={TECH_ID}
++        isAck={false}
++        isAssign={false}
++        isSubmitting={false}
++        onAcknowledge={() => undefined}
++        onAssign={() => undefined}
++        onSubmitResult={onSubmitResult}
++      />,
++    );
++
++    // Pick SAFE; click Submit. Use UNSAFE here to also pin the
++    // arbitrary-radio case (not just the first option).
++    fireEvent.click(screen.getByTestId("incident-detail-submit-result-radio-UNSAFE"));
++
++    // Button now enabled.
++    const button = screen.getByTestId("incident-detail-submit-result-button");
++    expect(button).not.toBeDisabled();
++
++    button.click();
++    expect(onSubmitResult).toHaveBeenCalledTimes(1);
++    expect(onSubmitResult).toHaveBeenCalledWith("UNSAFE");
++  });
++});
+diff --git a/packages/web/src/incidents/IncidentDetailActions.tsx b/packages/web/src/incidents/IncidentDetailActions.tsx
+index 37688c0..8fac6b2 100644
+--- a/packages/web/src/incidents/IncidentDetailActions.tsx
++++ b/packages/web/src/incidents/IncidentDetailActions.tsx
+@@ -1,40 +1,40 @@
+ /**
+- * `IncidentDetailActions` — Story 4.5 + Story 4.6.
++ * `IncidentDetailActions` — Story 4.5 + Story 4.6 + Story 4.7.
+  *
+  * The action region on the detail page. Mounted by
+  * `<IncidentDetailBody />` between the `<dl>` and the audit timeline.
+  *
+- * Visibility gate: `actionSlotsFor(incident, viewerRole)` from
+- * Story 4.1's contract module (`@/components/IncidentCard.types`).
+- * The gate is the SAME single source of truth that Kanban cards
+- * will eventually consume for card-level affordances (out of scope
+- * for 4.5/4.6). Returns:
++ * Visibility gate: `actionSlotsFor(incident, viewerRole, viewerUserId)`
++ * from Story 4.1's contract module
++ * (`@/components/IncidentCard.types`). The gate is the SAME single
++ * source of truth that Kanban cards will eventually consume for card-
++ * level affordances (out of scope for 4.5/4.6/4.7). Returns:
+  *
+- *   - "acknowledge" in the slot list → render the Acknowledge button
+- *   - "assign"      in the slot list → render the Assign inline form
+- *   - otherwise                       → render nothing for that slot
++ *   - "acknowledge"   in the slot list → render the Acknowledge button
++ *   - "assign"        in the slot list → render the Assign inline form
++ *   - "submit-result" in the slot list → render the Submit Result form
++ *   - otherwise                         → render nothing for that slot
+  *
+- * Both buttons are `disabled` while their respective mutation is in
++ * Story 4.6 added the Assign inline form (Technician `<select>` of
++ * seeded ids + Assign button). Story 4.7 adds the Submit Result form
++ * (three radio inputs from `InspectionOutcomeSchema` + Submit button).
++ * Both forms share the gate pattern: gate-first, then per-slot render.
++ *
++ * All buttons are `disabled` while their respective mutation is in
+  * flight (idempotent re-click protection; the api also rejects 409 on
+  * second-call, but the disable prevents the round-trip + flash
+  * entirely). On click, the mutation fires; success + error toasts
+  * surface via the page's `useToasts()` queue.
+  *
+- * Story 4.6 adds the Assign control. The pick-a-Technician UI is an
+- * inline `<select>` of seeded Technician ids (`SEEDED_TECHNICIAN_IDS`
+- * from `seededTechnicians.ts`) plus an Assign button — no modal,
+- * no portal, no focus trap. The button is disabled until a
+- * Technician is selected from the inline form.
+- *
+- * Why both controls in one component (not two siblings): both share
+- * the same `actionSlotsFor` gate and the same visibility matrix
+- * (both Admin + Operator, both rendered inside the body between
+- * `<dl>` and the audit timeline). Splitting would duplicate the
+- * gate logic and force two parent components to coordinate state.
+- * Per-button testids disambiguate (`incident-detail-acknowledge-button`,
+- * `incident-detail-assign-button`).
++ * Why all three controls in one component (not three siblings): all
++ * share the same `actionSlotsFor` gate and the same visibility matrix
++ * (Acknowledge + Assign for Admin/Operator, Submit-Result for the
++ * assigned Technician; all rendered inside the body between `<dl>` and
++ * the audit timeline). Splitting would duplicate the gate logic and
++ * force three parent components to coordinate state. Per-button
++ * testids disambiguate.
+  */
+-import { type IncidentPayload } from "@surakkha/shared/incident";
++import { type IncidentPayload, type InspectionOutcome } from "@surakkha/shared/incident";
+ import { type Role } from "@surakkha/shared/rbac";
+ import { useState } from "react";
+ 
+@@ -52,69 +52,91 @@ const TECH_LABEL_TAIL_LENGTH = 8;
+ /**
+  * Props for `<IncidentDetailActions />`.
+  *
+- * The Acknowledge and Assign mutations are owned by the page; this
+- * component receives the `isAck` / `isAssign` in-flight flags plus
++ * The three mutations are owned by the page; this component receives
++ * the `isAck` / `isAssign` / `isSubmitting` in-flight flags plus
+  * the click callbacks so the component controls button-disabled +
+  * click forwarding without re-creating the mutations (the page owns
+  * the mutation lifecycle). Pattern mirrors ThresholdsPage's
+  * `onDeactivate` / `onActivate` props threaded through
+  * `<ThresholdsPopulatedView />`.
+  *
+- * The `Acknowledge` callback has no argument (the verb is implicit);
+- * the `Assign` callback receives the selected `assigneeUserId` (the
+- * page forwards it into the mutation's `variables`).
+- *
+- * Prop naming: `isAck` / `isAssign` instead of the more verbose
+- * `isAckPending` / `isAssignPending` because the React lint rule
+- * `react/boolean-prop-naming` rejects names like `isAckPending`
+- * (it parses as two capitalized syllables — `isAck` + `Pending` —
+- * which violates the convention). The trailing `Pending` is implied
+- * by the React Query / mutation semantics; the page wires the
+- * `.isPending` field straight through.
++ * The `Acknowledge` callback has no argument (the verb is implicit).
++ * The `Assign` callback receives the selected `assigneeUserId` (the
++ * page forwards it into the mutation's `variables`). The
++ * `SubmitResult` callback receives the selected `outcome` (uppercase
++ * enum; passed straight into the wire body — no casing swap).
++ *
++ * `viewerUserId` is threaded through to `actionSlotsFor`'s third
++ * argument — the INSPECTING ownership gate
++ * (`slotsForInspecting` returns `["submit-result"]` only when
++ * `assignee_user_id === viewerUserId`). Optional because the gate
++ * already treats `null` as "no ownership" — 4.5 + 4.6 did not need
++ * the third argument; 4.7's Submit Result slot does.
++ *
++ * Prop naming rationale:
++ *   - `isAck` / `isAssign` — `is` + single capitalized word passes
++ *     the `react/boolean-prop-naming` rule (`^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])$`).
++ *   - `isSubmitting` — verb-form with the `is` prefix. The full
++ *     `isSubmitResult` form would parse as two capitalized syllables
++ *     (`isSubmit` + `Result`) and the rule rejects it. Truncating
++ *     to `isSubmitting` keeps the boolean semantics clear while
++ *     passing the regex. The trailing `Pending` is implied by the
++ *     React Query / mutation semantics; the page wires the
++ *     `.isPending` field straight through.
+  */
+ interface IncidentDetailActionsProps {
+   readonly incident: IncidentPayload;
+   readonly viewerRole: Role | null;
++  readonly viewerUserId: string | null;
+   readonly isAck: boolean;
+   readonly isAssign: boolean;
++  readonly isSubmitting: boolean;
+   readonly onAcknowledge: () => void;
+   readonly onAssign: (assigneeUserId: string) => void;
++  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+ }
+ 
+ /**
+- * Render the action region (Acknowledge button + Assign inline form)
+- * based on `actionSlotsFor`. Each slot renders independently:
++ * Render the action region (Acknowledge button + Assign inline form
++ * + Submit Result form) based on `actionSlotsFor`. Each slot renders
++ * independently:
+  *
+- *   - "acknowledge" slot present → render the Acknowledge button.
+- *   - "assign"      slot present → render the inline form (Technician
+- *                                       `<select>` + Assign button).
++ *   - "acknowledge" slot present   → render the Acknowledge button.
++ *   - "assign"      slot present   → render the Assign inline form
++ *                                     (Technician `<select>` + button).
++ *   - "submit-result" slot present → render the Submit Result form
++ *                                     (three radio inputs + button).
+  *
+  * Returns `null` only when NEITHER slot is available — we render
+  * nothing rather than a disabled button with a tooltip, because:
+  *
+  *   - The detail page's header already surfaces the state pill; the
+  *     "no button" affordance IS the read-only signal.
+- *   - Future actions (submit-result / reopen in Stories 4.7 / 4.11)
+- *     will gate the same way; rendering nothing for closed slots
+- *     keeps the actions region consistent.
++ *   - All three actions share the gate; rendering nothing for closed
++ *     slots keeps the actions region consistent.
+  *
+- * Style choices mirror the ThresholdsPage palette so the operator
+- * gets a consistent button affordance across the app. The button
+- * copies are short imperative verbs — "Acknowledge", "Assign".
++ * Style choices mirror the ThresholdsPage palette so the operator /
++ * Technician gets a consistent button affordance across the app. The
++ * button copies are short imperative verbs — "Acknowledge",
++ * "Assign", "Submit result".
+  */
+ export const IncidentDetailActions = ({
+   incident,
+   viewerRole,
++  viewerUserId,
+   isAck,
+   isAssign,
++  isSubmitting,
+   onAcknowledge,
+   onAssign,
++  onSubmitResult,
+ }: IncidentDetailActionsProps) => {
+-  const slots = actionSlotsFor(incident, viewerRole);
++  const slots = actionSlotsFor(incident, viewerRole, viewerUserId);
+   const canAcknowledge = slots.includes("acknowledge");
+   const canAssign = slots.includes("assign");
++  const canSubmitResult = slots.includes("submit-result");
+ 
+-  if (!canAcknowledge && !canAssign) return null;
++  if (!canAcknowledge && !canAssign && !canSubmitResult) return null;
+ 
+   return (
+     <div data-testid="incident-detail-actions" className="flex flex-col gap-3">
+@@ -139,6 +161,9 @@ export const IncidentDetailActions = ({
+         </button>
+       ) : null}
+       {canAssign ? <AssignForm isPending={isAssign} onAssign={onAssign} /> : null}
++      {canSubmitResult ? (
++        <SubmitResultForm isPending={isSubmitting} onSubmitResult={onSubmitResult} />
++      ) : null}
+     </div>
+   );
+ };
+@@ -222,3 +247,104 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
+     </div>
+   );
+ };
++
++/**
++ * The closed set of inspection outcomes — mirrors `InspectionOutcomeSchema`
++ * at `packages/shared/src/incident.ts:65-67`. Pinned here (not
++ * imported) because:
++ *
++ *   - The shape is closed + tiny (three values) and the radio
++ *     iteration is a stable build-time tuple.
++ *   - Importing the schema in this file would force every consumer of
++ *     `<IncidentDetailActions />` to re-import the zod runtime (and
++ *     would couple this UI module to the wire contract in a way the
++ *     spec explicitly avoids).
++ *
++ * The order matches the enum's canonical order (`SAFE → UNSAFE →
++ * MONITORING`) so the spec's I/O matrix entries line up with the
++ * rendered radio order top-to-bottom.
++ */
++const INSPECTION_OUTCOMES: readonly InspectionOutcome[] = ["SAFE", "UNSAFE", "MONITORING"];
++
++/**
++ * Inline Submit Result form — three radio inputs (one per outcome)
++ * + a single Submit button.
++ *
++ * Extracted as a sub-component (not inlined) so the form's local
++ * state (the selected outcome) is scoped cleanly. The form is
++ * intentionally minimal: the visible `<fieldset>` / `<legend>`
++ * covers the accessible-name requirement (the radio group's
++ * `name` attribute ties the inputs together; the legend labels
++ * the group). Validation copy is absent: the disabled-when-empty
++ * state IS the affordance.
++ *
++ * Why a single Submit button (not three, one per outcome): three
++ * buttons would let the Technician click "Submit UNSAFE" without
++ * picking UNSAFE first, racing the radio's default selection with
++ * the click intent. A single button + three radios forces a
++ * deliberate two-click workflow: pick outcome, then submit.
++ *
++ * Why no `confirm` dialog before firing: submit-result is the
++ * Technician's authoritative verb (the operator workflow assumes
++ * the Technician inspected the device before submitting). The 4.11
++ * reopen path is the rewind for genuine mistakes.
++ *
++ * The radio `value` attribute is the uppercase enum string itself
++ * (`"SAFE"`, `"UNSAFE"`, `"MONITORING"`) — the wire shape matches
++ * the form shape exactly. No camelCase/snake_case swap (unlike
++ * 4.6's `assignee_user_id`).
++ */
++interface SubmitResultFormProps {
++  readonly isPending: boolean;
++  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
++}
++
++const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) => {
++  const [selectedOutcome, setSelectedOutcome] = useState<InspectionOutcome | null>(null);
++  const canFire = selectedOutcome !== null && !isPending;
++
++  return (
++    <fieldset
++      data-testid="incident-detail-submit-result-form"
++      disabled={isPending}
++      className="flex flex-col gap-2 self-start rounded-input border border-neutral-border bg-neutral-surface p-3"
++    >
++      <legend className="text-xs font-medium text-neutral-secondary">Inspection result</legend>
++      <div className="flex flex-col gap-1">
++        {INSPECTION_OUTCOMES.map((outcome) => (
++          <label
++            key={outcome}
++            className="flex items-center gap-2 text-sm text-neutral-body disabled:cursor-not-allowed"
++          >
++            <input
++              type="radio"
++              name="incident-detail-submit-result-outcome"
++              value={outcome}
++              data-testid={`incident-detail-submit-result-radio-${outcome}`}
++              checked={selectedOutcome === outcome}
++              disabled={isPending}
++              onChange={() => setSelectedOutcome(outcome)}
++              className="h-4 w-4 disabled:cursor-not-allowed"
++            />
++            <span>{outcome}</span>
++          </label>
++        ))}
++      </div>
++      <button
++        type="button"
++        data-testid="incident-detail-submit-result-button"
++        disabled={!canFire}
++        onClick={() => {
++          if (selectedOutcome !== null) onSubmitResult(selectedOutcome);
++        }}
++        className={[
++          "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
++          "border-slate-900 bg-slate-900 hover:bg-slate-700",
++          "disabled:bg-slate-400 disabled:cursor-not-allowed",
++        ].join(" ")}
++      >
++        {isPending ? "Submitting..." : "Submit result"}
++      </button>
++    </fieldset>
++  );
++};
+diff --git a/packages/web/src/incidents/IncidentDetailPage.spec.tsx b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+index 3d3250f..b03126d 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.spec.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+@@ -39,6 +39,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
+ 
+ import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
+ import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
++import { _resetTokenStore, useTokenStore } from "../auth/tokenStore";
+ import { AppShell } from "../shell/AppShell";
+ 
+ import { IncidentDetailPage } from "./IncidentDetailPage";
+@@ -149,6 +150,12 @@ afterEach(() => {
+   cleanup();
+   globalThis.fetch = ORIGINAL_FETCH;
+   _resetApiClientConfig();
++  // Reset the token singleton between tests so a JWT injected by
++  // `setViewerAsTechnician()` does not leak into the next test's
++  // `readRoleFromStore()` / `readUserIdFromStore()` reads. The
++  // store is module-load-initialized once; without this reset, the
++  // token persists across tests and breaks RBAC pinning.
++  _resetTokenStore();
+   // Always restore real timers between tests so a test that
+   // enabled fake timers (e.g. the TTL pin) does not leak into
+   // the next test's `waitFor` polling.
+@@ -1645,3 +1652,608 @@ describe("Story 4.6 — AC: success toast leaves the DOM after TTL", () => {
+     }
+   });
+ });
++
++// ============================================================================
++// Story 4.7 — Submit Result Flow
++// ============================================================================
++//
++// Coverage matrix (each spec AC bullet → at least one `it(...)`):
++//
++//   AC "HAPPY_PATH" (SAFE)         — INSPECTING + assigned Technician +
++//                                   SAFE radio + click → POST 200 → toast
++//                                   "Result submitted" → row reconciles
++//                                   to SAFE → form disappears.
++//   AC "HAPPY_UNSAFE"              — UNSAFE radio + click → 200 → toast
++//                                   → row reconciles to UNSAFE.
++//   AC "HAPPY_MONITORING"          — MONITORING radio + click → 200 →
++//                                   toast → row reconciles to MONITORING.
++//   AC "NOT_INSPECTING"            — ACKNOWLEDGED row → Submit form NOT
++//                                   rendered.
++//   AC "RBAC_NOT_ASSIGNEE"         — INSPECTING + different Technician
++//                                   viewer → Submit form NOT rendered.
++//   AC "MUTATION_IN_FLIGHT"        — click Submit twice → second click
++//                                   no-op (button disabled during
++//                                   in-flight mutation).
++//   AC "CONFLICT_409"              — server returns 409 → error toast
++//                                   "Already submitted" → row
++//                                   reconciles to post-INSPECTING state.
++//   AC "SERVER_ERROR_500"          — server returns 500 → error toast
++//                                   "Failed to submit result. Try
++//                                   again." + button re-enables.
++//   AC "TOKEN_EXPIRED_401"         — 401 → "Session expired" toast,
++//                                   no row invalidation.
++//   AC "BODY_VALIDATION_400"       — 400 → "Invalid request" toast,
++//                                   row invalidates (4xx branch).
++//   AC "TOAST_TTL"                 — fake-timer 4s auto-dismiss.
++//
++// Mirrors the 4.5 + 4.6 test rig: same `installFetch`, same
++// `renderDetail(role)`, same `activeSocket.__emitStateChanged`
++// reconciliation pattern. The Technician id is the same
++// `ASSIGN_TECH_ID` from 4.6's assign tests.
++const SUBMIT_RESULT_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/submit-result`;
++const SUBMIT_RESULT_TECH_ID = "00000000-0000-4000-8000-00000000a003";
++
++/** Build a viewer token so the JWT decoder can read the user id. */
++const setViewerAsTechnician = (): void => {
++  // Mint a JWT with `sub: SUBMIT_RESULT_TECH_ID` + `role: "Technician"`.
++  // The shape mirrors the api's token issuer (`auth/login.ts`).
++  //
++  // Why `useTokenStore.setState(...)` and not a direct
++  // `localStorage.setItem(...)`: the token store is a zustand
++  // singleton created at module-load time via `readPersisted()`. By
++  // the time this helper runs, the singleton's `accessToken` field
++  // is `null` (or whatever the previous test left). Writing to
++  // `localStorage` after the fact does NOT update the singleton's
++  // in-memory state; `readUserIdFromStore()` reads from the
++  // singleton via `useTokenStore.getState().accessToken` and would
++  // still see the old value. We must push the JWT into the
++  // singleton directly. `afterEach` calls `_resetTokenStore()` so
++  // the token does not leak into subsequent tests.
++  const b64url = (input: string): string => {
++    const base64 =
++      typeof globalThis.btoa === "function"
++        ? globalThis.btoa(input)
++        : Buffer.from(input, "utf-8").toString("base64");
++    return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
++  };
++  const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
++  const payload = b64url(
++    JSON.stringify({
++      sub: SUBMIT_RESULT_TECH_ID,
++      role: "Technician",
++      exp: 9999999999,
++    }),
++  );
++  const token = `${header}.${payload}.sig`;
++  useTokenStore.setState({ accessToken: token, expiresAt: 9999999999000 });
++};
++
++/** Drive the Submit Result form: pick the outcome + click Submit. */
++const pickOutcomeAndSubmit = (outcome: "SAFE" | "UNSAFE" | "MONITORING"): void => {
++  fireEvent.click(screen.getByTestId(`incident-detail-submit-result-radio-${outcome}`));
++  fireEvent.click(screen.getByTestId("incident-detail-submit-result-button"));
++};
++
++/**
++ * Build an INSPECTING incident with the supplied assignee. Used by
++ * the 4.7 page-level tests so the Submit Result form renders for the
++ * assigned Technician. The page also needs the JWT to carry the
++ * matching `sub` claim — call `setViewerAsTechnician()` before
++ * `renderDetail("Technician")`.
++ */
++const inspectingIncidentForTech = (overrides: Partial<IncidentPayload> = {}): IncidentPayload => ({
++  ...baseIncident({
++    state: "INSPECTING",
++    assignee_user_id: SUBMIT_RESULT_TECH_ID,
++    acknowledged_at: "2026-08-27T01:00:00.000Z",
++  }),
++  ...overrides,
++});
++
++describe("Story 4.7 — AC: happy path SAFE (POST 200 → success toast → state reconciled)", () => {
++  it("fires POST with { outcome: 'SAFE' }, surfaces 'Result submitted' toast, and the row transitions to SAFE via socket event", async () => {
++    setViewerAsTechnician();
++    let submitCallCount = 0;
++    let submitBody: { outcome?: string } | null = null;
++    installFetch(async (url, init) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        submitCallCount += 1;
++        expect(init?.method).toBe("POST");
++        submitBody = JSON.parse(init?.body as string) as { outcome?: string };
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    // Submit Result form visible; Acknowledge + Assign not.
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
++
++    // Pick SAFE; click Submit.
++    pickOutcomeAndSubmit("SAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
++    });
++    expect(submitCallCount).toBe(1);
++    expect(submitBody?.outcome).toBe("SAFE");
++
++    // Socket-driven state mutation arrives; row's data-state
++    // updates to SAFE. The Submit Result form disappears because
++    // the `submit-result` slot returns null for SAFE.
++    expect(activeSocket).not.toBeNull();
++    activeSocket?.__emitStateChanged({
++      incident_id: INCIDENT_ID,
++      from_state: "INSPECTING",
++      to_state: "SAFE",
++      changed_at: "2026-08-27T02:00:00.000Z",
++      actor_user_id: SUBMIT_RESULT_TECH_ID,
++    });
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "SAFE");
++    });
++    await waitFor(() => {
++      expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    });
++  });
++});
++
++describe("Story 4.7 — AC: happy path UNSAFE (POST 200 → success toast → state reconciled)", () => {
++  it("fires POST with { outcome: 'UNSAFE' } and the row transitions to UNSAFE", async () => {
++    setViewerAsTechnician();
++    installFetch(async (url, init) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        expect(init?.method).toBe("POST");
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "UNSAFE" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("UNSAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
++    });
++
++    expect(activeSocket).not.toBeNull();
++    activeSocket?.__emitStateChanged({
++      incident_id: INCIDENT_ID,
++      from_state: "INSPECTING",
++      to_state: "UNSAFE",
++      changed_at: "2026-08-27T02:00:00.000Z",
++      actor_user_id: SUBMIT_RESULT_TECH_ID,
++    });
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "UNSAFE");
++    });
++  });
++});
++
++describe("Story 4.7 — AC: happy path MONITORING (POST 200 → success toast → state reconciled)", () => {
++  it("fires POST with { outcome: 'MONITORING' } and the row transitions to MONITORING", async () => {
++    setViewerAsTechnician();
++    installFetch(async (url, init) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        expect(init?.method).toBe("POST");
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "MONITORING" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("MONITORING");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Result submitted");
++    });
++
++    expect(activeSocket).not.toBeNull();
++    activeSocket?.__emitStateChanged({
++      incident_id: INCIDENT_ID,
++      from_state: "INSPECTING",
++      to_state: "MONITORING",
++      changed_at: "2026-08-27T02:00:00.000Z",
++      actor_user_id: SUBMIT_RESULT_TECH_ID,
++    });
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
++        "data-state",
++        "MONITORING",
++      );
++    });
++  });
++});
++
++describe("Story 4.7 — AC: NOT_INSPECTING (form absent for ACKNOWLEDGED row)", () => {
++  it("does NOT render the Submit Result form when state === 'ACKNOWLEDGED'", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++  });
++});
++
++describe("Story 4.7 — AC: RBAC_NOT_ASSIGNEE (form absent for unassigned Technician)", () => {
++  it("does NOT render the Submit Result form when a Technician who is NOT the assignee views an INSPECTING incident", async () => {
++    // Set the viewer as a Technician whose `sub` differs from the
++    // row's `assignee_user_id`. The JWT carries the viewer's id
++    // directly; the slot gate (`slotsForInspecting`) returns `[]`
++    // because `viewerUserId !== assignee_user_id`.
++    setViewerAsTechnician();
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        // `assignee_user_id` is a DIFFERENT Technician — the
++        // viewer is not the assignee.
++        return new Response(
++          JSON.stringify(
++            inspectingIncidentForTech({
++              assignee_user_id: "00000000-0000-4000-8000-00000000a007",
++            }),
++          ),
++          { status: 200 },
++        );
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++});
++
++describe("Story 4.7 — AC: MUTATION_IN_FLIGHT (Submit button disabled, double-click is a no-op)", () => {
++  it("disables the Submit button while in flight and a second click does not fire another POST", async () => {
++    setViewerAsTechnician();
++    let submitCallCount = 0;
++    let resolveSubmit: (() => void) | null = null;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        submitCallCount += 1;
++        await new Promise<void>((resolve) => {
++          resolveSubmit = resolve;
++        });
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    try {
++      pickOutcomeAndSubmit("SAFE");
++
++      await waitFor(() => {
++        expect(screen.getByTestId("incident-detail-submit-result-button")).toBeDisabled();
++      });
++      expect(screen.getByTestId("incident-detail-submit-result-button")).toHaveTextContent(
++        "Submitting...",
++      );
++      expect(submitCallCount).toBe(1);
++
++      // Second click: button is `disabled`, fireEvent.click is a
++      // no-op for disabled buttons.
++      fireEvent.click(screen.getByTestId("incident-detail-submit-result-button"));
++      expect(submitCallCount).toBe(1);
++    } finally {
++      resolveSubmit?.();
++    }
++  });
++});
++
++describe("Story 4.7 — AC: CONFLICT_409 (error toast 'Already submitted' + row reconciles to SAFE)", () => {
++  it("surfaces the 'Already submitted' error toast, invalidates the row, and the row reconciles to SAFE on the next fetch", async () => {
++    setViewerAsTechnician();
++    let submitCallCount = 0;
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        // First fetch: INSPECTING. Second fetch (after the
++        // mutation's `onError` invalidates the cache because 409
++        // is 4xx): SAFE — the world moved on.
++        rowFetchCount += 1;
++        if (rowFetchCount === 1) {
++          return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++        }
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        submitCallCount += 1;
++        return new Response(
++          JSON.stringify({
++            error: "invalid_state_transition",
++            from: "SAFE",
++            attempted: "submit_result",
++          }),
++          { status: 409 },
++        );
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("SAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already submitted");
++    });
++    expect(submitCallCount).toBe(1);
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "SAFE");
++    });
++    await waitFor(() => {
++      expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
++    });
++    expect(rowFetchCount).toBe(2);
++  });
++});
++
++describe("Story 4.7 — AC: SERVER_ERROR_500 (error toast 'Failed to submit result. Try again.')", () => {
++  it("surfaces the retryable error toast and re-enables the Submit button for manual retry", async () => {
++    setViewerAsTechnician();
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        return new Response("internal", { status: 500 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("SAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent(
++        "Failed to submit result. Try again.",
++      );
++    });
++
++    // Button re-enables (mutation is no longer in flight) — and
++    // the form stays visible so the Technician can retry.
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-button")).not.toBeDisabled();
++    });
++    expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++  });
++});
++
++describe("Story 4.7 — AC: TOKEN_EXPIRED_401 (error toast 'Session expired' — no row invalidation)", () => {
++  it("surfaces the 'Session expired' toast and does NOT re-fetch the row (5xx-class UX)", async () => {
++    setViewerAsTechnician();
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        rowFetchCount += 1;
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "token_expired" }), { status: 401 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("SAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent(
++        "Session expired — please sign in again",
++      );
++    });
++
++    // 401 is 5xx-class: row is NOT invalidated. The page still
++    // shows the INSPECTING row (no re-fetch happened).
++    //
++    // Note on form visibility: the `apiClient` clears the
++    // singleton token store when its refresh attempt fails (401
++    // → /auth/refresh 404 in this test → clearTokens). On the
++    // next render `readUserIdFromStore()` returns null, so the
++    // slot matrix's INSPECTING ownership gate returns `[]` and
++    // the Submit Result form correctly disappears. That is the
++    // desired UX — the Technician is signed out, so the
++    // technician-only form must NOT stay visible. This differs
++    // from the 4.6 Assign form's TOKEN_EXPIRED_401 test, which
++    // incidentally keeps the form visible because the Assign
++    // slot does NOT depend on `viewerUserId`.
++    expect(rowFetchCount).toBe(1);
++    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "INSPECTING");
++  });
++});
++
++describe("Story 4.7 — AC: BODY_VALIDATION_400 (error toast 'Invalid request' — row invalidates)", () => {
++  it("surfaces the 'Invalid request' error toast (4xx class — row invalidates)", async () => {
++    setViewerAsTechnician();
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        rowFetchCount += 1;
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        // 400 is defense-in-depth — the client should not produce
++        // a malformed body. Toast copy is the distinct "Invalid
++        // request" line.
++        return new Response(JSON.stringify({ error: "invalid_request" }), { status: 400 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    pickOutcomeAndSubmit("SAFE");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Invalid request");
++    });
++
++    // 400 is in the 4xx range and is NOT 401, so the mutation's
++    // `onError` invalidates the row query.
++    expect(rowFetchCount).toBe(2);
++    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "INSPECTING");
++  });
++});
++
++// ============================================================================
++// Story 4.7 — TTL pin at the integration level
++// ============================================================================
++//
++// Mirrors the 4.5 + 4.6 TTL pin: `act` + microtask flushing drives
++// the React reconciler under fake timers.
++describe("Story 4.7 — AC: success toast leaves the DOM after TTL", () => {
++  it("drops the success toast after 4001ms (the TTL contract at integration level)", async () => {
++    setViewerAsTechnician();
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
++        return new Response(JSON.stringify(inspectingIncidentForTech({ state: "SAFE" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Technician");
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
++    });
++
++    vi.useFakeTimers();
++    try {
++      pickOutcomeAndSubmit("SAFE");
++
++      // Flush the mutation's promise chain inside `act`.
++      await act(async () => {
++        await Promise.resolve();
++      });
++
++      const region = screen.getByTestId("toast-region");
++      expect(region).toHaveTextContent("Result submitted");
++      expect(region.children.length).toBe(1);
++
++      act(() => {
++        vi.advanceTimersByTime(4_001);
++      });
++
++      expect(region.children.length).toBe(0);
++    } finally {
++      vi.useRealTimers();
++    }
++  });
++});
+diff --git a/packages/web/src/incidents/IncidentDetailPage.tsx b/packages/web/src/incidents/IncidentDetailPage.tsx
+index 60fe98d..888423e 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.tsx
+@@ -45,6 +45,7 @@ import {
+   IncidentEventPayloadSchema,
+   type IncidentPayload,
+   IncidentPayloadSchema,
++  type InspectionOutcome,
+ } from "@surakkha/shared/incident";
+ import { type Role } from "@surakkha/shared/rbac";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+@@ -56,6 +57,7 @@ import { NotFound } from "../access/NotFound";
+ import { RbacDenied } from "../access/RbacDenied";
+ import { apiFetch } from "../api/apiClient";
+ import { useCurrentRole } from "../auth/CurrentRoleContext";
++import { readUserIdFromStore } from "../auth/tokenStore";
+ 
+ import { IncidentDetailActions } from "./IncidentDetailActions";
+ import { IncidentDetailNotFoundError } from "./IncidentDetailNotFoundError";
+@@ -65,6 +67,7 @@ import { ToastRegion, useToasts } from "./toast";
+ import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
+ import { type AssignMutationError, useAssignMutation } from "./useAssignMutation";
+ import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
++import { type SubmitResultMutationError, useSubmitResultMutation } from "./useSubmitResultMutation";
+ 
+ /** HTTP status code sentinels — RBAC denial + not-found. */
+ const HTTP_FORBIDDEN = 403;
+@@ -144,9 +147,19 @@ export const IncidentDetailPage = () => {
+   const { id } = useParams<{ id: string }>();
+   const queryClient = useQueryClient();
+   const viewerRole = useCurrentRole();
++  // `viewerUserId` is sourced from the access token's `sub` claim
++  // (mirroring how the api's `authorize` middleware reads
++  // `req.user.id`). Story 4.7 needs this so the detail page can
++  // pass it to `actionSlotsFor`'s third argument — the INSPECTING
++  // ownership gate (`slotsForInspecting` returns `["submit-result"]`
++  // only when `assignee_user_id === viewerUserId`). Synchronous
++  // read so the slot gate is consistent across the first render and
++  // re-renders; mirrors how `useCurrentRole` works for `viewerRole`.
++  const viewerUserId = readUserIdFromStore();
+   const { toasts, pushToast } = useToasts();
+   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
+   const assignMutation = useAssignMutation(id ?? "");
++  const submitResultMutation = useSubmitResultMutation(id ?? "");
+ 
+   useIncidentDetailSocket(id ?? "");
+ 
+@@ -250,6 +263,25 @@ export const IncidentDetailPage = () => {
+     );
+   };
+ 
++  // Success + error handlers for the Submit Result mutation. Mirrors
++  // `handleAcknowledge` and `handleAssign` with verb-specific copy
++  // swapped. The mutation accepts the uppercase enum directly — the
++  // radio's `value` attribute is already uppercase, and the wire body
++  // uses the same uppercase enum per `InspectionOutcomeSchema`.
++  const handleSubmitResult = (outcome: InspectionOutcome): void => {
++    submitResultMutation.mutate(
++      { outcome },
++      {
++        onSuccess: () => {
++          pushToast("success", "Result submitted");
++        },
++        onError: (err: SubmitResultMutationError) => {
++          pushToast("error", err.message);
++        },
++      },
++    );
++  };
++
+   return (
+     <>
+       <IncidentDetailDispatch
+@@ -257,10 +289,13 @@ export const IncidentDetailPage = () => {
+         incident={incident}
+         timeline={timeline}
+         viewerRole={viewerRole}
++        viewerUserId={viewerUserId}
+         isAck={acknowledgeMutation.isPending}
+         isAssign={assignMutation.isPending}
++        isSubmitting={submitResultMutation.isPending}
+         onAcknowledge={handleAcknowledge}
+         onAssign={handleAssign}
++        onSubmitResult={handleSubmitResult}
+         onRetry={() => {
+           void queryClient.invalidateQueries({
+             queryKey: incidentDetailQueryKey(id ?? ""),
+@@ -288,20 +323,26 @@ const IncidentDetailDispatch = ({
+   incident,
+   timeline,
+   viewerRole,
++  viewerUserId,
+   isAck,
+   isAssign,
++  isSubmitting,
+   onAcknowledge,
+   onAssign,
++  onSubmitResult,
+   onRetry,
+ }: {
+   readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
+   readonly incident: IncidentPayload | undefined;
+   readonly timeline: readonly IncidentEventPayload[];
+   readonly viewerRole: Role | null;
++  readonly viewerUserId: string | null;
+   readonly isAck: boolean;
+   readonly isAssign: boolean;
++  readonly isSubmitting: boolean;
+   readonly onAcknowledge: () => void;
+   readonly onAssign: (assigneeUserId: string) => void;
++  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+   readonly onRetry: () => void;
+ }) => {
+   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
+@@ -321,10 +362,13 @@ const IncidentDetailDispatch = ({
+       incident={incident}
+       timeline={timeline}
+       viewerRole={viewerRole}
++      viewerUserId={viewerUserId}
+       isAck={isAck}
+       isAssign={isAssign}
++      isSubmitting={isSubmitting}
+       onAcknowledge={onAcknowledge}
+       onAssign={onAssign}
++      onSubmitResult={onSubmitResult}
+     />
+   );
+ };
+@@ -341,18 +385,24 @@ const IncidentDetailBody = ({
+   incident,
+   timeline,
+   viewerRole,
++  viewerUserId,
+   isAck,
+   isAssign,
++  isSubmitting,
+   onAcknowledge,
+   onAssign,
++  onSubmitResult,
+ }: {
+   readonly incident: IncidentPayload;
+   readonly timeline: readonly IncidentEventPayload[];
+   readonly viewerRole: Role | null;
++  readonly viewerUserId: string | null;
+   readonly isAck: boolean;
+   readonly isAssign: boolean;
++  readonly isSubmitting: boolean;
+   readonly onAcknowledge: () => void;
+   readonly onAssign: (assigneeUserId: string) => void;
++  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+ }) => (
+   <div
+     data-testid="incident-detail-root"
+@@ -411,10 +461,13 @@ const IncidentDetailBody = ({
+     <IncidentDetailActions
+       incident={incident}
+       viewerRole={viewerRole}
++      viewerUserId={viewerUserId}
+       isAck={isAck}
+       isAssign={isAssign}
++      isSubmitting={isSubmitting}
+       onAcknowledge={onAcknowledge}
+       onAssign={onAssign}
++      onSubmitResult={onSubmitResult}
+     />
+ 
+     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">
+diff --git a/packages/web/src/incidents/useSubmitResultMutation.ts b/packages/web/src/incidents/useSubmitResultMutation.ts
+new file mode 100644
+index 0000000..b53d325
+--- /dev/null
++++ b/packages/web/src/incidents/useSubmitResultMutation.ts
+@@ -0,0 +1,248 @@
++/**
++ * `useSubmitResultMutation` — Story 4.7.
++ *
++ * TanStack `useMutation` over `POST /api/incidents/:id/submit-result`.
++ * The request body carries `{ outcome: "SAFE" | "UNSAFE" | "MONITORING" }`
++ * (uppercase enum per `InspectionOutcomeSchema` at
++ * `packages/shared/src/incident.ts:65-67` — also matches the radio
++ * values rendered by `<SubmitResultForm />`). Wraps `apiFetch` from
++ * `../api/apiClient` (handles Bearer auth + 401 refresh + offline
++ * state). On success: invalidates the detail row's TanStack Query
++ * cache (`["incidents", "detail", id]`) so the existing
++ * `useIncidentDetailSocket` subscriber's next socket event — or a
++ * re-fetch — reconciles state.
++ *
++ * 4xx classification (the spec's "tagged" vs "retryable" toast lanes),
++ * mirroring `useAssignMutation.ts` line-for-line with the verb-
++ * specific copy swapped:
++ *
++ *   - 409 `invalid_state_transition`  → "Already submitted"
++ *   - 400 (Zod body validation)        → "Invalid request"
++ *   - 403                              → "Not authorized"
++ *   - 404                              → "Incident not found"
++ *   - 401 (token refresh failed)       → "Session expired — please sign
++ *                                       in again"  (5xx-class: the row
++ *                                       is presumed unchanged and the
++ *                                       Technician must re-auth before
++ *                                       any retry can succeed; the 4xx
++ *                                       row-invalidation branch does
++ *                                       NOT cover 401)
++ *
++ * 5xx classification (retryable toast):
++ *
++ *   - any other status code            → "Failed to submit result.
++ *                                       Try again."
++ *
++ * Network throws (offline / abort / DNS failure) are caught by the
++ * `mutationFn` try/catch and classified as `status: 0` so the
++ * `onError` status-range check never reads `undefined`. The 0
++ * sentinel is below the `HTTP_4XX_MIN` floor and falls into the
++ * "do not invalidate" branch (5xx-class UX; the row is presumed
++ * unchanged and the Technician may retry).
++ *
++ * The error object is a `SubmitResultMutationError` whose `.message`
++ * is the toast copy; the detail page calls `pushToast("error",
++ * err.message)` in its `onError` handler. The mutation does NOT push
++ * toasts itself — the page wires `pushToast` so the page-scoped
++ * toast queue owns the surface (mirrors ThresholdsPage).
++ *
++ * Why no optimistic UI: the spec is explicit (mirrors 4.5 + 4.6).
++ * The mutation handler invalidates the row query; the socket event
++ * drives the actual cache mutation; both update from the same source
++ * of truth.
++ *
++ * Why no extraction as a generic hook: 4.7 is the third consumer
++ * today (4.5 + 4.6 already have their own one-shot mutations); the
++ * factory extraction is a future post-Epic-4 sweep.
++ */
++import { type InspectionOutcome } from "@surakkha/shared/incident";
++import { useMutation, useQueryClient } from "@tanstack/react-query";
++
++import { apiFetch } from "../api/apiClient";
++
++import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
++
++/**
++ * HTTP status sentinels. Mirror the
++ * `IncidentDetailRbacDeniedError` / `IncidentDetailNotFoundError`
++ * constants at `IncidentDetailPage.tsx:60-61` so the mutation
++ * classifies failures identically to the read path. 400 (Bad
++ * Request) is added because the submit-result endpoint validates
++ * the request body via Zod and returns 400 on schema failure
++ * (defense in depth — the client should not produce this).
++ */
++const HTTP_BAD_REQUEST = 400;
++const HTTP_UNAUTHORIZED = 401;
++const HTTP_FORBIDDEN = 403;
++const HTTP_NOT_FOUND = 404;
++const HTTP_CONFLICT = 409;
++
++/**
++ * Network-throw sentinel. `apiFetch` throws a bare `Error` (no
++ * `.status`) on connection failures / aborts / DNS errors. The
++ * `mutationFn` try/catch rethrows as `SubmitResultMutationError`
++ * with this status so `onError`'s range check stays valid.
++ */
++const HTTP_NETWORK_THROW = 0;
++
++/**
++ * 4xx range bounds used to decide whether a failed mutation should
++ * invalidate the row query (4xx → server told us truth about the row;
++ * 5xx → server is broken, leave the row alone so the Technician can
++ * retry).
++ *
++ * NOTE: 401 is classified separately and explicitly EXCLUDED from
++ * the row-invalidation branch — see `onError` below. A 401 means
++ * the refresh token is exhausted and the Technician must re-auth
++ * before any retry can succeed; the row is presumed unchanged.
++ */
++const HTTP_4XX_MIN = 400;
++const HTTP_4XX_MAX = 500;
++
++/**
++ * Tagged error class for the mutation. The `.message` is the
++ * operator-facing toast copy (already classified for tone), and
++ * the `.status` is preserved so the page can route 404 / 403 to
++ * the right re-render branch (NotFound / RbacDenied) when the row
++ * cache invalidates and returns the next fetch's verdict.
++ */
++export class SubmitResultMutationError extends Error {
++  public readonly status: number;
++  public constructor(status: number, message: string) {
++    super(message);
++    this.name = "SubmitResultMutationError";
++    this.status = status;
++  }
++}
++
++/**
++ * Classify the api's failure response into the operator-facing copy.
++ * 400 / 401 / 409 / 403 / 404 get pinned copy (server-rejected). 401
++ * is its own branch because the toast must reflect "session expired"
++ * (a retry without re-auth can never succeed) instead of the generic
++ * retryable line. All other 4xx + 5xx collapse to the retryable line
++ * so the Technician sees one consistent prompt for unknown failures.
++ */
++const classifySubmitResultError = (status: number): SubmitResultMutationError => {
++  if (status === HTTP_CONFLICT) {
++    return new SubmitResultMutationError(status, "Already submitted");
++  }
++  if (status === HTTP_BAD_REQUEST) {
++    return new SubmitResultMutationError(status, "Invalid request");
++  }
++  if (status === HTTP_FORBIDDEN) {
++    return new SubmitResultMutationError(status, "Not authorized");
++  }
++  if (status === HTTP_NOT_FOUND) {
++    return new SubmitResultMutationError(status, "Incident not found");
++  }
++  if (status === HTTP_UNAUTHORIZED) {
++    // 5xx-class UX: the row is presumed unchanged; the Technician must
++    // re-auth before any retry can succeed. The 4xx row-invalidation
++    // branch in `onError` explicitly excludes 401.
++    return new SubmitResultMutationError(status, "Session expired — please sign in again");
++  }
++  return new SubmitResultMutationError(status, "Failed to submit result. Try again.");
++};
++
++/**
++ * `useSubmitResultMutation` — TanStack `useMutation` for the Submit
++ * Result button.
++ *
++ * Returns `{ mutate, isPending, error, ... }` (the standard TanStack
++ * shape). The page wires `onSuccess` to `pushToast("success", "Result submitted")`
++ * and `onError` to `pushToast("error", err.message)`; both calls flow
++ * into the page-scoped toast queue.
++ *
++ * The mutation accepts a `variables` argument of
++ * `{ outcome: InspectionOutcome }` (uppercase enum, passed straight
++ * from the radio's `value` attribute into the wire body — no
++ * casing swap because the wire shape is already uppercase).
++ *
++ * On success the row query at `["incidents", "detail", id]` is
++ * invalidated so the next refetch + the existing
++ * `useIncidentDetailSocket` subscriber converge on the new state.
++ * The mutation itself does NOT touch the cache directly — that
++ * would create an optimistic UI path the spec explicitly forbids.
++ *
++ * On 4xx failure (4xx-classified `SubmitResultMutationError`) we
++ * ALSO invalidate the row query: a 409 means another path advanced
++ * the row between page load and click (the row is now in a non-
++ * INSPECTING state — re-fetch tells the truth); a 404 means the
++ * row was deleted (re-fetch surfaces `<NotFound />`); a 403 means
++ * a token/role drift (re-fetch surfaces `<RbacDenied />`); a 400
++ * means the request body was malformed (re-fetch surfaces the
++ * unchanged row).
++ *
++ * 401 is 5xx-class: `apiFetch`'s internal refresh has already
++ * failed, the Technician is effectively signed out, and re-trying
++ * the call will never succeed until re-auth. We deliberately do
++ * NOT invalidate the row query for 401 (a re-fetch against the
++ * same expired token would 401 too and surface a second toast).
++ * The `onError` status-range check explicitly excludes 401.
++ *
++ * Network throws (offline / abort / DNS) are caught inside
++ * `mutationFn` and rethrown as `SubmitResultMutationError` with
++ * `status: 0` so `onError`'s `err.status >= HTTP_4XX_MIN` check
++ * never reads `undefined`. Status 0 falls into the "do not
++ * invalidate" branch (5xx-class UX; the Technician may retry).
++ */
++export const useSubmitResultMutation = (id: string) => {
++  const queryClient = useQueryClient();
++  return useMutation<void, SubmitResultMutationError, { outcome: InspectionOutcome }>({
++    mutationFn: async ({ outcome }): Promise<void> => {
++      // Catch synchronous throws from `apiFetch` (network errors
++      // surface as a bare `Error` with no `.status`). Without this
++      // guard, `onError`'s `err.status >= HTTP_4XX_MIN` check would
++      // read `undefined >= 400` → false → no invalidation, and the
++      // toast copy would be the raw thrown message (not classified).
++      try {
++        const res = await apiFetch(`/api/incidents/${id}/submit-result`, {
++          method: "POST",
++          body: JSON.stringify({ outcome }),
++        });
++        if (!res.ok) {
++          throw classifySubmitResultError(res.status);
++        }
++      } catch (err) {
++        // If the thrown value is already a tagged
++        // `SubmitResultMutationError` (status-classified by
++        // `classifySubmitResultError` above), rethrow as-is.
++        if (err instanceof SubmitResultMutationError) {
++          throw err;
++        }
++        // Network throw / DNS failure / abort — classify as
++        // status 0 (network sentinel) so the `onError` range check
++        // treats it as "do not invalidate" (5xx-class UX).
++        throw classifySubmitResultError(HTTP_NETWORK_THROW);
++      }
++      // The api returns 200 with a refreshed `IncidentPayload`; we
++      // do NOT parse it here — the page's row query invalidation
++      // is the source of truth for the next read, and the socket
++      // event drives the cache mutation.
++    },
++    onSuccess: () => {
++      void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
++    },
++    // 4xx failures invalidate the cache so the next fetch can
++    // update the read-side surface (NotFound / RbacDenied / row
++    // shows SAFE / UNSAFE / MONITORING for 409). We deliberately
++    // do NOT invalidate on:
++    //   - 5xx               — row presumed unchanged; manual retry.
++    //   - 401               — token refresh exhausted (5xx-class UX);
++    //                         Technician must re-auth before any
++    //                         retry can succeed; invalidating would
++    //                         trigger a redundant refetch that would
++    //                         also 401.
++    //   - status 0 (network throw) — same reasoning as 5xx.
++    onError: (err) => {
++      if (
++        err.status >= HTTP_4XX_MIN &&
++        err.status < HTTP_4XX_MAX &&
++        err.status !== HTTP_UNAUTHORIZED
++      ) {
++        void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
++      }
++    },
++  });
++};
