@@ -168,3 +168,53 @@ context:
 - Verify: a separate browser tab on `/incidents` Kanban sees the card move to the ACKNOWLEDGED column within ~1s (the same socket event drives both).
 - Switch role to Viewer via the role selector (or log in as a Technician). Verify: button does NOT render on an OPEN incident.
 - Curl the row's state to ACKNOWLEDGED manually. Verify: detail page's button disappears on the next socket event.
+
+## Suggested Review Order
+
+**Mutation contract — the load-bearing behavior**
+
+- The classifier branches 401 / 403 / 404 / 409 / 5xx; 4xx invalidates the row query, 5xx does not.
+  [`useAcknowledgeMutation.ts:118`](../../packages/web/src/incidents/useAcknowledgeMutation.ts#L118)
+- `apiFetch` throws are caught and surfaced as classified errors (status 0 sentinel).
+  [`useAcknowledgeMutation.ts:198`](../../packages/web/src/incidents/useAcknowledgeMutation.ts#L198)
+- `onSuccess` and `onError` both invalidate the row query under their respective contracts.
+  [`useAcknowledgeMutation.ts:206`](../../packages/web/src/incidents/useAcknowledgeMutation.ts#L206) · [`useAcknowledgeMutation.ts:224`](../../packages/web/src/incidents/useAcknowledgeMutation.ts#L224)
+
+**Visibility gate — single source of truth**
+
+- `actionSlotsFor(incident, viewerRole)` is the only RBAC check on the client.
+  [`IncidentDetailActions.tsx:73`](../../packages/web/src/incidents/IncidentDetailActions.tsx#L73)
+- The button renders nothing when the slot is null; no inline role checks.
+  [`IncidentDetailActions.tsx:32`](../../packages/web/src/incidents/IncidentDetailActions.tsx#L32)
+
+**Page wiring — read + write surfaces**
+
+- `useAcknowledgeMutation(id)` is initialized alongside the row query; `handleAcknowledge` threads `onSuccess`/`onError` to `pushToast`.
+  [`IncidentDetailPage.tsx:147`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L147) · [`IncidentDetailPage.tsx:221`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L221)
+- `<ToastRegion />` mounts at the page root, above the row + actions.
+  [`IncidentDetailPage.tsx:250`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L250)
+- `<IncidentDetailActions />` renders inside the body between `<dl>` and the audit timeline.
+  [`IncidentDetailPage.tsx:381`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L381)
+
+**Toast primitive — neutral + accessible**
+
+- `TOAST_TTL_MS` matches `ThresholdsPage`'s 4s budget; the value is exported for tests to pin.
+  [`toast.tsx:40`](../../packages/web/src/incidents/toast.tsx#L40) · [`toast.tsx:109`](../../packages/web/src/incidents/toast.tsx#L109)
+- Error tone promotes to `role="alert"` + `aria-live="assertive"`; success stays `polite`.
+  [`toast.tsx:145`](../../packages/web/src/incidents/toast.tsx#L145) · [`toast.tsx:155`](../../packages/web/src/incidents/toast.tsx#L155)
+- Neutral testid prefix `toast-{tone}-{id}` so 4.6 / 4.7 / 4.11 reuse this primitive without coupling.
+  [`toast.tsx:145`](../../packages/web/src/incidents/toast.tsx#L145)
+
+**Test rig — full RBAC matrix + reconciliation coverage**
+
+- `renderDetail` accepts the four roles; integration tests cover OPEN + Admin/Operator (visible) and OPEN + Technician/Viewer (absent).
+  [`IncidentDetailPage.spec.tsx:97`](../../packages/web/src/incidents/IncidentDetailPage.spec.tsx#L97)
+- 409/403 tests assert row reconciliation (409 → ACKNOWLEDGED; 403 → `<RbacDenied />`) — the 4xx `onError` contract.
+  [`IncidentDetailPage.spec.tsx:618`](../../packages/web/src/incidents/IncidentDetailPage.spec.tsx#L618)
+- Fake-timer TTL test pins the toast-TTL contract at the page integration level.
+  [`IncidentDetailPage.spec.tsx:489`](../../packages/web/src/incidents/IncidentDetailPage.spec.tsx#L489)
+
+**Peripherals**
+
+- Spec document captures intent, the bad-spec Loop 1 KEEP instructions, and the design notes that explain non-obvious decisions.
+  [`spec-4-5-acknowledge-flow.md:111`](./spec-4-5-acknowledge-flow.md#L111)
