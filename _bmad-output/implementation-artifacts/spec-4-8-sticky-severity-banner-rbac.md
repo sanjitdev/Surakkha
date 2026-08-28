@@ -2,9 +2,10 @@
 title: "Story 4.8 — Sticky SeverityBanner + RBAC (UNSAFE)"
 type: "feature"
 created: "2026-08-28"
-status: "in-progress"
-review_loop_iteration: 0
+status: "done"
+review_loop_iteration: 1
 baseline_commit: "c3f4f2d"
+shipped_commit: "e811983"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
@@ -150,9 +151,9 @@ context:
 
 **Commands:**
 
-- `pnpm -F @surakkha/web test` — expected: existing 372 + ~12 new (10 SeverityBanner + 2 AppShell slot) = ~384 green.
+- `pnpm -F @surakkha/web test` — expected: existing 372 + ~19 new (17 SeverityBanner + 2 AppShell slot) = 391 green.
 - `pnpm -F @surakkha/api test` — expected: green (no backend changes; the pre-existing 5 Story 3.5 alerts/list failures are unrelated to 4.8 — see "Pre-existing failures" below).
-- `pnpm -r typecheck` — expected: clean across 4 packages.
+- `pnpm -r typecheck` — expected: clean across 4 active packages (`api`, `web`, `shared`, `simulator`; `prisma` is typecheck-skipped).
 
 **Pre-existing failures (document, do NOT fix as part of 4.8):**
 
@@ -181,6 +182,35 @@ No review iterations yet. Status is `draft`; will become `ready-for-dev` after t
 - **Filter the "View all" link** (e.g., `/incidents?state=UNSAFE`) — Story 4.12 owns the technician-filtered Kanban; the link target stays as the plain `/incidents` for v1.
 - **Per-incident banner stacking** (one banner per row instead of summary) — the summary banner is the load-bearing signal; the detail page is one click away for per-incident context.
 - **Toast / modal / library dependency** — banner is a static surface; no action to confirm.
+
+### Loop 1 (review_loop_iteration: 0 → 1)
+
+Applied at commit `e811983` on 2026-08-28 during step-04 review triage. Step-04 surfaced 1 adversarial finding + 20 edge-case paths + 4 verification gaps. Triage routes most to `defer` (forward-compat / out-of-scope / intent-confirmed) or `reject` (noise — formatting, dead-code, "verify-only" not actionable). The patches below are the "caused-or-exposed-by-this-change" fixes the review surfaced.
+
+**KEEP (forward-compat / out-of-scope; defer to follow-up):**
+
+- **`<a>` "View all" link uses raw `<a>` (full-page reload) instead of React Router `<Link>`** — the spec's "NO wrapper elements" rule + the informational-surface design notes treat this as deliberate. SPA UX trade-off acknowledged; revisit if a future story wires client-side routing into the banner.
+- **`KanbanRbacDeniedError` extraction from `KanbanBoard.tsx` to its own module** — preventive refactor; the circular-import risk it solves never existed (no transitive import cycle), but the explicit module boundary is a low-cost future-proofing win. KEEP.
+- **`_fetchIncidentForBoard` (4.3) is dead surface in production** — pre-existing tech debt in `useKanbanBoardSocket.ts`; not this story's surface. Tracked as project-wide cleanup.
+- **`refetchOnWindowFocus` / `refetchOnReconnect` defaults on the banner's `useQuery`** — combined with `staleTime: Infinity`, focus / reconnect would refetch. The Kanban is the canonical fetcher; the banner's `ensureQueryData` path is only a cold-start fallback. Behaviour matches the 4.3 contract; revisit only if focus-refetch churn becomes an operator complaint.
+- **`Acknowledgement that banner reads `Date.now()` (wall-clock) on every render** — long-lived tabs across the 24h boundary will not re-evaluate until something else triggers a re-render. The filter helper is exported so a future `useInterval`-driven re-derivation can swap in without touching the contract.
+- **Plural-only i18n** (`formatHeading` + `formatSingleBody` + `View all` are English-only) — project-wide i18n deferred; no contract documents the boundary. Documented as project-wide deferral.
+- **`QUERY_ERROR_500` matrix row** — banner NOT rendered on 5xx / network; covered by the `filterUnsafeWithin24h` helper's `query.data ?? []` fallback. The spec matrix row has no dedicated `it(...)`; the contract is implicit. Documented as out-of-scope test for v1.
+
+**PATCH (spec contract unchanged; code/test edits applied to close review findings):**
+
+- **`SeverityBanner.tsx` — added `incident.device_id` to `formatSingleBody`** — the implementation emitted `"Latest: <metric> · <value>"`, but the spec's I/O matrix `HAPPY_PATH_1` row specifies `"Latest: <device> · <metric> · <value>"` (device first). Closed the contract gap; updated the JSDoc + the `HAPPY_PATH_1` test assertion (`expect(body.textContent).toContain(DEVICE_A)`) to pin the device-id position.
+- **`useSeverityBanner.ts` — corrected `HTTP_FORBIDDEN` comment** — the JSDoc claimed the constant stays "in sync with the identical constant in `KanbanBoard.tsx`", but `KanbanBoard.tsx` uses an inline `403` literal (no named constant). Comment now reflects the actual contract: the banner's `HTTP_FORBIDDEN` is the single source of truth within this module; cross-module consistency is maintained by the `instanceof KanbanRbacDeniedError` check on the error class, not by sharing a numeric constant.
+- **`SeverityBanner.spec.tsx` — added 24h-boundary test** — `filterUnsafeWithin24h: 24h boundary — exactly-now-minus-24h is INCLUDED (>= inclusive)`. Pins the comparator semantics; a future refactor flipping `>=` to `>` would surface here.
+- **`SeverityBanner.spec.tsx` — added malformed-`opened_at` test** — `filterUnsafeWithin24h: malformed opened_at (NaN) is EXCLUDED`. Pins the defensive `Number.isNaN(openedAtMs) → false` branch. Wire data is always ISO today, but the defensive contract is now locked.
+- **`SeverityBanner.spec.tsx` — replaced the false-positive `403 RBAC denial` test with a real end-to-end test** — the original test bypassed `bannerQueryFn` entirely via `queryClient.setQueryData(key, err)` with a plain `Error` whose `name` was string-mutated. It never exercised the banner's actual `queryFn`. The new test leaves the cache EMPTY (so the banner's `queryFn` fires against the fetch mock returning 403) and asserts via `queryClient.getQueryCache().find(...).state.error` that the cache error is an `instanceof KanbanRbacDeniedError` — load-bearing for the Kanban's cross-module `instanceof` check.
+- **`SeverityBanner.spec.tsx` — wrapped the `SOCKET_RECONCILE_TO_RESOLVED` cache mutation in `act()`** — the test was inconsistent with `SOCKET_RECONCILE_TO_UNSAFE`, which already wrapped. Brought into parity.
+
+**Verification commands at the time of patch:**
+
+- `pnpm -F @surakkha/web test` — 391 / 391 pass (was 389; +2 net: 2 new filter tests added; the old `403` test was replaced with a stronger version of the same case).
+- `pnpm -r typecheck` — clean across 4 active packages (`api`, `web`, `shared`, `simulator`; `prisma` is typecheck-skipped).
+- `pnpm -F @surakkha/web lint` — clean under `--max-warnings 0`.
 
 ## Suggested Review Order
 

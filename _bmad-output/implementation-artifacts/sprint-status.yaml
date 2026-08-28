@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-28T06:00:00.000Z
+# last_updated: 2026-08-28T17:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -105,7 +105,7 @@ development_status:
   4-5-acknowledge-flow: done
   4-6-assign-technician-inspecting-transition: done
   4-7-submit-result-safe-unsafe-monitoring: done
-  4-8-sticky-severitybanner-rbac: backlog
+  4-8-sticky-severitybanner-rbac: done
   4-9-notification-writer: done
   4-10-notificationbell-dropdown: backlog
   4-11-reopen-path: backlog
@@ -528,14 +528,14 @@ stories:
 
   - id: "4.8"
     title: "Sticky SeverityBanner + RBAC"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
+    commit: "e811983"
+    shipped: "2026-08-28"
     covers: []
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-4-8-sticky-severity-banner-rbac.md"
+      review: "_bmad-output/implementation-artifacts/review-4-8-verification-gap.md"
 
   - id: "4.9"
     title: "Notification Writer"
