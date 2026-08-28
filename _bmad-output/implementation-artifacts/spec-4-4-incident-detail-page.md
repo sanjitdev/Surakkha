@@ -2,8 +2,8 @@
 title: "Story 4.4 — Incident Detail Page (Read-Only)"
 type: "feature"
 created: "2026-08-27"
-status: "in-review"
-review_loop_iteration: 0
+status: "done"
+review_loop_iteration: 1
 baseline_commit: "36995af" # test(4.3): step-04 patches — wire-schema equivalence, silent-drop contract, mount/unmount cleanup
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
@@ -138,3 +138,74 @@ context:
 - Refactoring `useKanbanBoardSocket.ts` to consume `cacheMutators.ts` — out of scope for 4.4; the existing 4.3 mutator stays as-is. A future cleanup pass swaps it.
 
 </frozen-after-approval>
+
+## Suggested Review Order
+
+**Spec**
+
+- Story 4.4 spec — intent, AC matrix, design notes (read first).
+  [`spec-4-4-incident-detail-page.md:15`](spec-4-4-incident-detail-page.md#L15)
+
+**Backend — timeline endpoint (sibling to parent GET, mirrors its RBAC + 404)**
+
+- New `GET /api/incidents/:id/events` — RBAC + Tech-ownership + 404 + 500 patterns copied from the parent route.
+  [`packages/api/src/incidents/router.ts:282`](../../packages/api/src/incidents/router.ts#L282)
+
+- `incidentEventRowToPayload` + `IncidentEventRow` type — parallel to the existing row mapper.
+  [`packages/api/src/incidents/incidentStateRepository.ts:386`](../../packages/api/src/incidents/incidentStateRepository.ts#L386)
+
+- `findMany` adapter on the repo wiring (passthrough).
+  [`packages/api/src/incidents/routerWiring.ts:94`](../../packages/api/src/incidents/routerWiring.ts#L94)
+
+**Web — detail page composition (read-only frame)**
+
+- Top-level page: two parallel queries + dispatch + retry.
+  [`packages/web/src/incidents/IncidentDetailPage.tsx:130`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L130)
+
+- Dispatch — picks NotFound / RbacDenied / error / skeleton / body branches from row query state.
+  [`packages/web/src/incidents/IncidentDetailPage.tsx:222`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L222)
+
+- Body — header (severity + state), definition list, timeline list.
+  [`packages/web/src/incidents/IncidentDetailPage.tsx:255`](../../packages/web/src/incidents/IncidentDetailPage.tsx#L255)
+
+**Web — shared row-update shape + detail socket subscription**
+
+- `applyTransitionToCachedRow` — single source of truth for the row-replacement.
+  [`packages/web/src/incidents/cacheMutators.ts:30`](../../packages/web/src/incidents/cacheMutators.ts#L30)
+
+- `applyStateChangeToDetailCache` — per-hook wrapper (keeps RESOLVED).
+  [`packages/web/src/incidents/useIncidentDetailSocket.ts:70`](../../packages/web/src/incidents/useIncidentDetailSocket.ts#L70)
+
+- Detail-page socket mount/unmount.
+  [`packages/web/src/incidents/useIncidentDetailSocket.ts:89`](../../packages/web/src/incidents/useIncidentDetailSocket.ts#L89)
+
+**Web — Kanban nav hand-off + first 404 surface**
+
+- `KanbanBoard` one-liner: `onClick` → `useNavigate` → `/incidents/:id`.
+  [`packages/web/src/incidents/KanbanBoard.tsx:269`](../../packages/web/src/incidents/KanbanBoard.tsx#L269)
+
+- `<NotFound />` — first 404 surface; overridable props for future per-entity pages.
+  [`packages/web/src/access/NotFound.tsx:40`](../../packages/web/src/access/NotFound.tsx#L40)
+
+- Route registration in `main.tsx`.
+  [`packages/web/src/main.tsx:237`](../../packages/web/src/main.tsx#L237)
+
+**Tests — repository + endpoint + page + shared helper**
+
+- `incidentStateRepository` spec — wire-shape mapping + null projection + mutation safety.
+  [`packages/api/src/incidents/incidentStateRepository.spec.ts:241`](../../packages/api/src/incidents/incidentStateRepository.spec.ts#L241)
+
+- `router.spec.ts` — timeline endpoint tests (ASC sort, empty envelope, 401/403/404/500, RBAC matrix).
+  [`packages/api/src/incidents/router.spec.ts:810`](../../packages/api/src/incidents/router.spec.ts#L810)
+
+- Detail page spec — 12 cases covering the I/O & Edge-Case Matrix.
+  [`packages/web/src/incidents/IncidentDetailPage.spec.tsx`](../../packages/web/src/incidents/IncidentDetailPage.spec.tsx)
+
+- Cache mutators spec — parametrized `describe.each` over `INCIDENT_STABLE_STATES` (structural pin).
+  [`packages/web/src/incidents/cacheMutators.spec.ts:94`](../../packages/web/src/incidents/cacheMutators.spec.ts#L94)
+
+- NotFound spec — first 404 surface contract pin.
+  [`packages/web/src/access/NotFound.spec.tsx`](../../packages/web/src/access/NotFound.spec.tsx)
+
+- Nav-from-Kanban test.
+  [`packages/web/src/incidents/KanbanBoard.spec.tsx:438`](../../packages/web/src/incidents/KanbanBoard.spec.tsx#L438)
