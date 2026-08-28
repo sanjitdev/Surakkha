@@ -230,15 +230,61 @@ Applied at commit `79d428c` on 2026-08-28 during step-04 review triage. Step-04 
 
 ## Suggested Review Order
 
-A reviewer should walk the change in this order to catch the load-bearing seams first:
+**Wire contract (start here — single source of truth for the row shape)**
 
-1. **Wire schema** — `packages/shared/src/notification.ts`. The wire payload drops `acknowledgedByUserId` (audit lives in DB). Read this BEFORE the router — the router's `notificationRowToPayload` is the only path that builds the wire row.
-2. **RBAC matrix** — `packages/shared/src/rbac.ts`. The matrix grants `acknowledge.Notification` to Admin/Operator/Technician (Viewer = N). The reader must confirm this is the load-bearing cell before reading the router (the matrix is the canonical authority source per Story 1.1).
-3. **Notification router** — `packages/api/src/notifications/notificationRouter.ts`. Two routes, GET + PATCH. The cross-role RBAC check (`row.recipientRole !== actorRole → 403`) lives inside the handler (NOT middleware) because the matrix grants role-level access; the per-row ownership check is the handler's job.
-4. **Notification repository** — `packages/api/src/notifications/notificationRepository.ts`. Narrow Prisma slice. The `updateMany({ where: { id, acknowledgedAt: null }, data: { ... } })` is the compare-and-set point — the `acknowledgedAt: null` predicate is what makes the PATCH idempotent.
-5. **NotificationsRbacDeniedError** — `packages/web/src/notifications/NotificationsRbacDeniedError.ts`. New class (not reusing `KanbanRbacDeniedError`) — cross-module isolation. The `name` field is load-bearing for the bell's `queryFn` 403 path.
-6. **useNotificationBell** — `packages/web/src/notifications/useNotificationBell.ts`. The cache key is `["notifications", "unread", viewerRole]` — role-scoped so Admin and Operator counts never collide. `enabled: viewerRole !== "Viewer"` is the UI gate that prevents Viewer fetches.
-7. **useMarkAsRead** — `packages/web/src/notifications/useMarkAsRead.ts`. 4xx classification: 403→no-toast+re-fetch (3.5 noise reduction), 404→toast+re-fetch, 401→"Session expired", 5xx→toast. The mutation does NOT touch the cache directly; it relies on invalidate + refetch so the server's verdict is the source of truth.
-8. **NotificationBell** — `packages/web/src/notifications/NotificationBell.tsx`. Top-level export branches on Viewer (disabled variant, no fetch) vs Admin/Operator/Technician (active variant, full dropdown). Tailwind literal class strings only.
-9. **TopBar mount** — `packages/web/src/shell/TopBar.tsx`. Bell mounts inside its own `data-testid="notification-bell-slot"` wrapper inside the right cluster (NOT inside AppShell's slot hierarchy).
-10. **Spec doc + ACs** — `_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md`. Each AC bullet maps to a specific test file.
+- Wire payload schema: drops `acknowledgedByUserId`, keeps `id/severity/incidentId/alertId/recipientRole/createdAt/acknowledgedAt`.
+  [`notification.ts:72`](../../packages/shared/src/notification.ts#L72)
+- Envelope + types re-export — the `NotificationPayload` + `NotificationListEnvelopeSchema` consumed by both backend + web.
+  [`notification.ts:88`](../../packages/shared/src/notification.ts#L88)
+- RBAC matrix grant — `acknowledge.Notification` set for Admin/Operator/Technician; Viewer stays N. Canonical authority for the PATCH endpoint.
+  [`rbac.ts`](../../packages/shared/src/rbac.ts)
+
+**Backend (router + repo + adapter — read top-down)**
+
+- Router mount via `buildIncidentsRouterMount` sibling — `notificationRouter` is its own module mounted alongside incidents.
+  [`routerWiring.ts`](../../packages/api/src/notifications/routerWiring.ts)
+- Handler factories + RBAC classification — `parsePathParams`, `enforceCrossRoleRecipient`, `fetchRowForAck`, `applyAck`, `refetchRow` extracted to keep the cross-role check inline.
+  [`notificationRouter.ts:341`](../../packages/api/src/notifications/notificationRouter.ts#L341)
+- Repository narrow slice — `findMany` for the GET, `updateMany({ where: { id, acknowledgedAt: null } })` is the compare-and-set point making the PATCH idempotent.
+  [`notificationRepository.ts:73`](../../packages/api/src/notifications/notificationRepository.ts#L73)
+- Payload adapter — drops `acknowledgedByUserId`, ISO-encodes dates, defensive on `acknowledgedAt: null`.
+  [`notificationRowToPayload.ts`](../../packages/api/src/notifications/notificationRowToPayload.ts)
+- Index mount wiring — `notificationRouter` registered under `/api`.
+  [`index.ts`](../../packages/api/src/index.ts)
+
+**Web RBAC error class (cross-module isolation seam)**
+
+- New class — NOT reusing `KanbanRbacDeniedError`. The `name` field is load-bearing for the bell's `queryFn` 403 path.
+  [`NotificationsRbacDeniedError.ts:27`](../../packages/web/src/notifications/NotificationsRbacDeniedError.ts#L27)
+
+**Web hooks (cache + mutation contract)**
+
+- `useNotificationBell` — `["notifications", "unread", viewerRole]` cache key; `enabled: viewerRole !== "Viewer"` is the UI gate; `POLL_INTERVAL_MS = 30_000`.
+  [`useNotificationBell.ts:57`](../../packages/web/src/notifications/useNotificationBell.ts#L57)
+  [`useNotificationBell.ts:84`](../../packages/web/src/notifications/useNotificationBell.ts#L84)
+- `useMarkAsRead` — 4xx classification (403→no-toast+re-fetch, 404→toast+re-fetch, 401→"Session expired", 5xx→toast). Mutation does NOT touch cache directly; relies on `invalidateQueries`.
+  [`useMarkAsRead.ts:117`](../../packages/web/src/notifications/useMarkAsRead.ts#L117)
+
+**Web component (UI surface — read last before tests)**
+
+- `NotificationBell` top-level export — branches on Viewer (disabled variant) vs. Admin/Operator/Technician (active variant). Tailwind literal class strings only.
+  [`NotificationBell.tsx:322`](../../packages/web/src/notifications/NotificationBell.tsx#L322)
+- TopBar mount — bell lives inside its own `data-testid="notification-bell-slot"` wrapper (NOT inside AppShell's slot hierarchy).
+  [`TopBar.tsx:91`](../../packages/web/src/shell/TopBar.tsx#L91)
+
+**Tests (per concern, in the same order)**
+
+- Backend router tests — 13 tests covering GET happy/empty/Viewer 403/401/Technician filter + PATCH happy/idempotent/cross-role 403/404.
+  [`notificationRouter.spec.ts`](../../packages/api/src/notifications/notificationRouter.spec.ts)
+- Backend repository tests — pure-helper coverage on the filter + update + findUnique shape.
+  [`notificationRepository.spec.ts`](../../packages/api/src/notifications/notificationRepository.spec.ts)
+- Backend adapter tests — `notificationRowToPayload.spec.ts` pins drop-`acknowledgedByUserId` + null round-trip + `Date → ISO`.
+  [`notificationRowToPayload.spec.ts`](../../packages/api/src/notifications/notificationRowToPayload.spec.ts)
+- Web hook spec — `useNotificationBell.spec.tsx` pins `refetchInterval: 30_000` (fake-timer), `enabled: false` for Viewer, `NotificationsRbacDeniedError` on 403.
+  [`useNotificationBell.spec.tsx`](../../packages/web/src/notifications/useNotificationBell.spec.tsx)
+- Web mutation spec — `useMarkAsRead.spec.tsx` covers PATCH 200/403/404/500/401 branches with `invalidateQueries` spy assertions.
+  [`useMarkAsRead.spec.tsx`](../../packages/web/src/notifications/useMarkAsRead.spec.tsx)
+- Web component spec — `NotificationBell.spec.tsx` ~30 tests covering all I/O matrix rows (HAPPY*PATH*_ × 4 roles, ZERO*UNREAD, MARK_AS_READ*_, GET_403, GET_500, NETWORK_OFFLINE, POLL_TICK, CLICK_OUTSIDE, ESCAPE_KEY, NAV_FROM_ROW, MOUNT_UNMOUNT, info severity, alertId-only, take: 50).
+  [`NotificationBell.spec.tsx`](../../packages/web/src/notifications/NotificationBell.spec.tsx)
+- TopBar slot test — direct-child pin: `slot.firstElementChild === bellWrapper`.
+  [`TopBar.spec.tsx`](../../packages/web/src/shell/TopBar.spec.tsx)
