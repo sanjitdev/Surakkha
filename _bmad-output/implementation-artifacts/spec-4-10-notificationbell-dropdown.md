@@ -3,8 +3,10 @@ title: "Story 4.10 — NotificationBell Dropdown"
 type: "feature"
 created: "2026-08-28"
 status: "done"
-review_loop_iteration: 0
+review_loop_iteration: 1
 baseline_commit: "4777b37"
+shipped_commit: "79d428c"
+review_commit: "79d428c"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-9-notification-writer.md
@@ -145,7 +147,52 @@ context:
 
 ## Spec Change Log
 
-Append-only. Populated by step-04 during review loops. Empty until the first bad_spec loopback.
+### Loop 1 (review_loop_iteration: 0 → 1)
+
+Applied at commit `79d428c` on 2026-08-28 during step-04 review triage. Step-04 surfaced 1 adversarial finding + 10 adversarial findings (round 2) + 18 edge-case findings + 12-AC verification-gap assessment. Triage routes most to `patch` (test-coverage gaps that the spec's Code Map pinned but the implementation didn't ship) or `reject` (false-positive contract claims). No `intent_gap` or `bad_spec` loopbacks — the spec's `<frozen-after-approval>` was load-bearing throughout; the gaps were at the test-implementation seam, not the contract.
+
+**KEEP (forward-compat / out-of-scope; defer to follow-up):**
+
+- **`useToasts` import from `../incidents/toast`** — adversarial A1 claimed this violated the cross-module isolation rule, but the spec's "Why `NotificationsRbacDeniedError` is a new class" note (line 161) scopes the rule to RBAC error CLASSES specifically. Toast utilities are shared infrastructure (used by 4.5's acknowledge button too), not domain-specific. The `NotificationsRbacDeniedError` boundary is correctly honored. KEEP — no module restructure.
+- **`HTTP_NETWORK_THROW = 0` sentinel in `useMarkAsRead`** — internal-only sentinel for dependency-injected error classification; not externally observable. Style preference; no contract risk.
+- **PATCH + concurrent poll race window** (adversarial A3) — TanStack Query does not deduplicate concurrent identical GETs by default. A future story can add `cancelQueries` before `invalidateQueries` if real-world flicker is observed. Not a v1 contract gap; the spec doesn't mandate deduplication.
+- **`recipientRole` case sensitivity** (edge-case E16) — both the Prisma enum and `tokenForRole` helper pin capitalized strings. A lowercase role token would be filtered out (Prisma finds no rows) and the API returns 200 with `{ notifications: [] }` — degraded but not broken. A future hardening pass can add a JWT-normalization layer.
+- **`acknowledgedAt: null` vs `undefined`** (edge-case E17) — repository narrows to `null`; caller misuse would silently filter (Prisma's `IS NULL` matches both `null` and absent). Type system catches; not a v1 bug.
+- **401 "Session expired" toast** (adversarial A7) — spec was silent on 401; implementation's toast is helpful UX, not a violation. KEEP.
+- **`formatRelative` + `severityClasses` pure helpers** (edge-case E15) — exercised transitively via `NotificationBell.spec.tsx`. Direct unit tests are nice-to-have, not load-bearing.
+
+**PATCH (spec contract unchanged; code/test edits applied to close review findings):**
+
+- **Created `packages/web/src/notifications/useNotificationBell.spec.tsx`** — 4 hook-level tests pinning `refetchInterval: 30_000` config (via `vi.useFakeTimers()` + `advanceTimersByTime(30_000)` + `fetchSpy` count assertion), `enabled: false` for Viewer (RBAC_NO_FETCH), `NotificationsRbacDeniedError` thrown on 403 (`expect(err).toBeInstanceOf(NotificationsRbacDeniedError)`), no-fetch on JWT-less. Closes AC7 + AC12 (both originally MISSING).
+- **Created `packages/web/src/notifications/useMarkAsRead.spec.tsx`** — 5 write-path tests covering PATCH 200→invalidate, 403→no-toast+invalidate, 404→"Notification not found"+invalidate, 500→"Failed to acknowledge"+no-invalidate, 401→"Session expired". Closes AC8 (originally PARTIAL — asserted badge side-effect rather than cache-invalidation spy).
+- **Created `packages/api/src/notifications/notificationRowToPayload.spec.ts`** — 5 pure-helper tests covering: drops `acknowledgedByUserId` from the payload, `acknowledgedAt: null` round-trip, `Date → ISO` serialization, parity for non-null `acknowledgedAt`, field preservation (`severity`, `incidentId`, `alertId`, `recipientRole`, `id`). Closes edge-case E12 (the wire-shape adapter had zero direct coverage before).
+- **Replaced vacuous `MARK_AS_READ_IDEMPOTENT` test** in `NotificationBell.spec.tsx` — original asserted `patchCount === 0` because the GET stub returned empty from the start, proving the test never clicked mark-as-read. Replaced with: pre-populate cache via `queryClient.setQueryData(...)`, click mark-as-read, assert `patchCount === 1` AND row disappears after re-fetch. Closes adversarial A2 + edge-case E8.
+- **Replaced render-only `POLL_TICK` test** with `vi.useFakeTimers()` + `advanceTimersByTime(30_000)` + `fetchSpy.mock.calls.length` assertion. Closes adversarial A4 + edge-case E7 + edge-case E5 (POLL_TICK_OPEN).
+- **Added `MARK_AS_READ_500` test** — PATCH returns 500, assert toast emitted (`toast-error-ack-failed` testid) AND badge persists. Closes edge-case E2.
+- **Added `NAV_FROM_ROW` test** — clicking the incident link inside a row navigates to `/incidents/:id` AND the dropdown unmounts (assert `screen.queryByRole("dialog")` is null). Closes edge-case E3 + AC4 (PARTIAL).
+- **Added `GET_403` web-side test** — GET returns 403, assert bell renders the disabled variant (no badge, tooltip). Closes edge-case E1 + adversarial A6. UI contract tightened: when `query.error instanceof NotificationsRbacDeniedError`, the bell renders the disabled variant (NOT the error dropdown). `NotificationBell.tsx` extracted `DisabledNotificationBell` + `OpenNotificationBell` subcomponents to keep React hook order stable across the enabled↔disabled transition.
+- **Split `VIEWER_DISABLED` + `RBAC_VIEWER_NO_FETCH`** into two `it`s — one asserts the disabled DOM (`aria-disabled="true"`, `title` attribute); the other asserts `fetchSpy` was not called with `/api/notifications`. Closes edge-case E6.
+- **Added `info` severity row test** — render an `info`-severity notification, assert `data-severity="info"` AND the row uses `text-severity-healthy-value` class. Closes edge-case E9.
+- **Added `alertId`-only row test** — render `{ incidentId: null, alertId: "alert-x" }`, assert the row shows the alertId AND no `<Link>` to `/incidents/...`. Closes edge-case E10.
+- **Added `take: 50` UI boundary test** — stub 50 rows, assert badge text is `"50"`. Pins the implementation's "no cap" decision (spec was ambiguous on 50+). Closes edge-case E11.
+- **Added `MOUNT_UNMOUNT` test** — render, unmount via `cleanup()`, advance fake timers by 60s, assert no orphan fetch fires. Closes edge-case E4.
+- **Added reverse-chronological UI assertion** — with rows in ASC order from the API, assert the dropdown renders in API-returned order (pins: API is the source of order; no defensive sort in the UI). Closes AC3 (PARTIAL).
+- **Strengthened GET_500 retry test** — after clicking the retry button, assert `fetchSpy.mock.calls.length` increments by 1 (was previously asserted only that the button rendered). Closes AC10 (PARTIAL).
+- **TopBar test direct-child fix** — `packages/web/src/shell/TopBar.spec.tsx` replaced `slot.contains(bellWrapper)` (true for grandchildren) with `expect(slot.firstElementChild).toBe(bellWrapper)` to pin the direct-child contract. Closes adversarial A9.
+
+**`reject` (noise; dropped silently):**
+
+- Adversarial A5 ("cross-role check order fragile") — speculative; the matrix middleware blocks Viewer 403 BEFORE the handler runs. Real path is correct.
+- Adversarial A7 ("401 toast vs spec silence") — spec was silent; the toast is helpful UX, not a violation.
+- Adversarial A10 (`HTTP_NETWORK_THROW=0` sentinel) — internal-only; not externally observable.
+
+**Verification commands at the time of patch:**
+
+- `pnpm --filter @surakkha/api test` — 421/427 passing (6 pre-existing failures in alerts/rules, all unrelated to 4.10; notifications module 29/29 green).
+- `pnpm --filter @surakkha/web test` — 428/428 passing (was 391 baseline + 24 new tests from this sweep + 13 from 4.10 implementation).
+- `pnpm --filter @surakkha/shared test` — 137/137 passing.
+- `pnpm -r typecheck` — clean across 4 active packages.
+- `pnpm --filter @surakkha/web lint` + `pnpm --filter @surakkha/api lint` — clean under `--max-warnings 0`.
 
 ## Design Notes
 
@@ -167,8 +214,9 @@ Append-only. Populated by step-04 during review loops. Empty until the first bad
 
 **Commands:**
 
-- `pnpm -F @surakkha/api test` — expected: green; `notificationRouter.spec.ts` adds ~9 tests, `notificationRepository.spec.ts` adds ~3 tests. Pre-existing 5 Story 3.5 alerts/list failures (AI-3.1) are unrelated — documented, not fixed.
-- `pnpm -F @surakkha/web test` — expected: existing 391 + ~10 new (NotificationBell) + ~1 new (TopBar slot) = ~402 green.
+- `pnpm --filter @surakkha/api test` — expected: green; `notificationRouter.spec.ts` adds ~13 tests, `notificationRepository.spec.ts` adds ~6 tests, `notificationRowToPayload.spec.ts` adds ~5 tests. Pre-existing 6 alerts/rules failures (AI-3.1) are unrelated — documented, not fixed.
+- `pnpm --filter @surakkha/web test` — expected: existing 391 + ~24 new (NotificationBell) + ~3 new (hook specs) + ~1 new (TopBar slot) = ~428 green.
+- `pnpm --filter @surakkha/shared test` — expected: green; `notification.ts` adds ~5 tests.
 - `pnpm -r typecheck` — expected: clean across 4 active packages (`api`, `web`, `shared`, `simulator`; `prisma` is typecheck-skipped).
 
 **Manual checks (if no CLI):**

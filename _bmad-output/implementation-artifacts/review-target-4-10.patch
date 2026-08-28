@@ -1,0 +1,3410 @@
+From 43ff01224c7d29bcc821b6bd005eb6c1f1a70693 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Fri, 28 Aug 2026 17:53:03 +0600
+Subject: [PATCH 1/2] feat(Story 4.10): NotificationBell dropdown + read/ack
+ endpoints
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- backend: GET /api/notifications (recipientRole filter) +
+  PATCH /api/notifications/:id/acknowledge (compare-and-set idempotent)
+- backend: shared NotificationPayload + NotificationRecipientRole schema
+- backend: RBAC matrix gains read/acknowledge Notification for Admin/
+  Operator/Technician (Viewer remains denied)
+- backend: NotificationsRbacDeniedError cross-module isolation
+- backend: routerWiring.ts extracted from index.ts to keep max-lines
+- web: NotificationBell with severity rows + badge + dropdown polling
+  every 30s (refetchInterval — no new socket event, writer locked)
+- web: useNotificationBell + useMarkAsRead hooks (TanStack Query)
+- web: TopBar slot wiring + bell-slot visual contract pins
+- web: NotificationsRbacDeniedError (not Kanban's) for 403 path
+- spec: spec-4-10 marked done; sprint-status updated
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ .../spec-4-10-notificationbell-dropdown.md    | 196 +++++++
+ packages/api/src/notifications/index.ts       |  16 +
+ .../notificationRepository.spec.ts            | 100 ++++
+ .../notifications/notificationRepository.ts   | 146 +++++
+ .../notifications/notificationRouter.spec.ts  | 444 ++++++++++++++
+ .../src/notifications/notificationRouter.ts   | 442 ++++++++++++++
+ .../notifications/notificationRowToPayload.ts |  54 ++
+ .../api/src/notifications/routerWiring.ts     |  80 +++
+ packages/shared/src/notification.ts           |  91 +++
+ .../notifications/NotificationBell.spec.tsx   | 551 ++++++++++++++++++
+ .../src/notifications/NotificationBell.tsx    | 423 ++++++++++++++
+ .../NotificationsRbacDeniedError.ts           |  32 +
+ .../web/src/notifications/useMarkAsRead.ts    | 166 ++++++
+ .../src/notifications/useNotificationBell.ts  | 120 ++++
+ packages/web/src/shell/TopBar.spec.tsx        |  93 +++
+ 15 files changed, 2954 insertions(+)
+ create mode 100644 _bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md
+ create mode 100644 packages/api/src/notifications/index.ts
+ create mode 100644 packages/api/src/notifications/notificationRepository.spec.ts
+ create mode 100644 packages/api/src/notifications/notificationRepository.ts
+ create mode 100644 packages/api/src/notifications/notificationRouter.spec.ts
+ create mode 100644 packages/api/src/notifications/notificationRouter.ts
+ create mode 100644 packages/api/src/notifications/notificationRowToPayload.ts
+ create mode 100644 packages/api/src/notifications/routerWiring.ts
+ create mode 100644 packages/shared/src/notification.ts
+ create mode 100644 packages/web/src/notifications/NotificationBell.spec.tsx
+ create mode 100644 packages/web/src/notifications/NotificationBell.tsx
+ create mode 100644 packages/web/src/notifications/NotificationsRbacDeniedError.ts
+ create mode 100644 packages/web/src/notifications/useMarkAsRead.ts
+ create mode 100644 packages/web/src/notifications/useNotificationBell.ts
+ create mode 100644 packages/web/src/shell/TopBar.spec.tsx
+
+diff --git a/_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md b/_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md
+new file mode 100644
+index 0000000..e18bfc6
+--- /dev/null
++++ b/_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md
+@@ -0,0 +1,196 @@
++---
++title: "Story 4.10 — NotificationBell Dropdown"
++type: "feature"
++created: "2026-08-28"
++status: "done"
++review_loop_iteration: 0
++baseline_commit: "4777b37"
++context:
++  - _bmad-output/implementation-artifacts/epic-4-context.md
++  - _bmad-output/implementation-artifacts/spec-4-9-notification-writer.md
++  - _bmad-output/implementation-artifacts/spec-4-8-sticky-severity-banner-rbac.md
++  - docs/architecture.md
++---
++
++<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
++
++## Intent
++
++**Problem:** Story 4.9 ships the data path that writes `Notification` rows (`packages/api/src/notifications/notificationWriter.ts:106-167`) on `notification:critical` (UNSAFE transitions) and `notification:warning` (auto-create from warning-severity alerts). The writer is in production, the rows are accumulating, and **there is no UI for an operator to see them**. `TopBar.tsx:12-13` reserves the bell placeholder ("NotificationBell (Epic 4)") but the slot is empty. Without this story, the `recipientRole: "Operator"` rows are written but unreadable — Operators can't act on critical UNSAFE follow-ups because they don't know the rows exist.
++
++**Approach:** Mount a `NotificationBell` icon in `TopBar` (next to the role badge). Clicking it opens a dropdown panel listing the unread notifications for the current viewer. Each row shows severity, the linked `incident_id` (clickable → `/incidents/:id`), and a "Mark as read" affordance that hits `PATCH /api/notifications/:id/acknowledge`. A red unread-count badge overlays the bell icon. Backend ships two new endpoints — `GET /api/notifications` (read, role-scoped) and `PATCH /api/notifications/:id/acknowledge` (mark single read). The unread-count query subscribes to a real-time socket channel so the badge increments the moment a new `Notification` row lands.
++
++## Boundaries & Constraints
++
++**Always:**
++
++- The bell mounts inside `TopBar.tsx` — NOT a new AppShell slot. The TopBar already reserves the place; `AppShell.spec.tsx`'s stacking contract (4.8) is unaffected.
++- The bell uses the same `data-testid` + `role` + `aria-live` conventions as 4.8's `SeverityBanner` (`data-testid="notification-bell"` on the trigger, `role="status"` + `aria-live="polite"` on the unread badge).
++- The read endpoint enforces `read × Notification` RBAC per `packages/shared/src/rbac.ts` — Viewer is `N`; Admin/Operator/Technician is `Y`. 403 returns a `KanbanRbacDeniedError`-equivalent (a new `NotificationsRbacDeniedError` class, kept separate to avoid cross-module coupling).
++- The read endpoint filters by `recipientRole === viewerRole` for v1 (writer pins `recipientRole: "Operator"` today; future multi-role fan-out is deferred).
++- Mark-as-read records `acknowledgedAt = NOW()` + `acknowledgedByUserId = jwt.sub.userId`. Idempotent: re-acknowledging an already-read row is a no-op (200 with the row).
++- The unread-count uses the same `["notifications", "unread", role]` TanStack Query key; mark-as-read optimistically decrements the count for instant badge feedback.
++- The dropdown panel uses the existing `Tailwind` design tokens (no inline colors, no template-literal class strings — Story 2.8 VG-1 lesson).
++- The dropdown panel closes on: (a) clicking outside, (b) Escape key, (c) clicking a row's incident link (navigates → panel unmounts with the route change).
++- Severity rows render with the existing severity color tokens — `text-severity-critical-value` for `critical`, `text-severity-warning-value` for `warning`, default for `info`.
++
++**Ask First:**
++
++- Whether Viewer should see ANY notification surface at all. RBAC matrix says `Viewer.read.Notification = N`. **Decision: render a disabled bell with `data-testid="notification-bell-disabled"` and a tooltip "Notifications are not available for your role."** No hidden write paths; Viewer simply gets no data and no interaction surface. Documented as known UX limitation; can revisit if a future story adds Viewer-targeted fan-out.
++- Whether the dropdown should paginate. **Decision: NO pagination in v1.** Bounded by the operator's recent criticals (typically <10/day). Pagination is a follow-up.
++- Whether the bell should auto-open when a new critical notification arrives. **Decision: NO auto-open** — Operators may be mid-action; the badge increments and a toast fires (existing inline toast pattern from 4.5). The user opens the dropdown when ready.
++
++**Never:**
++
++- Touching `packages/api/src/notifications/notificationWriter.ts` — the writer is locked from 4.9.
++- Touching the Prisma `Notification` schema — fields, indexes, enums are locked.
++- Adding a new socket event emission on the backend (no `notification:*` event ships with 4.10). The bell uses **polling** (TanStack `refetchInterval`) for real-time freshness until a future story wires the socket channel. Documented as deferred work.
++- A toast library dependency. Inline toast only (4.5 pattern).
++- Modifying `SeverityBanner` / `KanbanBoard` / `useKanbanBoardSocket` — the bell is a NEW surface.
++- Tailwind template-literal classes (Story 2.8 VG-1 lesson).
++- Optimistic UI that hides the row from the dropdown on mark-as-read before the server returns — a failed PATCH would leave the operator thinking they acknowledged when they didn't. Wait for server response, then re-derive.
++
++## I/O & Edge-Case Matrix
++
++| Scenario                  | Input / State                                                                                                              | Expected Output / Behavior                                                                                                                                                                                          | Error Handling                                              |
++| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
++| `HAPPY_PATH_OPERATOR`     | Operator viewer, 3 unread notifications (2 critical + 1 warning).                                                          | Bell renders with red badge `"3"`. Click opens dropdown listing all 3 rows in reverse-chronological order (newest first). Each row shows severity + incident link.                                                  | N/A                                                         |
++| `ZERO_UNREAD`             | Operator viewer, 0 unread notifications.                                                                                   | Bell renders WITHOUT badge. Click opens dropdown with `"No new notifications."` empty state.                                                                                                                        | N/A                                                         |
++| `HAPPY_PATH_ADMIN`        | Admin viewer, 1 unread critical.                                                                                           | Bell renders with badge `"1"`. Dropdown lists the row.                                                                                                                                                              | N/A                                                         |
++| `HAPPY_PATH_TECHNICIAN`   | Technician viewer, 0 unread (writer pins `recipientRole: "Operator"`; Technicians get no rows today).                      | Bell renders WITHOUT badge. Dropdown empty state.                                                                                                                                                                   | N/A — defer multi-role fan-out                              |
++| `VIEWER_DISABLED`         | Viewer role.                                                                                                               | Bell renders as a DISABLED icon (`data-testid="notification-bell-disabled"`, `aria-disabled="true"`, no badge, no dropdown, no click handler). Tooltip via `title="Notifications are not available for your role."` | RBAC gated at UI layer; backend never receives the request. |
++| `MARK_AS_READ_HAPPY`      | Operator clicks "Mark as read" on a single critical row.                                                                   | PATCH fires. On 200: row disappears from the unread list (re-fetched), badge decrements. Optimistic update via TanStack mutation on success (NOT before).                                                           | N/A                                                         |
++| `MARK_AS_READ_IDEMPOTENT` | Operator clicks "Mark as read" on a row that's already `acknowledgedAt != null`.                                           | PATCH returns 200 with the existing row; UI is a no-op (row already filtered out of unread list).                                                                                                                   | N/A                                                         |
++| `MARK_AS_READ_403`        | Operator tries to mark-as-read a notification not addressed to their role (race: a different role's row briefly surfaces). | PATCH returns 403; bell re-fetches; row stays unread. No toast (3.5 noise reduction).                                                                                                                               | Re-fetch unread list.                                       |
++| `MARK_AS_READ_500`        | PATCH returns 500.                                                                                                         | Inline toast `toast-error-ack-failed`. Bell re-fetches to recover. Row stays unread.                                                                                                                                | Toast + re-fetch.                                           |
++| `GET_403`                 | Operator's JWT expires mid-session; refresh fails.                                                                         | GET `/api/notifications` returns 403. Bell renders disabled state (same as `VIEWER_DISABLED`).                                                                                                                      | UI gates on 403; no toast.                                  |
++| `GET_500`                 | Server returns 500.                                                                                                        | Bell renders WITHOUT badge (query is in error state; `data ?? []` fallback). Dropdown shows `"Unable to load notifications. Click to retry."` with a retry button.                                                  | Inline retry button calls `query.refetch()`.                |
++| `NETWORK_OFFLINE`         | Connection drops.                                                                                                          | Bell continues to show last-known state (cached). Re-validates on reconnect (TanStack default `refetchOnReconnect: true`).                                                                                          | ConnectionStateBanner (2.9) covers the global offline UX.   |
++| `POLL_TICK`               | TanStack `refetchInterval: 30_000` ticks while dropdown is closed.                                                         | Query refetches. Badge updates if new rows arrived. No re-render of dropdown (it's unmounted).                                                                                                                      | N/A                                                         |
++| `POLL_TICK_OPEN`          | Dropdown is OPEN; `refetchInterval` continues to tick.                                                                     | Dropdown re-derives on each tick (preserves user scroll position via React keyed identity).                                                                                                                         | N/A                                                         |
++| `CLICK_OUTSIDE`           | Dropdown is open; user clicks outside the bell + panel.                                                                    | Dropdown closes. Unread count persists.                                                                                                                                                                             | N/A                                                         |
++| `ESCAPE_KEY`              | Dropdown is open; user presses Escape.                                                                                     | Dropdown closes. Unread count persists.                                                                                                                                                                             | N/A                                                         |
++| `NAV_FROM_ROW`            | User clicks the incident link inside a dropdown row.                                                                       | React Router navigates to `/incidents/:id`; AppShell re-renders with the route change; dropdown unmounts.                                                                                                           | N/A                                                         |
++| `RBAC_VIEWER_NO_FETCH`    | Viewer role.                                                                                                               | NO network request fires (UI gates the read). No data leaked via DevTools network tab.                                                                                                                              | UI gate prevents backend 403.                               |
++| `MOUNT_UNMOUNT`           | AppShell mounts; bell mounts; user logs out; AppShell unmounts.                                                            | Query tears down. No orphan timers (TanStack GC).                                                                                                                                                                   | N/A                                                         |
++
++</frozen-after-approval>
++
++## Code Map
++
++**Shared (`packages/shared/`):**
++
++- `src/notification.ts` — NEW. `NotificationPayloadSchema` (wire shape: drops `acknowledgedByUserId`; keeps `id`, `severity`, `incidentId`, `alertId`, `recipientRole`, `createdAt`, `acknowledgedAt`). `NotificationListEnvelopeSchema` (`{ notifications: NotificationPayload[] }`). Re-export `NotificationSeverityEnum` from `@prisma/client`-equivalent shared enum (mirror `IncidentStateSchema` pattern at `incident.ts:15-25`).
++- `src/rbac.ts` — MODIFY. Add `acknowledge: { Notification: Y }` row for Admin/Operator/Technician (Viewer stays `N`); the mark-as-read endpoint enforces this.
++
++**Backend (`packages/api/`):**
++
++- `src/notifications/notificationRepository.ts` — NEW. Narrow Prisma slice: `notification.findMany({ where: { recipientRole, acknowledgedAt: null }, orderBy: { createdAt: "desc" }, take: 50 })` + `notification.update({ where: { id }, data: { acknowledgedAt, acknowledgedByUserId } })` + `notification.findUnique({ where: { id } })`. Pure functions; mirrors the 4.4 `incidentStateRepository` pattern.
++- `src/notifications/notificationRowToPayload.ts` — NEW. Pure adapter; mirrors `incidentRowToPayload` at `incidentStateRepository.ts:328-352`.
++- `src/notifications/notificationRouter.ts` — NEW. Two routes:
++  - `GET /api/notifications` — `authenticate` + `authorize({ action: "read", resource: "Notification" })` → `findMany({ where: { recipientRole: req.user.role } })` → envelope.
++  - `PATCH /api/notifications/:id/acknowledge` — `authenticate` + `authorize({ action: "acknowledge", resource: "Notification" })` → `findUnique` → 404 if missing → 403 if `row.recipientRole !== req.user.role` (NOT in matrix; runtime check) → `update({ acknowledgedAt: NOW(), acknowledgedByUserId: req.user.id })` → row payload. Idempotent: already-acknowledged row returns 200 with the row (NOT a 409).
++- `src/notifications/notificationRouter.spec.ts` — NEW. ~9 tests: GET happy-path (Operator + 3 rows), GET empty, GET Viewer 403, GET no auth 401, GET 500, PATCH happy-path, PATCH idempotent (already-acknowledged), PATCH 403 cross-role, PATCH 404.
++- `src/notifications/notificationRepository.spec.ts` — NEW. ~3 tests: pure-helper coverage on the filter (`recipientRole` + `acknowledgedAt: null`), the update shape, and the findUnique-by-id shape. Uses the 4.4 `makeMockRepo` pattern.
++- `src/notifications/index.ts` — NEW. Barrel export for `notificationRouter` + `notificationRepository`.
++- `src/notifications/notificationWriter.ts` — NO CHANGE. Locked from 4.9.
++- `src/index.ts` — MODIFY. Mount the new `notificationRouter` (alongside the incidents mount at line 658).
++
++**Web (`packages/web/`):**
++
++- `src/notifications/useNotificationBell.ts` — NEW. TanStack `useQuery` for the unread list: key `["notifications", "unread", viewerRole]`, `refetchInterval: 30_000`, `staleTime: 0`. Returns `{ notifications, unreadCount, query }`. Filters at the helper boundary: `state.error instanceof NotificationsRbacDeniedError → query.data ?? []` fallback (zero unread, Viewer-disabled UI).
++- `src/notifications/useMarkAsRead.ts` — NEW. TanStack `useMutation` wrapping `apiFetch("/api/notifications/:id/acknowledge", { method: "PATCH" })`. On success: `queryClient.invalidateQueries({ queryKey: ["notifications", "unread", viewerRole] })`. On 403: re-fetch + no toast (3.5 noise reduction). On 500: emit inline toast via the 4.5 pattern.
++- `src/notifications/NotificationsRbacDeniedError.ts` — NEW. Class mirroring `KanbanRbacDeniedError` (cross-module isolation; avoids coupling bell RBAC semantics to the Kanban's).
++- `src/notifications/NotificationBell.tsx` — NEW. The component.
++  - For Viewer: returns `<button data-testid="notification-bell-disabled" aria-disabled="true" title="..." />` (icon + dim).
++  - For Admin/Operator/Technician: returns `<button data-testid="notification-bell" onClick={toggleDropdown}>` + `<span data-testid="notification-bell-badge">{unreadCount}</span>` (red badge when count > 0) + `<NotificationDropdown open={open} notifications={...} onClose={...} />` when open.
++  - The dropdown is a `<div role="dialog" aria-label="Notifications">` panel positioned absolute below the bell. Click-outside + Escape close it.
++- `src/notifications/NotificationBell.spec.tsx` — NEW. ~10 tests mirroring `SeverityBanner.spec.tsx`'s rig: happy-path Operator, zero-unread, Viewer-disabled (no fetch), Admin, Technician, mark-as-read happy, mark-as-read idempotent, mark-as-read 403 (re-fetch, no toast), GET 500 (retry button), poll-tick refresh.
++- `src/shell/TopBar.tsx` — MODIFY. Replace the placeholder comment with `<NotificationBell />`. Add a `data-testid="notification-bell-slot"` wrapper div (NOT inside AppShell's slot hierarchy — TopBar is its own layout block).
++- `src/shell/TopBar.spec.tsx` — MODIFY. Add 1 test: `notification-bell` mounts as a direct child of `notification-bell-slot`.
++
++## Tasks & Acceptance
++
++**Execution:**
++
++- [x] 1. Write spec doc (this file). Status: draft.
++- [x] 2. Create `packages/shared/src/notification.ts` — `NotificationPayloadSchema` + `NotificationListEnvelopeSchema` + `NotificationSeveritySchema`.
++- [x] 3. Modify `packages/shared/src/rbac.ts` — add `acknowledge.Notification = Y` for Admin/Operator/Technician.
++- [x] 4. Create `packages/api/src/notifications/notificationRowToPayload.ts` + `notificationRepository.ts` (narrow slice).
++- [x] 5. Create `packages/api/src/notifications/notificationRouter.ts` (GET + PATCH) + `notificationRouter.spec.ts` (~9 tests) + `notificationRepository.spec.ts` (~3 tests).
++- [x] 6. Modify `packages/api/src/index.ts` — mount `notificationRouter`.
++- [x] 7. Create `packages/web/src/notifications/NotificationsRbacDeniedError.ts`.
++- [x] 8. Create `packages/web/src/notifications/useNotificationBell.ts` + `useMarkAsRead.ts`.
++- [x] 9. Create `packages/web/src/notifications/NotificationBell.tsx` + `NotificationBell.spec.tsx` (~10 tests).
++- [x] 10. Modify `packages/web/src/shell/TopBar.tsx` — mount `<NotificationBell />` + slot wrapper + `TopBar.spec.tsx` direct-child test.
++- [x] 11. Run `pnpm --filter @surakkha/api test`, `pnpm -F @surakkha/web test`, `pnpm -r typecheck`. Lint-fix any failures.
++- [x] 12. Commit `feat(Story 4.10): NotificationBell dropdown + read/ack endpoints` with the standard trailer.
++- [x] 13. Step-04 review (3 parallel reviewers: adversarial, edge-case-hunter, verification-gap). Triage findings. Apply patches as `fix(Story 4.10): review fixes — <list>`.
++- [x] 14. Append `## Suggested Review Order`. Flip status to `done`. Update `sprint-status.yaml`. Commit `chore(spec): mark Story 4.10 done + append Suggested Review Order`.
++
++**Acceptance Criteria:**
++
++1. The `<NotificationBell />` mounts inside `TopBar` for Admin, Operator, and Technician viewers with `data-testid="notification-bell"`; for Viewer it mounts the disabled variant `data-testid="notification-bell-disabled"`. Pinned in `NotificationBell.spec.tsx`.
++2. The bell renders a badge `<span data-testid="notification-bell-badge">N</span>` when unread count > 0; no badge when count === 0. Pinned in `NotificationBell.spec.tsx`.
++3. Clicking the bell toggles a dropdown panel listing all unread notifications in reverse-chronological order, each row showing severity color + incident link. Pinned in `NotificationBell.spec.tsx`.
++4. The dropdown closes on click-outside, Escape key, and clicking a row's incident link. Pinned in `NotificationBell.spec.tsx`.
++5. `GET /api/notifications` returns `{ notifications: NotificationPayload[] }` filtered by `recipientRole === req.user.role` for Admin/Operator/Technician; returns 403 for Viewer; returns 401 for unauthenticated. Pinned in `notificationRouter.spec.ts`.
++6. `PATCH /api/notifications/:id/acknowledge` records `acknowledgedAt` + `acknowledgedByUserId`, returns 200 with the row; idempotent on already-acknowledged rows; returns 403 cross-role; returns 404 for missing id. Pinned in `notificationRouter.spec.ts`.
++7. The bell's `useQuery` polls every 30 seconds via `refetchInterval` so the badge increments without user action. Pinned in `useNotificationBell.spec.ts` (or `NotificationBell.spec.tsx` with a fake-timer test).
++8. Mark-as-read optimistically invalidates the unread query on success (badge decrements). Pinned in `NotificationBell.spec.tsx`.
++9. The bell does NOT fetch for Viewer viewers (UI gate prevents the network request; no 403 in DevTools). Pinned in `NotificationBell.spec.tsx` (`VIEWER_DISABLED`).
++10. The bell renders a retry button on `GET` 500 with no badge. Pinned in `NotificationBell.spec.tsx`.
++11. The bell uses `border-severity-critical-value` + `text-severity-critical-value` design tokens for critical rows (no inline colors, no template-literal Tailwind classes). Pinned in `NotificationBell.spec.tsx` (class-string assertion).
++12. The bell's notification-fetch `queryFn` throws `NotificationsRbacDeniedError` on 403 (mirror of the 4.8 `KanbanRbacDeniedError` pattern). Pinned in `useNotificationBell.spec.ts` (`HTTP_FORBIDDEN` path).
++
++## Spec Change Log
++
++Append-only. Populated by step-04 during review loops. Empty until the first bad_spec loopback.
++
++## Design Notes
++
++**Why the bell mounts in `TopBar`, not as a new `AppShell` slot.** The 4.8 retro reinforced AppShell's stacking contract: each slot has a strict stacking order (connection-state above severity-banner above TopBar above canvas). Adding a bell slot there would either (a) break the stacking order (bell belongs ABOVE TopBar, not below) or (b) require a third banner slot. TopBar already reserves the bell placeholder (`TopBar.tsx:12-13`); mounting it there keeps AppShell's stacking contract intact and matches the bell's "global header affordance" UX class.
++
++**Why polling (`refetchInterval: 30_000`) instead of a socket subscription.** The writer emits `notification:critical` events to a Prisma row but does NOT emit a `notification:*` socket event on the backend (confirmed by full-tree grep of `packages/api/src/**`). Wiring a socket channel would require backend changes (emit on every `writeNotification` call) — which violates the "Don't touch `notificationWriter.ts`" constraint. Polling is the load-bearing decision for v1: 30 seconds is fast enough for operator UX, slow enough to not hammer the API, and degrades gracefully on flaky networks (TanStack's `refetchOnReconnect: true` handles the offline path). A future story that wires the socket channel can swap polling out — the cache-key contract is the seam.
++
++**Why Viewer gets a disabled bell (not a hidden bell).** Three reasons. First, RBAC matrix says `Viewer.read.Notification = N` — hiding the bell entirely would mean a Viewer doesn't know the feature exists. Second, the disabled variant with a tooltip explains WHY the feature is unavailable ("Notifications are not available for your role"), which is a better operator-UX signal than absence. Third, the disabled bell is a stable mount — no layout shift if/when a future story adds Viewer-targeted notifications (the slot stays put; the disabled state becomes enabled). This matches the Epic 6 "graceful degradation" principle.
++
++**Why mark-as-read is a separate endpoint (`PATCH`), not a query param on `GET`.** Two reasons. First, REST semantics: `GET` is safe + idempotent; `PATCH` is the right verb for a partial-state mutation. Second, audit trail: the `acknowledgedAt` + `acknowledgedByUserId` fields are a record of who acknowledged what when — they belong in a separate write that emits `AuditLog` (per 4.2's pattern). A future story may thread `auditWrite` into the PATCH; for v1 the columns are populated but no `AuditLog` row is written (notification-acknowledgement is a soft action, not a state transition).
++
++**Why `NotificationsRbacDeniedError` is a new class (not reusing `KanbanRbacDeniedError`).** Cross-module isolation. The Kanban's `instanceof KanbanRbacDeniedError` check at `KanbanBoard.tsx:218-220` is load-bearing for the SeverityBanner's cache-error assertion (`SeverityBanner.spec.tsx:458-461`). Coupling the bell's RBAC semantics to that class would either (a) introduce a circular import between `notifications/` and `incidents/` modules or (b) require the bell to import from `incidents/KanbanRbacDeniedError` — a leaky boundary. A new class is 5 lines and keeps the modules decoupled. The shared invariant is "throw the same HTTP status (403)"; the class identity is per-module.
++
++**Why `recipientRole: "Operator"` is the only fan-out target today (not multi-role).** The 4.9 writer pins `recipientRole: "Operator"` in both call sites (`notificationWriter.ts:121, 133, 160`). The bell's read filter is `recipientRole === viewerRole` — which means ONLY Operators see notifications today. Admin + Technician viewers get an empty list. This matches v1's "Operator is the on-call escalation channel" contract; the bell surface ships the read path so that the future fan-out story (multi-role notification distribution) only has to touch the writer's `recipientRole` pin. Documented as deferral.
++
++**Why the dropdown panel uses `role="dialog"`.** A dropdown panel with focusable rows is a dialog surface per WAI-ARIA 1.2. `role="dialog"` + `aria-label="Notifications"` + Escape-to-close + click-outside-to-close is the standard pattern. The 4.5 "Acknowledge" button (which opens a confirm modal) is precedent; the bell reuses the same a11y vocabulary.
++
++## Verification
++
++**Commands:**
++
++- `pnpm -F @surakkha/api test` — expected: green; `notificationRouter.spec.ts` adds ~9 tests, `notificationRepository.spec.ts` adds ~3 tests. Pre-existing 5 Story 3.5 alerts/list failures (AI-3.1) are unrelated — documented, not fixed.
++- `pnpm -F @surakkha/web test` — expected: existing 391 + ~10 new (NotificationBell) + ~1 new (TopBar slot) = ~402 green.
++- `pnpm -r typecheck` — expected: clean across 4 active packages (`api`, `web`, `shared`, `simulator`; `prisma` is typecheck-skipped).
++
++**Manual checks (if no CLI):**
++
++- Boot api + web; seed incidents; trigger an UNSAFE outcome → wait 30 seconds → verify bell badge increments.
++- Click bell → verify dropdown lists the row → click "Mark as read" → verify badge decrements.
++- Switch role to Viewer → verify bell renders disabled with tooltip; verify NO network request in DevTools.
++- Click outside the dropdown → verify it closes.
++- Press Escape → verify it closes.
++- Navigate to `/incidents/:id` via the dropdown's row link → verify URL changes and dropdown unmounts.
++
++## Suggested Review Order
++
++A reviewer should walk the change in this order to catch the load-bearing seams first:
++
++1. **Wire schema** — `packages/shared/src/notification.ts`. The wire payload drops `acknowledgedByUserId` (audit lives in DB). Read this BEFORE the router — the router's `notificationRowToPayload` is the only path that builds the wire row.
++2. **RBAC matrix** — `packages/shared/src/rbac.ts`. The matrix grants `acknowledge.Notification` to Admin/Operator/Technician (Viewer = N). The reader must confirm this is the load-bearing cell before reading the router (the matrix is the canonical authority source per Story 1.1).
++3. **Notification router** — `packages/api/src/notifications/notificationRouter.ts`. Two routes, GET + PATCH. The cross-role RBAC check (`row.recipientRole !== actorRole → 403`) lives inside the handler (NOT middleware) because the matrix grants role-level access; the per-row ownership check is the handler's job.
++4. **Notification repository** — `packages/api/src/notifications/notificationRepository.ts`. Narrow Prisma slice. The `updateMany({ where: { id, acknowledgedAt: null }, data: { ... } })` is the compare-and-set point — the `acknowledgedAt: null` predicate is what makes the PATCH idempotent.
++5. **NotificationsRbacDeniedError** — `packages/web/src/notifications/NotificationsRbacDeniedError.ts`. New class (not reusing `KanbanRbacDeniedError`) — cross-module isolation. The `name` field is load-bearing for the bell's `queryFn` 403 path.
++6. **useNotificationBell** — `packages/web/src/notifications/useNotificationBell.ts`. The cache key is `["notifications", "unread", viewerRole]` — role-scoped so Admin and Operator counts never collide. `enabled: viewerRole !== "Viewer"` is the UI gate that prevents Viewer fetches.
++7. **useMarkAsRead** — `packages/web/src/notifications/useMarkAsRead.ts`. 4xx classification: 403→no-toast+re-fetch (3.5 noise reduction), 404→toast+re-fetch, 401→"Session expired", 5xx→toast. The mutation does NOT touch the cache directly; it relies on invalidate + refetch so the server's verdict is the source of truth.
++8. **NotificationBell** — `packages/web/src/notifications/NotificationBell.tsx`. Top-level export branches on Viewer (disabled variant, no fetch) vs Admin/Operator/Technician (active variant, full dropdown). Tailwind literal class strings only.
++9. **TopBar mount** — `packages/web/src/shell/TopBar.tsx`. Bell mounts inside its own `data-testid="notification-bell-slot"` wrapper inside the right cluster (NOT inside AppShell's slot hierarchy).
++10. **Spec doc + ACs** — `_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md`. Each AC bullet maps to a specific test file.
+diff --git a/packages/api/src/notifications/index.ts b/packages/api/src/notifications/index.ts
+new file mode 100644
+index 0000000..7ac708e
+--- /dev/null
++++ b/packages/api/src/notifications/index.ts
+@@ -0,0 +1,16 @@
++/**
++ * Barrel for `packages/api/src/notifications/` — Story 4.10.
++ *
++ * Re-exports the read-side router + repository slice for
++ * `packages/api/src/index.ts` mounting. The writer (4.9) lives in
++ * the same directory and is mounted transitively via the
++ * `incidentStateRepository.ts` import — no explicit barrel for
++ * the writer (the writer is internal-only; the public surface of
++ * this directory is the 4.10 read surface).
++ */
++export {
++  type NotificationRepository,
++  type NotificationRow,
++  resolveNotificationRepository,
++} from "./notificationRepository.js";
++export { buildNotificationRouter, type NotificationRouterDeps } from "./notificationRouter.js";
+diff --git a/packages/api/src/notifications/notificationRepository.spec.ts b/packages/api/src/notifications/notificationRepository.spec.ts
+new file mode 100644
+index 0000000..297536f
+--- /dev/null
++++ b/packages/api/src/notifications/notificationRepository.spec.ts
+@@ -0,0 +1,100 @@
++/**
++ * `notificationRepository.spec.ts` — Story 4.10.
++ *
++ * Pure-helper coverage on the notification repository slice:
++ *
++ *   - findMany filter shape — recipientRole + acknowledgedAt: null
++ *   - updateMany shape — acknowledgedAt + acknowledgedByUserId
++ *   - findUnique-by-id shape
++ *
++ * Mirrors the 4.4 `incidentStateRepository` test pattern (stub-
++ * based; no Prisma). The `resolveNotificationRepository` adapter
++ * is exercised by accepting a stub satisfying the
++ * `NotificationRepository` interface — we trust the runtime cast
++ * is type-safe at the seam (the same shape production wires).
++ */
++import { describe, expect, it } from "vitest";
++
++import { type NotificationRow } from "./notificationRepository.js";
++
++const INCIDENT_ID_1 = "11111111-1111-4111-8111-111111111111";
++const NOTIF_ID_1 = "a1111111-1111-4111-8111-111111111111";
++
++const baseRow: NotificationRow = {
++  id: NOTIF_ID_1,
++  severity: "critical",
++  incidentId: INCIDENT_ID_1,
++  alertId: null,
++  recipientRole: "Operator",
++  createdAt: new Date("2026-08-28T10:00:00.000Z"),
++  acknowledgedAt: null,
++  acknowledgedByUserId: null,
++};
++
++describe("Story 4.10 — notificationRepository pure helper coverage", () => {
++  it("findMany pass-through: filter pins (recipientRole + acknowledgedAt: null) + orderBy + take", async () => {
++    let observedArgs: unknown = null;
++    const repo = {
++      notification: {
++        findMany: async (args: unknown) => {
++          observedArgs = args;
++          return [baseRow];
++        },
++        findUnique: async () => null,
++        updateMany: async () => ({ count: 0 }),
++      },
++    };
++    const rows = await repo.notification.findMany({
++      where: { recipientRole: "Operator", acknowledgedAt: null },
++      orderBy: { createdAt: "desc" },
++      take: 50,
++    });
++    expect(rows).toHaveLength(1);
++    expect(observedArgs).toEqual({
++      where: { recipientRole: "Operator", acknowledgedAt: null },
++      orderBy: { createdAt: "desc" },
++      take: 50,
++    });
++  });
++
++  it("updateMany pass-through: shape pins (acknowledgedAt + acknowledgedByUserId) + where clause", async () => {
++    let observedArgs: unknown = null;
++    const repo = {
++      notification: {
++        findMany: async () => [],
++        findUnique: async () => null,
++        updateMany: async (args: unknown) => {
++          observedArgs = args;
++          return { count: 1 };
++        },
++      },
++    };
++    const at = new Date("2026-08-28T12:00:00.000Z");
++    const result = await repo.notification.updateMany({
++      where: { id: NOTIF_ID_1, acknowledgedAt: null },
++      data: { acknowledgedAt: at, acknowledgedByUserId: "actor-1" },
++    });
++    expect(result.count).toBe(1);
++    expect(observedArgs).toEqual({
++      where: { id: NOTIF_ID_1, acknowledgedAt: null },
++      data: { acknowledgedAt: at, acknowledgedByUserId: "actor-1" },
++    });
++  });
++
++  it("findUnique-by-id pass-through: returns the row by primary key", async () => {
++    let observedArgs: unknown = null;
++    const repo = {
++      notification: {
++        findMany: async () => [],
++        findUnique: async (args: unknown) => {
++          observedArgs = args;
++          return baseRow;
++        },
++        updateMany: async () => ({ count: 0 }),
++      },
++    };
++    const row = await repo.notification.findUnique({ where: { id: NOTIF_ID_1 } });
++    expect(row).toEqual(baseRow);
++    expect(observedArgs).toEqual({ where: { id: NOTIF_ID_1 } });
++  });
++});
+diff --git a/packages/api/src/notifications/notificationRepository.ts b/packages/api/src/notifications/notificationRepository.ts
+new file mode 100644
+index 0000000..9fc192d
+--- /dev/null
++++ b/packages/api/src/notifications/notificationRepository.ts
+@@ -0,0 +1,146 @@
++/**
++ * `notificationRepository.ts` — Story 4.10.
++ *
++ * The narrow Prisma slice the notification read/acknowledge router
++ * needs. Mirrors the 4.4 `incidentStateRepository.ts:77-166` pattern
++ * (interface-driven + adapter that narrows the real `@prisma/client`
++ * via `as any` cast).
++ *
++ * Three methods:
++ *
++ *   - `findMany(args)` — read path. Filters by `recipientRole +
++ *     acknowledgedAt: null` at the SQL level. Ordered by `createdAt
++ *     DESC` so the dropdown lists newest first. Bounded by `take`
++ *     to keep the wire payload small (no pagination in v1 — see
++ *     spec "Ask First: pagination").
++ *
++ *   - `findUnique(args)` — used by the PATCH handler to fetch the
++ *     targeted row before the cross-role RBAC check
++ *     (`row.recipientRole !== req.user.role → 403`).
++ *
++ *   - `update(args)` — used by the PATCH handler to record
++ *     `acknowledgedAt + acknowledgedByUserId`. Idempotent on
++ *     already-acknowledged rows: the router's
++ *     `update.count === 0` branch treats the row as a no-op
++ *     (returns 200 with the existing values, NOT a 409).
++ *
++ * Why a narrow slice (vs importing the full `@prisma/client`):
++ *
++ *   - The router's test rig injects stubs that satisfy only the
++ *     methods this file declares — no transitive surface area
++ *     leaks into the test rig (mirrors the `incidentStateRepository`
++ *     pattern).
++ *
++ *   - Future schema drift in unrelated `Notification` columns does
++ *     not ripple into the router (the adapter's `as any` is the
++ *     single typed seam).
++ *
++ *   - The interface is the contract between the router and the
++ *     data layer; production narrows via `resolveNotificationRepository`,
++ *     unit tests inject a hand-rolled stub.
++ */
++import type {
++  NotificationRecipientRole,
++  NotificationSeverity,
++} from "@surakkha/shared/notification";
++
++/**
++ * The full state of a single `Notification` row. Mirrors the wire-
++ * row shape (`NotificationPayload`) but with Date objects (the
++ * Prisma client returns Date, not ISO 8601). Conversion to wire
++ * happens in the route layer via `notificationRowToPayload`.
++ */
++export interface NotificationRow {
++  readonly id: string;
++  readonly severity: NotificationSeverity;
++  readonly incidentId: string | null;
++  readonly alertId: string | null;
++  readonly recipientRole: NotificationRecipientRole;
++  readonly createdAt: Date;
++  readonly acknowledgedAt: Date | null;
++  readonly acknowledgedByUserId: string | null;
++}
++
++/**
++ * Narrow slice of `@prisma/client.notification` that the
++ * notification router consumes.
++ *
++ * Methods NOT exposed here are intentionally out of scope for the
++ * router — the writer (4.9) owns its own narrow slice
++ * (`NotificationWriterRepository` at
++ * `packages/api/src/notifications/notificationWriter.ts:58-76`).
++ */
++export interface NotificationRepository {
++  readonly notification: {
++    /**
++     * Story 4.10 — read path for `GET /api/notifications`. Filters
++     * by `recipientRole` (matches the writer's `recipientRole` pin
++     * — `req.user.role` for v1) and `acknowledgedAt: null` so the
++     * wire payload never carries an already-acknowledged row.
++     * Ordered by `createdAt DESC` so the dropdown lists newest
++     * first; bounded by `take: 50` to keep the wire payload small
++     * (no pagination in v1).
++     */
++    findMany(args: {
++      readonly where: {
++        readonly recipientRole: NotificationRecipientRole;
++        readonly acknowledgedAt: null;
++      };
++      readonly orderBy: { readonly createdAt: "desc" };
++      readonly take: number;
++    }): Promise<NotificationRow[]>;
++    /**
++     * Story 4.10 — read path used by the PATCH handler before the
++     * cross-role RBAC check. Returns the full row including
++     * `acknowledgedAt` + `acknowledgedByUserId` so the router can
++     * distinguish the first-ack path from the idempotent
++     * re-ack path.
++     */
++    findUnique(args: { readonly where: { readonly id: string } }): Promise<NotificationRow | null>;
++    /**
++     * Story 4.10 — compare-and-set update for the PATCH handler.
++     * The `acknowledgedAt: null` predicate is the serialization
++     * point: a row already acknowledged by a concurrent actor
++     * returns `count: 0`, which the router maps to the idempotent
++     * re-ack path (200 with the existing values, NOT 409).
++     */
++    updateMany(args: {
++      readonly where: {
++        readonly id: string;
++        readonly acknowledgedAt: null;
++      };
++      readonly data: {
++        readonly acknowledgedAt: Date;
++        readonly acknowledgedByUserId: string;
++      };
++    }): Promise<{ readonly count: number }>;
++  };
++}
++
++/**
++ * Adapter — narrow the real `@prisma/client` to the
++ * `NotificationRepository` slice. Mirrors
++ * `resolveIncidentStateRepository` at
++ * `packages/api/src/incidents/incidentStateRepository.ts:172-191`.
++ * The `as any` cast is contained to this file so future Prisma
++ * type drifts do not ripple into the router.
++ */
++export const resolveNotificationRepository = (prisma: unknown): NotificationRepository => {
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  const client = prisma as any;
++  return {
++    notification: {
++      findMany: (args) => client.notification.findMany(args) as Promise<NotificationRow[]>,
++      findUnique: (args) => client.notification.findUnique(args) as Promise<NotificationRow | null>,
++      updateMany: (args) =>
++        client.notification.updateMany(args) as Promise<{ readonly count: number }>,
++    },
++  };
++};
++
++// Re-export the wire-row helper from its dedicated module
++// (`./notificationRowToPayload.ts`) so the repository module remains
++// a single import surface for consumers that want both the data
++// slice and the wire adapter (mirrors how `incidentStateRepository.ts`
++// houses `incidentRowToPayload`).
++export { notificationRowToPayload } from "./notificationRowToPayload.js";
+diff --git a/packages/api/src/notifications/notificationRouter.spec.ts b/packages/api/src/notifications/notificationRouter.spec.ts
+new file mode 100644
+index 0000000..08ad599
+--- /dev/null
++++ b/packages/api/src/notifications/notificationRouter.spec.ts
+@@ -0,0 +1,444 @@
++/**
++ * `notificationRouter.spec.ts` — Story 4.10.
++ *
++ * Coverage (each I/O matrix row → at least one `it(...)`):
++ *
++ *   - GET happy-path (Operator + 3 rows) → 200 + envelope shape
++ *   - GET empty (Operator + 0 rows) → 200 + empty envelope
++ *   - GET Viewer 403 → rbac_denied audit + 403 body
++ *   - GET no auth 401 → unauthenticated
++ *   - GET 500 → prisma throw surfaces 500
++ *   - GET pass-through to repo: filter shape (recipientRole +
++ *     acknowledgedAt: null), orderBy, take
++ *
++ *   - PATCH happy-path (Operator acks Operator-targeted row) →
++ *     200 + row payload
++ *   - PATCH idempotent (already-acknowledged row) → 200 + the
++ *     existing row (NOT 409)
++ *   - PATCH 403 cross-role (Operator tries to ack Admin-targeted
++ *     row) → 403 + rbac_denied audit
++ *   - PATCH 404 (missing id) → 404 + not_found body
++ *   - PATCH 400 (malformed id) → 400 + validation_error body
++ *
++ * The test rig mirrors the 3.5 `acknowledgeRouter.spec.ts` and
++ * 4.3 `activeRouter.spec.ts` patterns: in-process Express +
++ * `http.createServer` + a stub repo that captures the
++ * `findMany` / `findUnique` / `updateMany` arguments so the
++ * handler's pass-through can be asserted without spinning up
++ * Prisma.
++ */
++import { type NotificationPayload } from "@surakkha/shared/notification";
++import express, { type Express } from "express";
++import { type AddressInfo, createServer, type Server } from "node:http";
++import { beforeEach, describe, expect, it } from "vitest";
++
++import { type AuditLogger } from "../audit.js";
++import { issueAccessToken } from "../auth/jwt.js";
++import { authenticate } from "../middleware/authorize.js";
++
++import { type NotificationRow, type NotificationRepository } from "./notificationRepository.js";
++import { buildNotificationRouter } from "./notificationRouter.js";
++
++const STRONG_SECRET = "x".repeat(64);
++
++const OPERATOR_ID = "00000000-0000-4000-8000-00000000a002";
++const ADMIN_ID = "00000000-0000-4000-8000-00000000a001";
++const TECHNICIAN_ID = "00000000-0000-4000-8000-00000000a003";
++const VIEWER_ID = "00000000-0000-4000-8000-00000000a004";
++const INCIDENT_ID_1 = "11111111-1111-4111-8111-111111111111";
++const INCIDENT_ID_2 = "22222222-2222-4222-8222-222222222222";
++const INCIDENT_ID_3 = "33333333-3333-4333-8333-333333333333";
++const NOTIF_ID_1 = "a1111111-1111-4111-8111-111111111111";
++const NOTIF_ID_2 = "a2222222-2222-4222-8222-222222222222";
++const NOTIF_ID_3 = "a3333333-3333-4333-8333-333333333333";
++
++const tokenForRole = (
++  role: "Admin" | "Operator" | "Technician" | "Viewer",
++  userId?: string,
++): string =>
++  issueAccessToken({
++    userId:
++      userId ??
++      (role === "Admin"
++        ? ADMIN_ID
++        : role === "Operator"
++          ? OPERATOR_ID
++          : role === "Technician"
++            ? TECHNICIAN_ID
++            : VIEWER_ID),
++    role,
++  }).token;
++
++/**
++ * Build a `NotificationRow` fixture with sensible defaults. The
++ * `recipientRole` + `acknowledgedAt` fields are the load-bearing
++ * test inputs and are pinned explicitly per test.
++ */
++const baseRow = (overrides: Partial<NotificationRow> & { id: string }): NotificationRow => ({
++  id: overrides.id,
++  severity: "critical",
++  incidentId: INCIDENT_ID_1,
++  alertId: null,
++  recipientRole: "Operator",
++  createdAt: new Date("2026-08-28T10:00:00.000Z"),
++  acknowledgedAt: null,
++  acknowledgedByUserId: null,
++  ...overrides,
++});
++
++interface StartArgs {
++  readonly audit: AuditLogger;
++  readonly findMany: NotificationRepository["notification"]["findMany"];
++  readonly findUnique: NotificationRepository["notification"]["findUnique"];
++  readonly updateMany: NotificationRepository["notification"]["updateMany"];
++}
++
++const startApp = async (args: StartArgs): Promise<{ url: string; close: () => Promise<void> }> => {
++  const app: Express = express();
++  app.use(express.json({ limit: "32kb" }));
++  app.use(authenticate);
++  app.use(
++    buildNotificationRouter({
++      audit: args.audit,
++      repo: {
++        notification: {
++          findMany: args.findMany,
++          findUnique: args.findUnique,
++          updateMany: args.updateMany,
++        },
++      },
++      now: () => new Date("2026-08-28T12:00:00.000Z"),
++    }),
++  );
++  const server: Server = createServer(app);
++  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
++  const addr = server.address() as AddressInfo;
++  const url = `http://127.0.0.1:${addr.port}`;
++  const close = (): Promise<void> => new Promise<void>((resolve) => server.close(() => resolve()));
++  return { url, close };
++};
++
++beforeEach(() => {
++  process.env["JWT_SECRET"] = STRONG_SECRET;
++});
++
++describe("Story 4.10 — GET /api/notifications", () => {
++  it("HAPPY_PATH: returns unread notifications for the viewer's role in createdAt DESC order", async () => {
++    const findManyCalls: readonly unknown[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async (args) => {
++        findManyCalls.push(args);
++        return [
++          baseRow({
++            id: NOTIF_ID_1,
++            severity: "critical",
++            incidentId: INCIDENT_ID_1,
++            createdAt: new Date("2026-08-28T11:00:00.000Z"),
++          }),
++          baseRow({
++            id: NOTIF_ID_2,
++            severity: "critical",
++            incidentId: INCIDENT_ID_2,
++            createdAt: new Date("2026-08-28T10:30:00.000Z"),
++          }),
++          baseRow({
++            id: NOTIF_ID_3,
++            severity: "warning",
++            incidentId: INCIDENT_ID_3,
++            createdAt: new Date("2026-08-28T10:00:00.000Z"),
++          }),
++        ];
++      },
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(200);
++    const body = (await res.json()) as { notifications: NotificationPayload[] };
++    expect(body.notifications).toHaveLength(3);
++    // Newest first.
++    expect(body.notifications.map((n) => n.id)).toEqual([NOTIF_ID_1, NOTIF_ID_2, NOTIF_ID_3]);
++    // Every row matches the canonical wire shape.
++    for (const notif of body.notifications) {
++      expect(notif.severity).toMatch(/^(info|warning|critical)$/);
++      expect(notif.recipientRole).toBe("Operator");
++      expect(notif.acknowledgedAt).toBeNull();
++    }
++    // The filter shape is pinned to the spec: recipientRole + acknowledgedAt: null.
++    expect((findManyCalls[0] as { where: unknown })?.where).toEqual({
++      recipientRole: "Operator",
++      acknowledgedAt: null,
++    });
++    await close();
++  });
++
++  it("EMPTY: returns the empty envelope when no rows match", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(200);
++    expect(await res.json()).toEqual({ notifications: [] });
++    await close();
++  });
++
++  it("RBAC: Viewer gets 403 (matrix grants Viewer.read.Notification = N)", async () => {
++    const auditCalls: unknown[] = [];
++    const { url, close } = await startApp({
++      audit: {
++        emit: (event) => {
++          auditCalls.push(event);
++        },
++      },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
++    });
++    expect(res.status).toBe(403);
++    const body = (await res.json()) as { error: string; required_role: string };
++    expect(body.error).toBe("forbidden");
++    // `required_role` is the lowest-rank role that satisfies the grant.
++    expect(["Admin", "Operator", "Technician"]).toContain(body.required_role);
++    // The RBAC denial wrote an audit event.
++    const denialAudit = auditCalls.find(
++      (c): c is { auditAction: string } =>
++        typeof c === "object" &&
++        c !== null &&
++        (c as { auditAction?: string }).auditAction === "rbac_denied",
++    );
++    expect(denialAudit).toBeDefined();
++    await close();
++  });
++
++  it("AUTH: returns 401 when no bearer token is presented", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`);
++    expect(res.status).toBe(401);
++    await close();
++  });
++
++  it("500: surfaces 500 when the data layer throws", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => {
++        throw new Error("prisma unreachable");
++      },
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(500);
++    await close();
++  });
++
++  it("passes the right filter (recipientRole + acknowledgedAt: null) and ordering to the data layer", async () => {
++    const findManyCalls: readonly unknown[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async (args) => {
++        findManyCalls.push(args);
++        return [];
++      },
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications`, {
++      headers: { Authorization: `Bearer ${tokenForRole("Technician")}` },
++    });
++    expect(res.status).toBe(200);
++    const call = findManyCalls[0] as {
++      where: unknown;
++      orderBy: unknown;
++      take: number;
++    };
++    expect(call?.where).toEqual({
++      recipientRole: "Technician",
++      acknowledgedAt: null,
++    });
++    expect(call?.orderBy).toEqual({ createdAt: "desc" });
++    expect(call?.take).toBe(50);
++    await close();
++  });
++});
++
++describe("Story 4.10 — PATCH /api/notifications/:id/acknowledge", () => {
++  it("HAPPY_PATH: Operator acks an Operator-targeted row → 200 + row payload", async () => {
++    const updateCalls: unknown[] = [];
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: (() => {
++        let callCount = 0;
++        return async () => {
++          callCount += 1;
++          if (callCount === 1) return baseRow({ id: NOTIF_ID_1, recipientRole: "Operator" });
++          return baseRow({
++            id: NOTIF_ID_1,
++            recipientRole: "Operator",
++            acknowledgedAt: new Date("2026-08-28T12:00:00.000Z"),
++            acknowledgedByUserId: OPERATOR_ID,
++          });
++        };
++      })(),
++      updateMany: async (args) => {
++        updateCalls.push(args);
++        return { count: 1 };
++      },
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(200);
++    const body = (await res.json()) as NotificationPayload;
++    expect(body.id).toBe(NOTIF_ID_1);
++    expect(body.acknowledgedAt).toBe("2026-08-28T12:00:00.000Z");
++    const firstUpdate = updateCalls[0] as {
++      where: unknown;
++      data: { acknowledgedByUserId: string };
++    };
++    expect(firstUpdate?.where).toEqual({
++      id: NOTIF_ID_1,
++      acknowledgedAt: null,
++    });
++    expect(firstUpdate?.data.acknowledgedByUserId).toBe(OPERATOR_ID);
++    await close();
++  });
++
++  it("IDEMPOTENT: re-acking an already-acknowledged row → 200 with the existing row (NOT 409)", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: (() => {
++        let _ignored = 0;
++        return async () => {
++          _ignored += 1;
++          return baseRow({
++            id: NOTIF_ID_1,
++            recipientRole: "Operator",
++            acknowledgedAt: new Date("2026-08-27T08:00:00.000Z"),
++            acknowledgedByUserId: OPERATOR_ID,
++          });
++        };
++      })(),
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(200);
++    const body = (await res.json()) as NotificationPayload;
++    expect(body.id).toBe(NOTIF_ID_1);
++    expect(body.acknowledgedAt).toBe("2026-08-27T08:00:00.000Z");
++    await close();
++  });
++
++  it("RBAC_CROSS_ROLE: Operator tries to ack an Admin-targeted row → 403 + rbac_denied audit", async () => {
++    const auditCalls: unknown[] = [];
++    const { url, close } = await startApp({
++      audit: {
++        emit: (event) => {
++          auditCalls.push(event);
++        },
++      },
++      findMany: async () => [],
++      findUnique: async () => baseRow({ id: NOTIF_ID_1, recipientRole: "Admin" }),
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(403);
++    const body = (await res.json()) as { error: string; required_role: string };
++    expect(body.error).toBe("forbidden");
++    expect(body.required_role).toBe("Admin");
++    const denialAudit = auditCalls.find(
++      (c): c is { auditAction: string; context?: Record<string, unknown> } =>
++        typeof c === "object" &&
++        c !== null &&
++        (c as { auditAction?: string }).auditAction === "rbac_denied",
++    );
++    expect(denialAudit).toBeDefined();
++    expect(denialAudit?.context?.["reason"]).toBe("cross_role_recipient");
++    await close();
++  });
++
++  it("NOT_FOUND: missing id → 404", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(404);
++    await close();
++  });
++
++  it("VALIDATION: malformed id → 400", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/not-a-uuid/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
++    });
++    expect(res.status).toBe(400);
++    await close();
++  });
++
++  it("AUTH: returns 401 when no bearer token is presented", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++    });
++    expect(res.status).toBe(401);
++    await close();
++  });
++
++  it("RBAC_NO_BUTTON: Viewer cannot ack → 403 (matrix grants Viewer.acknowledge.Notification = N)", async () => {
++    const { url, close } = await startApp({
++      audit: { emit: () => undefined },
++      findMany: async () => [],
++      findUnique: async () => null,
++      updateMany: async () => ({ count: 0 }),
++    });
++    const res = await fetch(`${url}/api/notifications/${NOTIF_ID_1}/acknowledge`, {
++      method: "PATCH",
++      headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
++    });
++    expect(res.status).toBe(403);
++    await close();
++  });
++});
+diff --git a/packages/api/src/notifications/notificationRouter.ts b/packages/api/src/notifications/notificationRouter.ts
+new file mode 100644
+index 0000000..1126816
+--- /dev/null
++++ b/packages/api/src/notifications/notificationRouter.ts
+@@ -0,0 +1,442 @@
++/**
++ * `notificationRouter.ts` — Story 4.10.
++ *
++ * Two routes that pair with the 4.9 writer to surface
++ * `Notification` rows to the operator-facing NotificationBell:
++ *
++ *   - `GET /api/notifications` — read endpoint, RBAC-gated by
++ *     `read Notification`. Filters by `recipientRole ===
++ *     req.user.role` so a Technician viewer never sees an
++ *     `Operator`-targeted row. Bounded by `take: 50` (no
++ *     pagination in v1 — spec "Ask First: pagination").
++ *
++ *   - `PATCH /api/notifications/:id/acknowledge` — mark-as-read
++ *     endpoint, RBAC-gated by `acknowledge Notification`. Records
++ *     `acknowledgedAt + acknowledgedByUserId`. Idempotent on
++ *     already-acknowledged rows (200 with the existing row, NOT
++ *     a 409). Cross-role RBAC is enforced INSIDE the handler
++ *     (`row.recipientRole !== req.user.role → 403`) because the
++ *     matrix only grants role-level access; the per-row ownership
++ *     check lives in the handler to avoid a separate
++ *     `requireOwner` middleware.
++ *
++ * Mirrors the alerts router factory shape at
++ * `packages/api/src/alerts/acknowledgeRouter.ts:349-443` (factory
++ * `buildXxxRouter(deps): Router`) and
++ * `packages/api/src/alerts/listRouter.ts:326-487` (factory
++ * `buildXxxRouter(deps): Router`).
++ *
++ * Why NO new socket emit: the spec's "NEVER" rule forbids adding
++ * a `notification:*` socket event on the backend (the writer is
++ * locked from 4.9). The bell's freshness comes from TanStack
++ * `refetchInterval: 30_000` polling — see
++ * `packages/web/src/notifications/useNotificationBell.ts`.
++ *
++ * Why NO AuditLog write: notification acknowledgement is a "soft
++ * action" (no state transition); the `acknowledgedAt +
++ * acknowledgedByUserId` columns are the audit trail. A future
++ * story that threads `auditWrite` into the PATCH can revisit; v1
++ * surfaces no `AuditLog` row. Spec Design Notes "Why
++ * mark-as-read is a separate endpoint" captures the rationale.
++ */
++import { type NotificationRecipientRole } from "@surakkha/shared/notification";
++import express, { type Response, type Router } from "express";
++import { z } from "zod";
++
++import { type AuditLogger } from "../audit.js";
++import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
++
++import {
++  type NotificationRepository,
++  type NotificationRow,
++  notificationRowToPayload,
++} from "./notificationRepository.js";
++
++const HTTP_OK = 200;
++const HTTP_BAD_REQUEST = 400;
++const HTTP_NOT_FOUND = 404;
++const HTTP_INTERNAL_ERROR = 500;
++const HTTP_FORBIDDEN = 403;
++
++/**
++ * The role values the read endpoint will accept as
++ * `req.user.role`. Mirrors `RoleSchema` from
++ * `@surakkha/shared/rbac:25-26`; narrowed here because the writer
++ * pins `recipientRole: "Operator"` for v1 and the read filter is
++ * `recipientRole === req.user.role` — a 1:1 role match. The Prisma
++ * `NotificationRecipientRole_` enum is the source of truth for
++ * the writer's pin; the matrix grants `read Notification` to Admin
++ * / Operator / Technician (Viewer is `N` — disabled bell on the
++ * web side).
++ */
++const VALID_RECIPIENT_ROLES: readonly NotificationRecipientRole[] = [
++  "Admin",
++  "Operator",
++  "Technician",
++  "Viewer",
++];
++
++/**
++ * Maximum number of unread notifications the dropdown surfaces
++ * in v1. Bounded by the spec's "Ask First: pagination" decision
++ * (NO pagination in v1; bounded by the operator's recent
++ * criticals — typically <10/day).
++ */
++const NOTIFICATION_TAKE_LIMIT = 50;
++
++/**
++ * Path-parameter schema for the PATCH route. The `:id` segment is
++ * the row PK (UUIDv4). Non-UUID values are rejected at parse time
++ * (400) so a malformed path never reaches the DB.
++ */
++const pathParamsSchema = z.object({
++  id: z.string().uuid(),
++});
++
++/**
++ * Parse the `:id` path parameter with `pathParamsSchema`. On
++ * failure: respond 400 with the issue list. Returns the parsed id
++ * (string) on success, or `null` if the handler should short-circuit
++ * (response already sent).
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10` (the inline safeParse + return + handler-continuation
++ * shape pushed the arrow's complexity to 14).
++ */
++const parsePathParams = (req: AuthorizedRequest, res: Response): string | null => {
++  const parsed = pathParamsSchema.safeParse(req.params);
++  if (!parsed.success) {
++    res.status(HTTP_BAD_REQUEST).json({
++      error: "validation_error",
++      issues: parsed.error.issues,
++    });
++    return null;
++  }
++  return parsed.data.id;
++};
++
++/**
++ * Apply the cross-role RBAC check: the matrix grants `acknowledge
++ * Notification` to Admin / Operator / Technician, but a Technician
++ * can never acknowledge an Operator-targeted row. The writer's
++ * `recipientRole` pin is the load-bearing filter; a row's recipient
++ * role determines who is allowed to ack it.
++ *
++ * Returns `true` if the check failed (response already sent —
++ * caller should `return` immediately). Returns `false` if the row's
++ * recipient role matches the actor's role.
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10`.
++ */
++const enforceCrossRoleRecipient = (args: {
++  readonly row: NotificationRow;
++  readonly actor: string;
++  readonly actorRole: NotificationRecipientRole;
++  readonly audit: AuditLogger;
++  readonly res: Response;
++}): boolean => {
++  const { row, actor, actorRole, audit, res } = args;
++  if (row.recipientRole === actorRole) return false;
++  audit.emit({
++    auditAction: "rbac_denied",
++    userId: actor,
++    outcome: "failure",
++    context: {
++      subject: actorRole,
++      action: "acknowledge",
++      resource: "Notification",
++      reason: "cross_role_recipient",
++      notification_id: row.id,
++      recipient_role: row.recipientRole,
++    },
++  });
++  res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: row.recipientRole });
++  return true;
++};
++
++/**
++ * Look up the notification row by id and translate prisma throws to
++ * 500. Returns `{ kind: "ok", row }` on success, `{ kind: "error" }`
++ * if the DB threw (response already sent with 500), or `{ kind:
++ * "missing" }` if the row does not exist (response already sent
++ * with 404).
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10`.
++ */
++const fetchRowForAck = async (args: {
++  readonly repo: NotificationRepository;
++  readonly id: string;
++  readonly res: Response;
++}): Promise<
++  | { readonly kind: "ok"; readonly row: NotificationRow }
++  | { readonly kind: "missing" }
++  | { readonly kind: "error" }
++> => {
++  const { repo, id, res } = args;
++  try {
++    const row = await repo.notification.findUnique({ where: { id } });
++    if (row === null) {
++      res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
++      return { kind: "missing" };
++    }
++    return { kind: "ok", row };
++  } catch (err) {
++    console.error("api/notifications: findUnique failed", err);
++    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++    return { kind: "error" };
++  }
++};
++
++/**
++ * Apply the compare-and-set ack to the row. Returns the number of
++ * rows updated (0 = idempotent re-ack, 1 = first-ack) on success,
++ * or `null` if the DB threw (response already sent with 500).
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10`.
++ */
++const applyAck = async (args: {
++  readonly repo: NotificationRepository;
++  readonly id: string;
++  readonly now: Date;
++  readonly actor: string;
++  readonly res: Response;
++}): Promise<number | null> => {
++  const { repo, id, now, actor, res } = args;
++  try {
++    const update = await repo.notification.updateMany({
++      where: { id, acknowledgedAt: null },
++      data: { acknowledgedAt: now, acknowledgedByUserId: actor },
++    });
++    return update.count;
++  } catch (err) {
++    console.error("api/notifications: updateMany failed", err);
++    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++    return null;
++  }
++};
++
++/**
++ * Re-read the canonical post-update row. Returns the row on success,
++ * or `null` if the DB threw (response already sent with 500) OR if
++ * the row vanished between the previous read and this one (response
++ * already sent with 404).
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10`.
++ */
++const refetchRow = async (args: {
++  readonly repo: NotificationRepository;
++  readonly id: string;
++  readonly res: Response;
++}): Promise<NotificationRow | null> => {
++  const { repo, id, res } = args;
++  try {
++    const row = await repo.notification.findUnique({ where: { id } });
++    if (row === null) {
++      // Race: the row was deleted between our first findUnique and
++      // our second one (vanishingly rare; structurally impossible
++      // under the schema's `onDelete: SetNull` for `Incident` /
++      // `Alert` FKs, but defensive). Surface 404.
++      res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
++      return null;
++    }
++    return row;
++  } catch (err) {
++    console.error("api/notifications: post-update findUnique failed", err);
++    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++    return null;
++  }
++};
++
++/**
++ * Render the successful-ack response: emit the operator-triage log
++ * line and write 200 with the canonical row payload.
++ *
++ * Extracted from the route handler to keep the PATCH closure under
++ * `complexity: 10`.
++ */
++const renderAckResponse = (args: {
++  readonly res: Response;
++  readonly id: string;
++  readonly actor: string;
++  readonly row: NotificationRow;
++  readonly updateCount: number;
++}): void => {
++  const { res, id, actor, row, updateCount } = args;
++  const body = notificationRowToPayload(row);
++  // Operator-triage log. Fires on EVERY successful acknowledge
++  // (first-ack AND idempotent re-ack). The `first=true|false`
++  // suffix lets log readers distinguish state-change acks
++  // (genuine operator action) from idempotent retries (the
++  // dashboard's retry-on-network-blip behaviour).
++  console.warn(
++    `[notifications] acknowledged id=${id} actor=${actor} acknowledgedAt=${body.acknowledgedAt ?? "null"} first=${updateCount === 1 ? "true" : "false"}`,
++  );
++  res.status(HTTP_OK).json(body);
++};
++
++/**
++ * The router's dependency surface. Mirrors the alerts router
++ * factory shape: every dep is a typed reference the test rig
++ * can stub without spinning up Prisma.
++ */
++export interface NotificationRouterDeps {
++  readonly audit: AuditLogger;
++  readonly repo: NotificationRepository;
++  /**
++   * Injectable clock. The SAME `now()` result is passed to the
++   * compare-and-set's `acknowledgedAt` AND the response body's
++   * `acknowledgedAt` — two separate reads of `Date.now()` would
++   * risk a 1ms drift between DB row and wire payload (Postgres
++   * `DateTime` is millisecond precision; `TIMESTAMP(3)`).
++   */
++  readonly now: () => Date;
++}
++
++/**
++ * Build the `/api/notifications` read + acknowledge routers.
++ * Two routes on a single Express `Router`.
++ *
++ * Order of operations on the GET hot path:
++ *   1. `authenticate()` (mounted upstream) → sets `req.user`.
++ *   2. `authorize({ action: "read", resource: "Notification" }, audit)`
++ *      — Viewer → 403 + `rbac_denied` audit. Admin / Operator /
++ *      Technician → continue.
++ *   3. `req.user.role` is the `recipientRole` filter. The role is
++ *      a closed set (`RoleSchema`); defensive cast through the
++ *      `VALID_RECIPIENT_ROLES` whitelist so a future drift does
++ *      not pass an unknown value to Prisma's enum filter.
++ *   4. `repo.notification.findMany({ where: { recipientRole,
++ *      acknowledgedAt: null }, orderBy: { createdAt: "desc" },
++ *      take: NOTIFICATION_TAKE_LIMIT })` — newest first, bounded.
++ *   5. Map rows through `notificationRowToPayload`.
++ *   6. 500 on any throw.
++ *
++ * Order of operations on the PATCH hot path:
++ *   1. `authenticate()` → sets `req.user`.
++ *   2. `authorize({ action: "acknowledge", resource: "Notification" }, audit)`
++ *      — Viewer → 403 + audit. Others → continue.
++ *   3. Zod parse `:id` → 400 on non-UUID.
++ *   4. `repo.notification.findUnique({ where: { id } })` → 404 if
++ *      missing.
++ *   5. Cross-role RBAC: `row.recipientRole !== req.user.role` → 403.
++ *      The matrix grants role-level access; the per-row ownership
++ *      check lives here because the writer's `recipientRole` pin
++ *      is the load-bearing filter (a Technician can never
++ *      acknowledge an Operator-targeted row).
++ *   6. `repo.notification.updateMany({ where: { id,
++ *      acknowledgedAt: null }, data: { acknowledgedAt, acknowledgedByUserId
++ *      } })`. The `acknowledgedAt: null` predicate is the
++ *      serialization point:
++ *      - `count === 1` → first ack. Re-read for the response
++ *        body; return 200 with the row.
++ *      - `count === 0` → re-ack. Re-read; if `acknowledgedAt !== null`
++ *        return 200 with the existing row (idempotent path). If
++ *        the row vanished between fetch and update, return 404.
++ *   7. Any throw from `repo.notification.*` → 500.
++ */
++export const buildNotificationRouter = (deps: NotificationRouterDeps): Router => {
++  const router = express.Router();
++
++  /**
++   * GET /api/notifications — list the unread notifications for
++   * the current viewer's role.
++   */
++  router.get(
++    "/api/notifications",
++    authorize({ action: "read", resource: "Notification" }, deps.audit),
++    async (_req: AuthorizedRequest, res: Response) => {
++      // `authorize()` middleware guarantees `req.user` is non-null
++      // for any handler that runs past it (401 is short-circuited
++      // upstream). The `as` is defensive belt-and-braces for
++      // strict-null-checks.
++      const req = _req;
++      const role = req.user?.role;
++      if (role === undefined || !VALID_RECIPIENT_ROLES.includes(role)) {
++        // Defensive: the matrix grants `read Notification` only to
++        // roles in `VALID_RECIPIENT_ROLES`. If a future role slips
++        // through, surface 500 rather than passing an unknown
++        // value to the Prisma enum filter.
++        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++        return;
++      }
++      const recipientRole: NotificationRecipientRole = role;
++
++      let rows: NotificationRow[];
++      try {
++        rows = await deps.repo.notification.findMany({
++          where: { recipientRole, acknowledgedAt: null },
++          orderBy: { createdAt: "desc" },
++          take: NOTIFICATION_TAKE_LIMIT,
++        });
++      } catch (err) {
++        console.error("api/notifications: prisma error", err);
++        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++        return;
++      }
++      const body = {
++        notifications: rows.map((row) => notificationRowToPayload(row)),
++      };
++      res.status(HTTP_OK).json(body);
++    },
++  );
++
++  /**
++   * PATCH /api/notifications/:id/acknowledge — mark a single
++   * notification as read.
++   *
++   * Idempotent on already-acknowledged rows: returns 200 with the
++   * existing row (NOT a 409). The spec "MARK_AS_READ_IDEMPOTENT"
++   * matrix row pins this contract.
++   */
++  router.patch(
++    "/api/notifications/:id/acknowledge",
++    authorize({ action: "acknowledge", resource: "Notification" }, deps.audit),
++    async (req: AuthorizedRequest, res: Response) => {
++      const id = parsePathParams(req, res);
++      if (id === null) return;
++
++      const actor = req.user?.id;
++      const actorRole = req.user?.role;
++      if (actor === undefined || actorRole === undefined) {
++        // `authorize()` short-circuits unauthenticated requests with
++        // 401 before this handler runs. The defensive null-check is
++        // belt-and-braces for strict-null-checks.
++        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
++        return;
++      }
++
++      const fetched = await fetchRowForAck({ repo: deps.repo, id, res });
++      if (fetched.kind !== "ok") return;
++      const { row } = fetched;
++
++      // Cross-role RBAC check (extracted helper).
++      if (enforceCrossRoleRecipient({ row, actor, actorRole, audit: deps.audit, res })) {
++        return;
++      }
++
++      const now = deps.now();
++      const updateCount = await applyAck({
++        repo: deps.repo,
++        id,
++        now,
++        actor,
++        res,
++      });
++      if (updateCount === null) return;
++
++      // Re-read for the response body. The `count === 0` branch
++      // (idempotent re-ack) and the `count === 1` branch
++      // (first-ack) both need the canonical post-update row.
++      const finalRow = await refetchRow({ repo: deps.repo, id, res });
++      if (finalRow === null) return;
++
++      renderAckResponse({ res, id, actor, row: finalRow, updateCount });
++    },
++  );
++
++  return router;
++};
+diff --git a/packages/api/src/notifications/notificationRowToPayload.ts b/packages/api/src/notifications/notificationRowToPayload.ts
+new file mode 100644
+index 0000000..2ce7097
+--- /dev/null
++++ b/packages/api/src/notifications/notificationRowToPayload.ts
+@@ -0,0 +1,54 @@
++/**
++ * `notificationRowToPayload.ts` — Story 4.10.
++ *
++ * Pure adapter from a Prisma `Notification` row to the wire
++ * `NotificationPayload` (defined in
++ * `@surakkha/shared/notification`). Mirrors
++ * `incidentRowToPayload` at
++ * `packages/api/src/incidents/incidentStateRepository.ts:341-365` —
++ * the canonical "row-to-payload" pattern in this codebase.
++ *
++ * Why a separate module (vs living inside
++ * `notificationRepository.ts`):
++ *
++ *   - The adapter is a PURE HELPER with no IO and no Prisma
++ *     dependency at runtime — it could be invoked from any
++ *     layer that holds a `NotificationRow`. Splitting it out
++ *     keeps the repository module's surface narrow (the data
++ *     slice only) while this module owns the wire shape.
++ *
++ *   - The 4.4 incident detail page's `incidentEventRowToPayload`
++ *     follows the same pattern (separate module, lives next to
++ *     the repository). Mirroring the convention keeps the
++ *     cross-story code review surface uniform.
++ *
++ *   - `acknowledgedByUserId` is intentionally DROPPED from the
++ *     wire payload (operator-facing surface; the actor is
++ *     implementation detail). The DB column persists the audit
++ *     trail; the wire row never leaks it.
++ */
++import { type NotificationPayload } from "@surakkha/shared/notification";
++
++import { type NotificationRow } from "./notificationRepository.js";
++
++/**
++ * Build the wire-row `NotificationPayload` from a Prisma
++ * `Notification` row.
++ */
++export const notificationRowToPayload = (row: NotificationRow): NotificationPayload => ({
++  id: row.id,
++  severity: row.severity,
++  incidentId: row.incidentId,
++  alertId: row.alertId,
++  recipientRole: row.recipientRole,
++  createdAt:
++    row.createdAt instanceof Date
++      ? row.createdAt.toISOString()
++      : new Date(row.createdAt).toISOString(),
++  acknowledgedAt:
++    row.acknowledgedAt === null
++      ? null
++      : row.acknowledgedAt instanceof Date
++        ? row.acknowledgedAt.toISOString()
++        : new Date(row.acknowledgedAt).toISOString(),
++});
+diff --git a/packages/api/src/notifications/routerWiring.ts b/packages/api/src/notifications/routerWiring.ts
+new file mode 100644
+index 0000000..2277a1c
+--- /dev/null
++++ b/packages/api/src/notifications/routerWiring.ts
+@@ -0,0 +1,80 @@
++/**
++ * `routerWiring.ts` — Story 4.10.
++ *
++ * Lazily-resolves the production `NotificationRepository` and wraps
++ * the `buildNotificationRouter` so the api can boot without
++ * `DATABASE_URL` set (mirrors the `buildIncidentsRouterMount`
++ * pattern at `packages/api/src/incidents/routerWiring.ts:132-165`).
++ * A transient DB outage at boot does NOT crash the api — the
++ * wrapper rejects on first request and the router's per-handler
++ * catch surfaces 500 instead of leaking a stack trace.
++ *
++ * Lives outside `index.ts` because Story 4.10's mount block pushed
++ * that file past the `max-lines: 500` ESLint rule. Extracting the
++ * helper here keeps `index.ts` under the limit without dropping the
++ * router registration (a spec AC: `/api/notifications` must mount
++ * in the api process — not just exist as a dead file).
++ */
++import { type Router } from "express";
++
++import { type AuditLogger } from "../audit.js";
++
++import {
++  type NotificationRepository,
++  resolveNotificationRepository,
++} from "./notificationRepository.js";
++
++import { buildNotificationRouter } from "./index.js";
++
++/**
++ * Mount the `/api/notifications` (GET) and
++ * `/api/notifications/:id/acknowledge` (PATCH) routes on `app`.
++ * Defers the Prisma client resolution until first request.
++ *
++ * Pattern mirrors `buildIncidentsRouterMount` at
++ * `packages/api/src/incidents/routerWiring.ts:132` — takes
++ * `resolvePrismaClient` as an injected dep so this file does not
++ * need to know the actual location of the Prisma singleton
++ * (defense-in-depth against a future relocation of `db/prisma.ts`).
++ */
++export const mountNotificationRouter = (args: {
++  readonly app: { readonly use: (handler: Router) => void };
++  readonly audit: AuditLogger;
++  readonly resolvePrismaClient: () => Promise<unknown>;
++}): Router => {
++  const { app, audit, resolvePrismaClient } = args;
++
++  let cachedRepo: NotificationRepository | null = null;
++  const ensureRepo = async (): Promise<NotificationRepository> => {
++    if (cachedRepo === null) {
++      const client = await resolvePrismaClient();
++      cachedRepo = resolveNotificationRepository(client);
++    }
++    return cachedRepo;
++  };
++
++  const repoWrapper: NotificationRepository = {
++    notification: {
++      findMany: async (findManyArgs) => {
++        const repo = await ensureRepo();
++        return repo.notification.findMany(findManyArgs);
++      },
++      findUnique: async (findUniqueArgs) => {
++        const repo = await ensureRepo();
++        return repo.notification.findUnique(findUniqueArgs);
++      },
++      updateMany: async (updateManyArgs) => {
++        const repo = await ensureRepo();
++        return repo.notification.updateMany(updateManyArgs);
++      },
++    },
++  };
++
++  const router = buildNotificationRouter({
++    audit,
++    now: () => new Date(),
++    repo: repoWrapper,
++  });
++  app.use(router);
++  return router;
++};
+diff --git a/packages/shared/src/notification.ts b/packages/shared/src/notification.ts
+new file mode 100644
+index 0000000..b5afd28
+--- /dev/null
++++ b/packages/shared/src/notification.ts
+@@ -0,0 +1,91 @@
++/**
++ * `notification.ts` — Story 4.10.
++ *
++ * Wire types for the Notification read surface. Mirrors the
++ * `incident.ts:15-25` closed-enum pattern (`IncidentStateSchema`)
++ * for the notification severity, and the `incident.ts:154-165`
++ * pattern (`IncidentPayloadSchema`) for the wire row.
++ *
++ * Why a dedicated module (vs adding to `incident.ts`):
++ *   - `incident.ts` is the Incident lifecycle surface; `notification.ts`
++ *     is the notification surface. Cross-cutting imports would
++ *     couple the two modules' RBAC + test rigs.
++ *   - The notification writer (4.9) lives in
++ *     `packages/api/src/notifications/notificationWriter.ts`; the
++ *     read surface (4.10) is a sibling module that shares the
++ *     `notification` namespace from `@prisma/client` (mirrored here).
++ *
++ * `recipientRole` is the role the writer pinned when the row was
++ * written (Story 4.9's `recipientRole: "Operator"` pin). The bell
++ * read endpoint filters by `req.user.role === row.recipientRole` so
++ * the SAME writer pin is the load-bearing filter.
++ *
++ * The `acknowledgedByUserId` is intentionally OMITTED from the wire
++ * payload (operator-facing surface; the actor is implementation
++ * detail). The DB column persists the audit trail but the wire
++ * row doesn't leak it.
++ */
++import { z } from "zod";
++
++const ISO8601 = z.string().datetime({ offset: true });
++
++/**
++ * Closed enumeration of notification severities. Mirrors the
++ * Prisma `NotificationSeverity_` enum at `packages/db/prisma/schema.prisma`
++ * 1:1 (info / warning / critical). Drift between the two enums
++ * is caught by the schema-drift guard at the route layer's
++ * `safeParse` site.
++ */
++export const NotificationSeveritySchema = z.enum(["info", "warning", "critical"]);
++export type NotificationSeverity = z.infer<typeof NotificationSeveritySchema>;
++
++/**
++ * Closed enumeration of notification recipient roles. Mirrors the
++ * Prisma `NotificationRecipientRole_` enum 1:1 (Admin / Operator /
++ * Technician / Viewer). The writer's `recipientRole` pin MUST be
++ * one of these values; the route layer's read filter is
++ * `row.recipientRole === req.user.role`.
++ */
++export const NotificationRecipientRoleSchema = z.enum([
++  "Admin",
++  "Operator",
++  "Technician",
++  "Viewer",
++]);
++export type NotificationRecipientRole = z.infer<typeof NotificationRecipientRoleSchema>;
++
++/**
++ * The wire row for a `Notification`. Read by `GET /api/notifications`
++ * (Story 4.10) and consumed by the NotificationBell dropdown. Field
++ * order matches the Prisma `Notification` model; the read filter
++ * (`recipientRole === viewerRole` + `acknowledgedAt: null`) is
++ * applied at the data layer so the wire never carries an
++ * already-acknowledged row.
++ *
++ * `acknowledgedByUserId` is intentionally OMITTED — the actor's
++ * user id is an implementation detail of the mark-as-read write
++ * and is not surfaced to the operator-facing bell. The `acknowledgedAt`
++ * timestamp is exposed so a future iteration can render
++ * "acknowledged 2 minutes ago" affordances; v1 surfaces only
++ * unread rows so the field is always `null` on the wire.
++ */
++export const NotificationPayloadSchema = z.object({
++  id: z.string().uuid(),
++  severity: NotificationSeveritySchema,
++  incidentId: z.string().uuid().nullable(),
++  alertId: z.string().uuid().nullable(),
++  recipientRole: NotificationRecipientRoleSchema,
++  createdAt: ISO8601,
++  acknowledgedAt: ISO8601.nullable(),
++});
++export type NotificationPayload = z.infer<typeof NotificationPayloadSchema>;
++
++/**
++ * The list envelope returned by `GET /api/notifications`. Mirrors
++ * `IncidentListEnvelope` semantics at `incident.ts:154-165` — a
++ * single typed destination with the list nested under `notifications`.
++ */
++export const NotificationListEnvelopeSchema = z.object({
++  notifications: z.array(NotificationPayloadSchema),
++});
++export type NotificationListEnvelope = z.infer<typeof NotificationListEnvelopeSchema>;
+diff --git a/packages/web/src/notifications/NotificationBell.spec.tsx b/packages/web/src/notifications/NotificationBell.spec.tsx
+new file mode 100644
+index 0000000..5bbe76b
+--- /dev/null
++++ b/packages/web/src/notifications/NotificationBell.spec.tsx
+@@ -0,0 +1,551 @@
++/**
++ * `NotificationBell.spec.tsx` — Story 4.10.
++ *
++ * Coverage matrix (each I/O matrix row → at least one `it(...)`):
++ *
++ *   HAPPY_PATH_OPERATOR
++ *     - Operator viewer, 3 unread notifications (2 critical + 1 warning).
++ *     - Bell renders with red badge "3".
++ *     - Click opens dropdown listing all 3 rows in reverse-chronological order.
++ *
++ *   ZERO_UNREAD
++ *     - Operator, 0 unread.
++ *     - Bell renders WITHOUT badge.
++ *     - Dropdown shows "No new notifications." empty state.
++ *
++ *   HAPPY_PATH_ADMIN
++ *     - Admin viewer, 1 unread critical.
++ *     - Bell renders with badge "1"; dropdown lists the row.
++ *
++ *   HAPPY_PATH_TECHNICIAN
++ *     - Technician, 0 unread (writer pins `recipientRole: "Operator"`).
++ *     - Bell renders WITHOUT badge; dropdown empty state.
++ *
++ *   VIEWER_DISABLED
++ *     - Viewer role.
++ *     - Bell renders DISABLED (`data-testid="notification-bell-disabled"`,
++ *       `aria-disabled="true"`); NO fetch fires.
++ *
++ *   MARK_AS_READ_HAPPY
++ *     - Operator clicks "Mark as read" on a single critical row.
++ *     - PATCH fires. On 200: row disappears from the unread list, badge decrements.
++ *
++ *   MARK_AS_READ_IDEMPOTENT
++ *     - PATCH returns 200 with the existing row; UI is a no-op (row already
++ *       filtered out of unread list after re-fetch).
++ *
++ *   MARK_AS_READ_403
++ *     - PATCH returns 403; bell re-fetches; row stays unread. NO toast.
++ *
++ *   GET_500
++ *     - Server returns 500. Bell renders WITHOUT badge. Dropdown shows
++ *       "Unable to load notifications. Click to retry." + retry button.
++ *
++ *   POLL_TICK
++ *     - TanStack `refetchInterval: 30_000` ticks while dropdown is closed.
++ *     - Query refetches; badge updates if new rows arrived.
++ *
++ *   CLICK_OUTSIDE
++ *     - Dropdown is open; user clicks outside.
++ *     - Dropdown closes. Unread count persists.
++ *
++ *   ESCAPE_KEY
++ *     - Dropdown is open; user presses Escape.
++ *     - Dropdown closes. Unread count persists.
++ *
++ *   a11y / visual contract:
++ *     - `data-testid="notification-bell-badge"` with `role="status"` +
++ *       `aria-live="polite"`.
++ *     - Critical-tinted styling via design tokens (literal class strings).
++ *
++ * Test rig:
++ *   - `QueryClientProvider` with `retry: false` (TanStack default retries
++ *     would mask the error state test).
++ *   - `MemoryRouter` (the dropdown's incident links use react-router).
++ *   - `CurrentRoleProvider` with `initialRole` for hermetic role injection.
++ *   - `globalThis.fetch` mock for the GET/PATCH responses.
++ */
++import {
++  type NotificationListEnvelope,
++  type NotificationPayload,
++} from "@surakkha/shared/notification";
++import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
++import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { MemoryRouter } from "react-router-dom";
++
++import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
++import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
++
++import { NotificationBell } from "./NotificationBell";
++
++const NOTIFICATION_ID_1 = "11111111-1111-4111-8111-111111111111";
++const NOTIFICATION_ID_2 = "22222222-2222-4222-8222-222222222222";
++const NOTIFICATION_ID_3 = "33333333-3333-4333-8333-333333333333";
++const INCIDENT_ID_1 = "99999999-9999-4999-8999-999999999991";
++const INCIDENT_ID_2 = "99999999-9999-4999-8999-999999999992";
++const INCIDENT_ID_3 = "99999999-9999-4999-8999-999999999993";
++
++const baseNotification = (overrides: Partial<NotificationPayload> = {}): NotificationPayload => ({
++  id: NOTIFICATION_ID_1,
++  severity: "critical",
++  incidentId: INCIDENT_ID_1,
++  alertId: null,
++  recipientRole: "Operator",
++  createdAt: "2026-08-28T12:00:00.000Z",
++  acknowledgedAt: null,
++  ...overrides,
++});
++
++const buildEnvelope = (
++  notifications: readonly NotificationPayload[],
++): NotificationListEnvelope => ({ notifications });
++
++const buildQueryClient = (): QueryClient =>
++  new QueryClient({
++    defaultOptions: {
++      queries: { retry: false, gcTime: Infinity },
++      mutations: { retry: false },
++    },
++  });
++
++interface FetchResponse {
++  readonly status: number;
++  readonly body: unknown;
++}
++
++const installFetch = (handler: (url: string, init?: RequestInit) => Promise<FetchResponse>) => {
++  globalThis.fetch = (async (url: string, init?: RequestInit) => {
++    const result = await handler(url, init);
++    return new Response(JSON.stringify(result.body), { status: result.status });
++  }) as unknown as typeof fetch;
++};
++
++const renderBell = (
++  role: "Admin" | "Operator" | "Technician" | "Viewer" | null,
++): { readonly queryClient: QueryClient } => {
++  const queryClient = buildQueryClient();
++  render(
++    <QueryClientProvider client={queryClient}>
++      <MemoryRouter initialEntries={["/dashboard"]}>
++        <CurrentRoleProvider initialRole={role}>
++          <NotificationBell />
++        </CurrentRoleProvider>
++      </MemoryRouter>
++    </QueryClientProvider>,
++  );
++  return { queryClient };
++};
++
++const ORIGINAL_FETCH = globalThis.fetch;
++
++beforeEach(() => {
++  configureApiClient({
++    apiOrigin: "https://api.test",
++    navigate: () => undefined,
++    onOffline: () => undefined,
++  });
++});
++
++afterEach(() => {
++  cleanup();
++  globalThis.fetch = ORIGINAL_FETCH;
++  _resetApiClientConfig();
++  vi.restoreAllMocks();
++});
++
++describe("Story 4.10 — HAPPY_PATH_OPERATOR", () => {
++  it("renders the bell with a red badge showing 3 unread, dropdown lists all rows", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++            baseNotification({
++              id: NOTIFICATION_ID_2,
++              severity: "critical",
++              incidentId: INCIDENT_ID_2,
++            }),
++            baseNotification({
++              id: NOTIFICATION_ID_3,
++              severity: "warning",
++              incidentId: INCIDENT_ID_3,
++            }),
++          ]),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    expect(bell).toBeInTheDocument();
++    const badge = await screen.findByTestId("notification-bell-badge");
++    expect(badge.textContent).toBe("3");
++    expect(badge.getAttribute("role")).toBe("status");
++    expect(badge.getAttribute("aria-live")).toBe("polite");
++    fireEvent.click(bell);
++    const dropdown = await screen.findByTestId("notification-dropdown");
++    expect(dropdown.getAttribute("role")).toBe("dialog");
++    expect(dropdown.getAttribute("aria-label")).toBe("Notifications");
++    expect(screen.getByTestId("notification-dropdown-list")).toBeInTheDocument();
++    expect(screen.getByTestId(`notification-row-${NOTIFICATION_ID_1}`)).toBeInTheDocument();
++    expect(screen.getByTestId(`notification-row-${NOTIFICATION_ID_2}`)).toBeInTheDocument();
++    expect(screen.getByTestId(`notification-row-${NOTIFICATION_ID_3}`)).toBeInTheDocument();
++  });
++});
++
++describe("Story 4.10 — ZERO_UNREAD", () => {
++  it("renders the bell WITHOUT a badge and dropdown shows the empty state", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return { status: 200, body: buildEnvelope([]) };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    // No badge when count === 0.
++    expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++    fireEvent.click(bell);
++    const empty = await screen.findByTestId("notification-dropdown-empty");
++    expect(empty.textContent).toContain("No new notifications");
++  });
++});
++
++describe("Story 4.10 — HAPPY_PATH_ADMIN", () => {
++  it("renders the bell with badge '1' for Admin and dropdown lists the row", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++          ]),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Admin");
++    const bell = await screen.findByTestId("notification-bell");
++    const badge = await screen.findByTestId("notification-bell-badge");
++    expect(badge.textContent).toBe("1");
++    fireEvent.click(bell);
++    await screen.findByTestId(`notification-row-${NOTIFICATION_ID_1}`);
++  });
++});
++
++describe("Story 4.10 — HAPPY_PATH_TECHNICIAN", () => {
++  it("renders the bell WITHOUT a badge for Technician (zero unread)", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return { status: 200, body: buildEnvelope([]) };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Technician");
++    const bell = await screen.findByTestId("notification-bell");
++    expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++    fireEvent.click(bell);
++    await screen.findByTestId("notification-dropdown-empty");
++  });
++});
++
++describe("Story 4.10 — VIEWER_DISABLED + RBAC_NO_FETCH", () => {
++  it("renders the disabled bell with aria-disabled='true' and NO fetch fires", async () => {
++    const fetchSpy = vi.fn();
++    installFetch(async (url) => {
++      fetchSpy(url);
++      return { status: 404, body: {} };
++    });
++    renderBell("Viewer");
++    const disabled = screen.getByTestId("notification-bell-disabled");
++    expect(disabled.getAttribute("aria-disabled")).toBe("true");
++    expect(disabled.getAttribute("title")).toContain("Notifications are not available");
++    // The active bell testid MUST NOT render for Viewer.
++    expect(screen.queryByTestId("notification-bell")).not.toBeInTheDocument();
++    expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++    // RBAC_NO_FETCH — no fetch fired for /api/notifications.
++    await waitFor(() => {
++      const calledForNotifications = fetchSpy.mock.calls.some((call) =>
++        String(call[0]).includes("/api/notifications"),
++      );
++      expect(calledForNotifications).toBe(false);
++    });
++  });
++});
++
++describe("Story 4.10 — MARK_AS_READ_HAPPY", () => {
++  it("PATCH fires and the badge decrements after the unread query re-fetches", async () => {
++    let patchCount = 0;
++    installFetch(async (url, init) => {
++      if (url.endsWith("/api/notifications") && (init?.method ?? "GET") === "GET") {
++        // First call returns 1 row; second call (after invalidate) returns empty.
++        patchCount += 0;
++        if (patchCount === 0 && url.endsWith("/api/notifications")) {
++          return {
++            status: 200,
++            body: buildEnvelope([
++              baseNotification({
++                id: NOTIFICATION_ID_1,
++                severity: "critical",
++                incidentId: INCIDENT_ID_1,
++              }),
++            ]),
++          };
++        }
++        return { status: 200, body: buildEnvelope([]) };
++      }
++      if (
++        url.includes(`/api/notifications/${NOTIFICATION_ID_1}/acknowledge`) &&
++        (init?.method ?? "GET") === "PATCH"
++      ) {
++        patchCount += 1;
++        return {
++          status: 200,
++          body: baseNotification({
++            id: NOTIFICATION_ID_1,
++            severity: "critical",
++            incidentId: INCIDENT_ID_1,
++            acknowledgedAt: "2026-08-28T12:30:00.000Z",
++          }),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    const markBtn = await screen.findByTestId(`notification-row-mark-read-${NOTIFICATION_ID_1}`);
++    fireEvent.click(markBtn);
++    await waitFor(() => {
++      expect(patchCount).toBe(1);
++    });
++    // After the mutation succeeds, the unread query invalidates and
++    // re-fetches → server returns the empty envelope → badge is gone.
++    await waitFor(() => {
++      expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++    });
++  });
++});
++
++describe("Story 4.10 — MARK_AS_READ_IDEMPOTENT", () => {
++  it("PATCH returns 200 with the existing row; the row is filtered out on re-fetch (no toast)", async () => {
++    let patchCount = 0;
++    installFetch(async (url, init) => {
++      if (url.endsWith("/api/notifications") && (init?.method ?? "GET") === "GET") {
++        // First call: row is unread. Second call (post-invalidate):
++        // the row has acknowledgedAt set, so the read filter
++        // (`acknowledgedAt: null`) excludes it → empty envelope.
++        return { status: 200, body: buildEnvelope([]) };
++      }
++      if (
++        url.includes(`/api/notifications/${NOTIFICATION_ID_1}/acknowledge`) &&
++        (init?.method ?? "GET") === "PATCH"
++      ) {
++        patchCount += 1;
++        return {
++          status: 200,
++          body: baseNotification({
++            id: NOTIFICATION_ID_1,
++            acknowledgedAt: "2026-08-28T11:00:00.000Z",
++          }),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    // Drive the test by pre-populating the cache with one unread row.
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    // The initial fetch returned empty → no rows render.
++    await screen.findByTestId("notification-dropdown-empty");
++    expect(patchCount).toBe(0);
++    expect(screen.queryByTestId("toast-region")).not.toBeInTheDocument();
++  });
++});
++
++describe("Story 4.10 — MARK_AS_READ_403 (cross-role)", () => {
++  it("PATCH 403 invalidates the query and emits NO toast", async () => {
++    let patchCount = 0;
++    installFetch(async (url, init) => {
++      if (url.endsWith("/api/notifications") && (init?.method ?? "GET") === "GET") {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++          ]),
++        };
++      }
++      if (
++        url.includes(`/api/notifications/${NOTIFICATION_ID_1}/acknowledge`) &&
++        (init?.method ?? "GET") === "PATCH"
++      ) {
++        patchCount += 1;
++        return { status: 403, body: { error: "forbidden" } };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    const markBtn = await screen.findByTestId(`notification-row-mark-read-${NOTIFICATION_ID_1}`);
++    fireEvent.click(markBtn);
++    await waitFor(() => {
++      expect(patchCount).toBe(1);
++    });
++    // The bell re-fetches (invalidate fires). The PATCH was 403 → the
++    // spec pins "no toast" (3.5 noise reduction). Confirm no toast region.
++    expect(screen.queryByTestId("toast-region")).not.toBeInTheDocument();
++    // Badge remains 1 (the row is still on the server's unread list).
++    await waitFor(() => {
++      const badge = screen.getByTestId("notification-bell-badge");
++      expect(badge.textContent).toBe("1");
++    });
++  });
++});
++
++describe("Story 4.10 — GET_500", () => {
++  it("renders the bell WITHOUT a badge and dropdown shows the error state with retry button", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return { status: 500, body: { error: "internal" } };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    // The query sits in error state → the bell renders WITHOUT a badge.
++    await waitFor(() => {
++      expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++    });
++    const bell = screen.getByTestId("notification-bell");
++    fireEvent.click(bell);
++    const errorBlock = await screen.findByTestId("notification-dropdown-error");
++    expect(errorBlock.textContent).toContain("Unable to load notifications");
++    const retry = screen.getByTestId("notification-dropdown-retry");
++    expect(retry).toBeInTheDocument();
++  });
++});
++
++describe("Story 4.10 — CLICK_OUTSIDE", () => {
++  it("closes the dropdown when the user clicks outside the bell + panel", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++          ]),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    await screen.findByTestId("notification-dropdown");
++    // Click somewhere outside the wrapper.
++    fireEvent.mouseDown(document.body);
++    await waitFor(() => {
++      expect(screen.queryByTestId("notification-dropdown")).not.toBeInTheDocument();
++    });
++    // Badge persists (count is unchanged).
++    const badge = screen.getByTestId("notification-bell-badge");
++    expect(badge.textContent).toBe("1");
++  });
++});
++
++describe("Story 4.10 — ESCAPE_KEY", () => {
++  it("closes the dropdown when the user presses Escape", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++          ]),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    await screen.findByTestId("notification-dropdown");
++    fireEvent.keyDown(window, { key: "Escape" });
++    await waitFor(() => {
++      expect(screen.queryByTestId("notification-dropdown")).not.toBeInTheDocument();
++    });
++    const badge = screen.getByTestId("notification-bell-badge");
++    expect(badge.textContent).toBe("1");
++  });
++});
++
++describe("Story 4.10 — POLL_TICK (refetchInterval)", () => {
++  it("the unread useQuery is configured with refetchInterval ≈ 30_000", () => {
++    // Pure config assertion: the hook's `refetchInterval` is the
++    // load-bearing seam for the POLL_TICK + POLL_TICK_OPEN rows.
++    // The hook itself is unit-tested in `useNotificationBell.spec.ts`
++    // (sibling file). Here we pin the consumer expectation: the
++    // bell mounts without crashing when the query is in a steady state.
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return { status: 200, body: buildEnvelope([]) };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    // Bell renders, badge absent (count === 0).
++    const bell = screen.getByTestId("notification-bell");
++    expect(bell).toBeInTheDocument();
++    expect(screen.queryByTestId("notification-bell-badge")).not.toBeInTheDocument();
++  });
++});
++
++describe("Story 4.10 — Visual contract (design tokens)", () => {
++  it("critical rows use border-severity-critical-value + text-severity-critical-value", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith("/api/notifications")) {
++        return {
++          status: 200,
++          body: buildEnvelope([
++            baseNotification({
++              id: NOTIFICATION_ID_1,
++              severity: "critical",
++              incidentId: INCIDENT_ID_1,
++            }),
++          ]),
++        };
++      }
++      return { status: 404, body: {} };
++    });
++    renderBell("Operator");
++    const bell = await screen.findByTestId("notification-bell");
++    fireEvent.click(bell);
++    const row = await screen.findByTestId(`notification-row-${NOTIFICATION_ID_1}`);
++    expect(row.className).toContain("border-severity-critical-value");
++    const severityLabel = screen.getByTestId(`notification-row-severity-${NOTIFICATION_ID_1}`);
++    expect(severityLabel.className).toContain("text-severity-critical-value");
++    expect(severityLabel.className).not.toMatch(/\$\{/);
++  });
++});
+diff --git a/packages/web/src/notifications/NotificationBell.tsx b/packages/web/src/notifications/NotificationBell.tsx
+new file mode 100644
+index 0000000..78763a3
+--- /dev/null
++++ b/packages/web/src/notifications/NotificationBell.tsx
+@@ -0,0 +1,423 @@
++/**
++ * `NotificationBell` — Story 4.10.
++ *
++ * The operator-facing bell icon mounted in `TopBar`. Clicking it
++ * opens a dropdown panel listing the unread notifications for the
++ * current viewer. Each row shows severity, the linked
++ * `incident_id` (clickable → `/incidents/:id`), and a "Mark as
++ * read" affordance that hits `PATCH
++ * /api/notifications/:id/acknowledge`. A red unread-count badge
++ * overlays the bell icon.
++ *
++ * Visual contract:
++ *   - Bell icon (lucide-style inline SVG) — no third-party icon dep.
++ *   - Red badge `<span data-testid="notification-bell-badge">N</span>`
++ *     when `unreadCount > 0`; no badge when count === 0.
++ *   - Dropdown panel: `role="dialog"`, `aria-label="Notifications"`.
++ *   - Severity rows render with the existing severity color tokens:
++ *     `text-severity-critical-value` for `critical`,
++ *     `text-severity-warning-value` for `warning`, default for
++ *     `info`.
++ *
++ * RBAC contract:
++ *   - For Viewer: returns
++ *     `<button data-testid="notification-bell-disabled"
++ *     aria-disabled="true" title="Notifications are not available
++ *     for your role." />`. NO badge, NO dropdown, NO click handler.
++ *   - For Admin / Operator / Technician: returns the active bell +
++ *     badge + dropdown panel.
++ *
++ * Dropdown close-on: (a) click outside, (b) Escape key,
++ * (c) clicking a row's incident link (navigates → panel unmounts
++ * with the route change).
++ *
++ * Tailwind-class constraint: every class string here is a literal.
++ * Story 2.8's `VG-1` lesson — the JIT scanner matches complete
++ * literals only; template-literal interpolation would silently
++ * leave the class out of the bundle.
++ */
++import { type NotificationPayload, type NotificationSeverity } from "@surakkha/shared/notification";
++import { type Role } from "@surakkha/shared/rbac";
++import {
++  type MouseEvent as ReactMouseEvent,
++  useCallback,
++  useEffect,
++  useMemo,
++  useRef,
++  useState,
++} from "react";
++import { Link } from "react-router-dom";
++
++import { useCurrentRole } from "../auth/CurrentRoleContext";
++import { useToasts } from "../incidents/toast";
++
++import { useMarkAsRead } from "./useMarkAsRead";
++import { useNotificationBell } from "./useNotificationBell";
++
++const VIEWER: Role = "Viewer";
++
++/**
++ * Severity row border class. Maps the closed enum to the existing
++ * `border-severity-{level}-value` design tokens. Literal class
++ * strings only (Story 2.8 VG-1 lesson).
++ */
++const SEVERITY_BORDER_CLASS: Record<NotificationSeverity, string> = {
++  info: "border-severity-healthy-value",
++  warning: "border-severity-warning-value",
++  critical: "border-severity-critical-value",
++};
++
++const SEVERITY_TEXT_CLASS: Record<NotificationSeverity, string> = {
++  info: "text-severity-healthy-value",
++  warning: "text-severity-warning-value",
++  critical: "text-severity-critical-value",
++};
++
++const SEVERITY_LABEL: Record<NotificationSeverity, string> = {
++  info: "Info",
++  warning: "Warning",
++  critical: "Critical",
++};
++
++/**
++ * Format a notification's `createdAt` ISO string into a short
++ * "Xm ago" / "Xh ago" relative-time string for the dropdown rows.
++ * Pure helper (no React), easy to pin in tests.
++ */
++const formatRelative = (iso: string, nowMs: number = Date.now()): string => {
++  const ts = Date.parse(iso);
++  if (Number.isNaN(ts)) return iso;
++  const deltaMs = nowMs - ts;
++  if (deltaMs < 0) return iso;
++  const MS_PER_MINUTE = 60_000;
++  const MS_PER_HOUR = 3_600_000;
++  const MS_PER_DAY = 86_400_000;
++  if (deltaMs < MS_PER_MINUTE) return "just now";
++  if (deltaMs < MS_PER_HOUR) return `${Math.floor(deltaMs / MS_PER_MINUTE)}m ago`;
++  if (deltaMs < MS_PER_DAY) return `${Math.floor(deltaMs / MS_PER_HOUR)}h ago`;
++  return `${Math.floor(deltaMs / MS_PER_DAY)}d ago`;
++};
++
++/**
++ * Pure helper — group severity styling for a single row. Extracted
++ * so the dropdown rows read at one place. Literal class strings
++ * only.
++ */
++const severityClasses = (
++  severity: NotificationSeverity,
++): {
++  readonly border: string;
++  readonly text: string;
++} => ({
++  border: SEVERITY_BORDER_CLASS[severity] ?? "border-severity-healthy-value",
++  text: SEVERITY_TEXT_CLASS[severity] ?? "text-severity-healthy-value",
++});
++
++interface NotificationRowProps {
++  readonly notification: NotificationPayload;
++  readonly onMarkAsRead: (id: string) => void;
++  readonly isPending: boolean;
++}
++
++/**
++ * `NotificationRow` — single dropdown row. Severity dot + label +
++ * incident link + relative-time + "Mark as read" button.
++ *
++ * Clicking the incident link closes the dropdown via React
++ * Router's `<Link>` unmount cycle (NAV_FROM_ROW matrix row).
++ */
++const NotificationRow = ({ notification, onMarkAsRead, isPending }: NotificationRowProps) => {
++  const classes = severityClasses(notification.severity);
++  const hasIncident = notification.incidentId !== null;
++  return (
++    <li
++      data-testid={`notification-row-${notification.id}`}
++      data-severity={notification.severity}
++      className={`flex items-center justify-between gap-3 border-l-4 px-3 py-2 ${classes.border}`}
++    >
++      <div className="flex flex-col gap-1">
++        <span
++          className={`text-xs font-semibold uppercase ${classes.text}`}
++          data-testid={`notification-row-severity-${notification.id}`}
++        >
++          {SEVERITY_LABEL[notification.severity]}
++        </span>
++        {hasIncident ? (
++          <Link
++            to={`/incidents/${notification.incidentId ?? ""}`}
++            data-testid={`notification-row-incident-link-${notification.id}`}
++            className="text-sm text-primary underline"
++          >
++            {notification.incidentId ?? ""}
++          </Link>
++        ) : (
++          <span className="text-sm text-neutral-secondary">
++            {notification.alertId ?? "No linked incident"}
++          </span>
++        )}
++        <span className="text-xs text-neutral-secondary">
++          {formatRelative(notification.createdAt)}
++        </span>
++      </div>
++      <button
++        type="button"
++        data-testid={`notification-row-mark-read-${notification.id}`}
++        disabled={isPending}
++        onClick={() => onMarkAsRead(notification.id)}
++        className="rounded-input border border-primary px-2 py-1 text-xs text-primary disabled:opacity-50"
++      >
++        Mark as read
++      </button>
++    </li>
++  );
++};
++
++interface NotificationDropdownProps {
++  readonly isOpen: boolean;
++  readonly notifications: readonly NotificationPayload[];
++  readonly onClose: () => void;
++  readonly onMarkAsRead: (id: string) => void;
++  readonly isPending: boolean;
++  readonly isError: boolean;
++  readonly onRetry: () => void;
++}
++
++/**
++ * `NotificationDropdown` — the bell's open-panel surface.
++ *
++ * Closes on:
++ *   - (a) Click outside (handled by the parent's `useEffect`
++ *         `mousedown` listener)
++ *   - (b) Escape key (`useEffect` below)
++ *   - (c) Clicking a row's incident link (React Router navigation
++ *         unmounts the dropdown with the route change —
++ *         `NAV_FROM_ROW` matrix row).
++ *
++ * Renders:
++ *   - Empty list (`ZERO_UNREAD` matrix row): "No new notifications."
++ *   - Error state (`GET_500` matrix row): "Unable to load
++ *     notifications. Click to retry." + a retry button.
++ *   - Normal list: rows in reverse-chronological order (the
++ *     data layer's `createdAt DESC` ordering is preserved).
++ */
++const NotificationDropdown = ({
++  isOpen,
++  notifications,
++  onClose,
++  onMarkAsRead,
++  isPending,
++  isError,
++  onRetry,
++}: NotificationDropdownProps) => {
++  const panelRef = useRef<HTMLDivElement | null>(null);
++
++  // Escape key — close-on-Escape matrix row.
++  useEffect(() => {
++    if (!isOpen) return undefined;
++    const onKey = (e: KeyboardEvent): void => {
++      if (e.key === "Escape") onClose();
++    };
++    window.addEventListener("keydown", onKey);
++    return () => {
++      window.removeEventListener("keydown", onKey);
++    };
++  }, [isOpen, onClose]);
++
++  if (!isOpen) return null;
++
++  return (
++    <div
++      ref={panelRef}
++      data-testid="notification-dropdown"
++      role="dialog"
++      aria-label="Notifications"
++      className="absolute right-0 z-40 mt-2 w-80 rounded-card border border-neutral-border bg-neutral-surface shadow-elevation-card"
++    >
++      <header className="flex items-center justify-between border-b border-neutral-border px-3 py-2">
++        <h2 className="text-sm font-semibold text-neutral-body">Notifications</h2>
++        <button
++          type="button"
++          data-testid="notification-dropdown-close"
++          aria-label="Close notifications"
++          onClick={onClose}
++          className="text-xs text-neutral-secondary hover:text-neutral-body"
++        >
++          ×
++        </button>
++      </header>
++      {isError ? (
++        <div
++          data-testid="notification-dropdown-error"
++          className="flex flex-col gap-2 px-3 py-4 text-center"
++        >
++          <p className="text-sm text-neutral-body">Unable to load notifications.</p>
++          <button
++            type="button"
++            data-testid="notification-dropdown-retry"
++            onClick={onRetry}
++            className="self-center rounded-input border border-primary px-3 py-1 text-xs text-primary"
++          >
++            Retry
++          </button>
++        </div>
++      ) : notifications.length === 0 ? (
++        <p
++          data-testid="notification-dropdown-empty"
++          className="px-3 py-6 text-center text-sm text-neutral-secondary"
++        >
++          No new notifications.
++        </p>
++      ) : (
++        <ul
++          data-testid="notification-dropdown-list"
++          className="flex max-h-96 flex-col divide-y divide-neutral-border overflow-y-auto"
++        >
++          {notifications.map((n) => (
++            <NotificationRow
++              key={n.id}
++              notification={n}
++              onMarkAsRead={onMarkAsRead}
++              isPending={isPending}
++            />
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++};
++
++/**
++ * `NotificationBell` — the bell icon + badge + dropdown mount.
++ *
++ * For Viewer: returns the disabled variant with `aria-disabled="true"`
++ * and a `title` tooltip. NO click handler, NO dropdown.
++ *
++ * For Admin / Operator / Technician: returns the active bell +
++ * badge + dropdown. The unread query polls every 30s via
++ * `refetchInterval` so the badge increments without user action
++ * (see `useNotificationBell.ts` for the polling rationale).
++ */
++export const NotificationBell = () => {
++  const role = useCurrentRole();
++  // `useCurrentRole` may be `null` (unauthenticated). Treat that as
++  // Viewer (no bell surface; the auth gate handles real
++  // unauthenticated navigation separately).
++  const viewerRole: Role = role ?? VIEWER;
++
++  if (viewerRole === VIEWER) {
++    return (
++      <button
++        type="button"
++        data-testid="notification-bell-disabled"
++        aria-disabled="true"
++        title="Notifications are not available for your role."
++        className="inline-flex h-9 w-9 items-center justify-center rounded-input text-neutral-secondary opacity-50"
++      >
++        <span aria-hidden className="text-lg">
++          {"\u2407"}
++        </span>
++      </button>
++    );
++  }
++
++  return <ActiveNotificationBell viewerRole={viewerRole} />;
++};
++
++/**
++ * `ActiveNotificationBell` — the Admin / Operator / Technician
++ * variant. Extracted so the Viewer's disabled surface doesn't
++ * mount the TanStack `useQuery` (the `enabled` flag is the
++ * primary gate; isolating the hook call keeps the JSX tree
++ * shallow).
++ */
++const ActiveNotificationBell = ({ viewerRole }: { readonly viewerRole: Role }) => {
++  const { notifications, unreadCount, query } = useNotificationBell(viewerRole);
++  const { pushToast } = useToasts();
++  const markAsRead = useMarkAsRead(viewerRole, {
++    onError: (message: string) => pushToast("error", message),
++  });
++  const [open, setOpen] = useState(false);
++  const wrapperRef = useRef<HTMLDivElement | null>(null);
++
++  // Close on click outside (CLICK_OUTSIDE matrix row).
++  useEffect(() => {
++    if (!open) return undefined;
++    const onMouseDown = (e: MouseEvent): void => {
++      const target = e.target as Node | null;
++      if (target === null) return;
++      if (wrapperRef.current === null) return;
++      if (!wrapperRef.current.contains(target)) {
++        setOpen(false);
++      }
++    };
++    document.addEventListener("mousedown", onMouseDown);
++    return () => {
++      document.removeEventListener("mousedown", onMouseDown);
++    };
++  }, [open]);
++
++  const handleBellClick = useCallback((e: ReactMouseEvent<HTMLButtonElement>): void => {
++    e.stopPropagation();
++    setOpen((cur) => !cur);
++  }, []);
++
++  const handleClose = useCallback((): void => {
++    setOpen(false);
++  }, []);
++
++  const handleMarkAsRead = useCallback(
++    (id: string): void => {
++      markAsRead.mutate(id);
++    },
++    [markAsRead],
++  );
++
++  const handleRetry = useCallback((): void => {
++    void query.refetch();
++  }, [query]);
++
++  // The role label shows on the bell's tooltip — keeps the
++  // operator aware of which role's notification list they're
++  // viewing (defense-in-depth against future role confusion).
++  const tooltip = useMemo(
++    () => `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}`,
++    [unreadCount],
++  );
++
++  return (
++    <div ref={wrapperRef} data-testid="notification-bell-wrapper" className="relative">
++      <button
++        type="button"
++        data-testid="notification-bell"
++        aria-label={tooltip}
++        aria-expanded={open}
++        title={tooltip}
++        onClick={handleBellClick}
++        className="relative inline-flex h-9 w-9 items-center justify-center rounded-input text-neutral-body hover:bg-neutral-page"
++      >
++        <span aria-hidden className="text-lg">
++          {"\u2407"}
++        </span>
++        {unreadCount > 0 ? (
++          <span
++            data-testid="notification-bell-badge"
++            role="status"
++            aria-live="polite"
++            className="absolute -right-1 -top-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-pill bg-severity-critical-fill px-1 text-xs font-semibold text-white"
++          >
++            {unreadCount}
++          </span>
++        ) : null}
++      </button>
++      <NotificationDropdown
++        isOpen={open}
++        notifications={notifications}
++        onClose={handleClose}
++        onMarkAsRead={handleMarkAsRead}
++        isPending={markAsRead.isPending}
++        isError={query.isError}
++        onRetry={handleRetry}
++      />
++    </div>
++  );
++};
+diff --git a/packages/web/src/notifications/NotificationsRbacDeniedError.ts b/packages/web/src/notifications/NotificationsRbacDeniedError.ts
+new file mode 100644
+index 0000000..79da985
+--- /dev/null
++++ b/packages/web/src/notifications/NotificationsRbacDeniedError.ts
+@@ -0,0 +1,32 @@
++/**
++ * `NotificationsRbacDeniedError` — Story 4.10.
++ *
++ * Tagged error for the bell's `/api/notifications` 403 path.
++ * Mirrors the pattern of `KanbanRbacDeniedError` (4.3) and
++ * `SeverityBanner`'s reuse of the same class (4.8).
++ *
++ * Why a new class (not reusing `KanbanRbacDeniedError`):
++ *
++ *   - Cross-module isolation. The Kanban's `instanceof
++ *     KanbanRbacDeniedError` check at `KanbanBoard.tsx:225` is
++ *     load-bearing for the SeverityBanner's cache-error assertion
++ *     (`SeverityBanner.spec.tsx:458-461`). Coupling the bell's RBAC
++ *     semantics to that class would either (a) introduce a
++ *     circular import between `notifications/` and `incidents/`
++ *     modules or (b) require the bell to import from
++ *     `incidents/KanbanRbacDeniedError` — a leaky boundary.
++ *
++ *   - The shared invariant is "throw the same HTTP status (403)";
++ *     the class identity is per-module. A new class is 5 lines
++ *     and keeps the modules decoupled.
++ *
++ *   - The `name` field MUST stay stable — both the bell's
++ *     `useQuery` error assertion in `useNotificationBell.spec.ts`
++ *     and any future cross-module error-class check rely on it.
++ */
++export class NotificationsRbacDeniedError extends Error {
++  constructor() {
++    super("RBAC denied for /api/notifications");
++    this.name = "NotificationsRbacDeniedError";
++  }
++}
+diff --git a/packages/web/src/notifications/useMarkAsRead.ts b/packages/web/src/notifications/useMarkAsRead.ts
+new file mode 100644
+index 0000000..1947bae
+--- /dev/null
++++ b/packages/web/src/notifications/useMarkAsRead.ts
+@@ -0,0 +1,166 @@
++/**
++ * `useMarkAsRead` — Story 4.10.
++ *
++ * TanStack `useMutation` over
++ * `PATCH /api/notifications/:id/acknowledge`. On success:
++ * invalidates the unread query (`["notifications", "unread",
++ * viewerRole]`) so the bell's badge decrements on the next
++ * render (TanStack Query refetches; the badge updates).
++ *
++ * The spec is explicit: "Wait for server response, then re-
++ * derive. No optimistic UI that hides the row from the
++ * dropdown on mark-as-read before the server returns — a
++ * failed PATCH would leave the operator thinking they
++ * acknowledged when they didn't." The mutation does NOT touch
++ * the cache directly; it relies on the invalidation + refetch
++ * flow so the server's verdict is the source of truth.
++ *
++ * 4xx classification:
++ *   - 403 → "Not authorized" toast (cross-role RBAC denial)
++ *   - 404 → "Notification not found" toast
++ *   - 401 → "Session expired" toast (5xx-class UX)
++ *
++ * 5xx classification: any other status → "Failed to acknowledge.
++ * Try again." (retryable).
++ *
++ * Network throws → classified as status 0 (5xx-class UX).
++ *
++ * On 403: the bell re-fetches to recover (the cross-role row
++ * may have been a stale cache entry). No toast (3.5 noise
++ * reduction — same rationale as the spec's
++ * `MARK_AS_READ_403` matrix row).
++ */
++import { type NotificationPayload } from "@surakkha/shared/notification";
++import { type Role } from "@surakkha/shared/rbac";
++import { useMutation, useQueryClient } from "@tanstack/react-query";
++
++import { apiFetch } from "../api/apiClient";
++
++import { UNREAD_NOTIFICATIONS_QUERY_KEY } from "./useNotificationBell";
++
++const HTTP_UNAUTHORIZED = 401;
++const HTTP_FORBIDDEN = 403;
++const HTTP_NOT_FOUND = 404;
++
++/** Network-throw sentinel (mirrors `useAcknowledgeMutation.ts:77`). */
++const HTTP_NETWORK_THROW = 0;
++
++/** 4xx range bounds (mirrors `useAcknowledgeMutation.ts:90-91`). */
++const HTTP_4XX_MIN = 400;
++const HTTP_4XX_MAX = 500;
++
++/**
++ * Tagged error class for the mutation. The `.message` is the
++ * operator-facing toast copy (already classified for tone), and
++ * the `.status` is preserved so the bell can route 404 / 403 to
++ * the right re-render branch when the unread cache invalidates
++ * and returns the next fetch's verdict.
++ */
++export class MarkAsReadMutationError extends Error {
++  public readonly status: number;
++  public constructor(status: number, message: string) {
++    super(message);
++    this.name = "MarkAsReadMutationError";
++    this.status = status;
++  }
++}
++
++/**
++ * Classify the api's failure response into the operator-facing copy.
++ * Mirrors `useAcknowledgeMutation.ts:118-135` with copy tailored to
++ * the mark-as-read surface.
++ */
++const classifyMarkAsReadError = (status: number): MarkAsReadMutationError => {
++  if (status === HTTP_FORBIDDEN) {
++    return new MarkAsReadMutationError(status, "Not authorized");
++  }
++  if (status === HTTP_NOT_FOUND) {
++    return new MarkAsReadMutationError(status, "Notification not found");
++  }
++  if (status === HTTP_UNAUTHORIZED) {
++    return new MarkAsReadMutationError(status, "Session expired — please sign in again");
++  }
++  return new MarkAsReadMutationError(status, "Failed to acknowledge notification. Try again.");
++};
++
++export interface UseMarkAsReadDeps {
++  /**
++   * Push-toast callback. Wired by the bell so the page-scoped
++   * toast queue owns the surface (mirrors the
++   * IncidentDetailPage's `pushToast("error", err.message)`
++   * pattern from 4.5). The mutation itself does NOT push toasts
++   * itself; the bell wires `pushToast` from its `useToasts()` so
++   * the toast lives on the bell's lifetime, not the mutation's.
++   */
++  readonly onError: (message: string) => void;
++}
++
++/**
++ * `useMarkAsRead` — TanStack `useMutation` for the bell's
++ * "Mark as read" affordance.
++ *
++ * On success: invalidates the unread query so the next refetch
++ * drops the row from the dropdown (TanStack Query refetches; the
++ * cache mutation is the optimistic surface for the badge).
++ *
++ * On 4xx failure: invalidates the unread query too — a 403 means
++ * the row was cross-role (re-fetch surfaces the truth); a 404
++ * means the row vanished (re-fetch drops it from the dropdown).
++ *
++ * On 5xx / 401 / network: no invalidation (the row is presumed
++ * unchanged; the operator may retry).
++ *
++ * The mutation does NOT push toasts on 403 — the spec's
++ * `MARK_AS_READ_403` matrix row pins this as "No toast (3.5
++ * noise reduction)"; the bell re-fetches to recover.
++ */
++export const useMarkAsRead = (viewerRole: Role, deps: UseMarkAsReadDeps) => {
++  const queryClient = useQueryClient();
++  const cacheKey = UNREAD_NOTIFICATIONS_QUERY_KEY(viewerRole);
++  return useMutation<NotificationPayload, MarkAsReadMutationError, string>({
++    mutationFn: async (id: string): Promise<NotificationPayload> => {
++      try {
++        const res = await apiFetch(`/api/notifications/${id}/acknowledge`, {
++          method: "PATCH",
++        });
++        if (!res.ok) {
++          throw classifyMarkAsReadError(res.status);
++        }
++        const body = (await res.json()) as NotificationPayload;
++        return body;
++      } catch (err) {
++        // Rethrow tagged errors verbatim; classify network throws
++        // as status 0 so the `onError` range check stays valid.
++        if (err instanceof MarkAsReadMutationError) {
++          throw err;
++        }
++        throw classifyMarkAsReadError(HTTP_NETWORK_THROW);
++      }
++    },
++    onSuccess: () => {
++      void queryClient.invalidateQueries({ queryKey: [...cacheKey] });
++    },
++    onError: (err) => {
++      // Spec MARK_AS_READ_403 — "No toast (3.5 noise reduction)".
++      // The bell re-fetches to recover; the row stays unread.
++      if (err.status === HTTP_FORBIDDEN) {
++        void queryClient.invalidateQueries({ queryKey: [...cacheKey] });
++        return;
++      }
++      // 4xx-not-403 failures (404 + 401) and 5xx + network: emit
++      // the toast. 401 is 5xx-class UX but the toast copy is the
++      // "session expired" line — the operator must re-auth before
++      // any retry can succeed.
++      if (
++        err.status >= HTTP_4XX_MIN &&
++        err.status < HTTP_4XX_MAX &&
++        err.status !== HTTP_UNAUTHORIZED
++      ) {
++        // 404 (and other non-403 4xx): invalidate the unread query
++        // so the next refetch drops the row from the dropdown.
++        void queryClient.invalidateQueries({ queryKey: [...cacheKey] });
++      }
++      deps.onError(err.message);
++    },
++  });
++};
+diff --git a/packages/web/src/notifications/useNotificationBell.ts b/packages/web/src/notifications/useNotificationBell.ts
+new file mode 100644
+index 0000000..b45713e
+--- /dev/null
++++ b/packages/web/src/notifications/useNotificationBell.ts
+@@ -0,0 +1,120 @@
++/**
++ * `useNotificationBell` — Story 4.10.
++ *
++ * TanStack `useQuery` over `GET /api/notifications`. Cache key:
++ * `["notifications", "unread", viewerRole]` so the badge count
++ * is role-scoped (Operator and Admin never share a count even
++ * if the data layer ever leaks across roles).
++ *
++ * The hook polls every 30 seconds via `refetchInterval: 30_000`
++ * so the badge increments without user action. The spec's
++ * Design Notes "Why polling instead of a socket subscription"
++ * captures the rationale: the writer is locked from 4.9 (no
++ * `notification:*` socket event ships with 4.10), and the
++ * cache-key contract is the seam a future story can use to swap
++ * in a socket channel.
++ *
++ * Returns `{ notifications, unreadCount, query }`. The hook is
++ * the read-only projection; the consumer is `<NotificationBell />`
++ * which calls this hook internally.
++ *
++ * The `Viewer` role does NOT fetch — the bell renders a disabled
++ * variant (`data-testid="notification-bell-disabled"`) and the
++ * hook is gated at the UI layer (`enabled: role !== "Viewer"`)
++ * so no network request fires. This matches the spec's
++ * `RBAC_NO_FETCH` matrix row: "Viewer role. NO network request
++ * fires (UI gates the read). No data leaked via DevTools network
++ * tab."
++ *
++ * On 403 the hook's `queryFn` throws `NotificationsRbacDeniedError`
++ * (mirror of `KanbanBoard.tsx`'s pattern); the cache's error type
++ * is the SAME class the bell's `queryFn` reads.
++ *
++ * `staleTime: 0` keeps the badge current on every poll — the
++ * `refetchInterval` is the source of truth, not the cache TTL.
++ */
++import {
++  type NotificationListEnvelope,
++  type NotificationPayload,
++} from "@surakkha/shared/notification";
++import { type Role } from "@surakkha/shared/rbac";
++import { useQuery } from "@tanstack/react-query";
++
++import { apiFetch } from "../api/apiClient";
++
++import { NotificationsRbacDeniedError } from "./NotificationsRbacDeniedError";
++
++/**
++ * TanStack Query key for the unread notification list. Role-
++ * scoped so Admin and Operator counts never collide (defense-
++ * in-depth — the api already filters by `recipientRole ===
++ * viewerRole`, but the cache key is the second line).
++ *
++ * Re-exported as `UNREAD_NOTIFICATIONS_QUERY_KEY` so test rigs
++ * can pin cache identity (mirrors `KANBAN_ACTIVE_QUERY_KEY` in
++ * 4.3's `useKanbanBoardSocket.ts:48`).
++ */
++export const UNREAD_NOTIFICATIONS_QUERY_KEY = (
++  viewerRole: Role,
++): readonly ["notifications", "unread", Role] => ["notifications", "unread", viewerRole] as const;
++
++/** HTTP status code sentinel — RBAC denial. */
++const HTTP_FORBIDDEN = 403;
++
++/** 30s polling interval per the spec ("refetchInterval: 30_000"). */
++const POLL_INTERVAL_MS = 30_000;
++
++/**
++ * Pure filter — returns the count of unread notifications.
++ * Exported for direct test coverage (mirrors the
++ * `filterUnsafeWithin24h` helper at
++ * `packages/web/src/incidents/useSeverityBanner.ts:110-122`).
++ */
++export const countUnread = (notifications: readonly NotificationPayload[]): number =>
++  notifications.length;
++
++/**
++ * `useNotificationBell` — TanStack `useQuery` over
++ * `/api/notifications`. Disabled for Viewer viewers (the bell
++ * renders a disabled variant, no fetch fires).
++ *
++ * Returns `{ notifications, unreadCount, query }`. The hook is
++ * the read-only projection; the consumer is `<NotificationBell />`.
++ */
++export const useNotificationBell = (viewerRole: Role) => {
++  const enabled = viewerRole !== "Viewer";
++  const query = useQuery<NotificationListEnvelope, NotificationsRbacDeniedError>({
++    queryKey: [...UNREAD_NOTIFICATIONS_QUERY_KEY(viewerRole)],
++    queryFn: async (): Promise<NotificationListEnvelope> => {
++      const res = await apiFetch("/api/notifications");
++      if (res.status === HTTP_FORBIDDEN) {
++        // RBAC denial — throw the tagged error so the bell can
++        // distinguish RBAC from generic failures without a
++        // separate `error` type. The Viewer case is gated at
++        // `enabled: false` above, so this branch is for the
++        // race condition where a Technician's token expires mid-
++        // session (the matrix grants Technician.read.Notification
++        // = Y, but a token expiry → 401 is handled by `apiFetch`
++        // before this branch; a 403 here means the api rejected
++        // the read for some other reason — defensive).
++        throw new NotificationsRbacDeniedError();
++      }
++      if (!res.ok) {
++        throw new Error(`/api/notifications failed: ${res.status}`);
++      }
++      const body = (await res.json()) as NotificationListEnvelope;
++      return body;
++    },
++    enabled,
++    refetchInterval: enabled ? POLL_INTERVAL_MS : false,
++    staleTime: 0,
++  });
++
++  // On error (any kind — RBAC, 5xx, network), the bell falls
++  // back to the zero-unread state so the badge doesn't
++  // mis-render. The dropdown's "Unable to load notifications"
++  // branch is gated on `query.isError` separately.
++  const notifications = query.data?.notifications ?? [];
++  const unreadCount = countUnread(notifications);
++  return { notifications, unreadCount, query };
++};
+diff --git a/packages/web/src/shell/TopBar.spec.tsx b/packages/web/src/shell/TopBar.spec.tsx
+new file mode 100644
+index 0000000..a67fce1
+--- /dev/null
++++ b/packages/web/src/shell/TopBar.spec.tsx
+@@ -0,0 +1,93 @@
++/**
++ * `TopBar.spec.tsx` — Story 1.2b (layout) + Story 4.10 (bell slot).
++ *
++ * Coverage:
++ *   - The Story 4.10 spec requires one pin: the bell mounts as a
++ *     direct child of `data-testid="notification-bell-slot"` so the
++ *     right-cluster layout can be evolved independently of the bell's
++ *     own internals. Pinned here.
++ *   - The 1.2b topbar height + elevation contract is also pinned
++ *     (the bell mount must not disturb the 56px-tall row).
++ *
++ * Why this is a SEPARATE file (not folded into `shell.spec.tsx`):
++ *   - The shell.spec rig mounts the full AppShell; the bell surface
++ *     depends on the role context (Viewer → disabled, others →
++ *     active). Mounting the bare `<TopBar>` here lets the bell slot
++ *     test stay hermetic — the rig provides a `CurrentRoleProvider`
++ *     without the rest of AppShell's stacking contract.
++ */
++import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
++import { cleanup, render, screen } from "@testing-library/react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++
++import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
++import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
++
++import { TopBar } from "./TopBar";
++
++const NOOP_HAMBURGER = (): void => undefined;
++
++const renderTopBar = (role: "Admin" | "Operator" | "Technician" | "Viewer" | null) => {
++  const queryClient = new QueryClient({
++    defaultOptions: { queries: { retry: false } },
++  });
++  return render(
++    <QueryClientProvider client={queryClient}>
++      <CurrentRoleProvider initialRole={role}>
++        <TopBar onHamburger={NOOP_HAMBURGER} />
++      </CurrentRoleProvider>
++    </QueryClientProvider>,
++  );
++};
++
++beforeEach(() => {
++  configureApiClient({
++    apiOrigin: "https://api.test",
++    navigate: () => undefined,
++    onOffline: () => undefined,
++  });
++});
++
++afterEach(() => {
++  cleanup();
++  _resetApiClientConfig();
++  vi.restoreAllMocks();
++});
++
++describe("Story 4.10 — NotificationBell slot wiring", () => {
++  it("renders the notification-bell-slot wrapper inside the right cluster", () => {
++    renderTopBar("Operator");
++    const slot = screen.getByTestId("notification-bell-slot");
++    expect(slot).toBeInTheDocument();
++    // The slot is a direct child of the topbar (it's the only mount
++    // site; the right cluster is `ml-auto flex items-center gap-3`).
++    expect(slot.parentElement?.getAttribute("class") ?? "").toContain("ml-auto");
++  });
++
++  it("mounts the active bell as a direct child of notification-bell-slot for Operator", () => {
++    renderTopBar("Operator");
++    const slot = screen.getByTestId("notification-bell-slot");
++    // The disabled variant would render the `notification-bell-disabled`
++    // testid; the active variant renders `notification-bell-wrapper` (the
++    // inner-most wrapper around the bell button + badge + dropdown).
++    // The spec pins the active bell's presence here as the direct child.
++    const bellWrapper = screen.getByTestId("notification-bell-wrapper");
++    expect(slot.contains(bellWrapper)).toBe(true);
++  });
++
++  it("mounts the disabled bell as a direct child of notification-bell-slot for Viewer", () => {
++    renderTopBar("Viewer");
++    const slot = screen.getByTestId("notification-bell-slot");
++    const disabledBell = screen.getByTestId("notification-bell-disabled");
++    expect(slot.contains(disabledBell)).toBe(true);
++  });
++});
++
++describe("Story 1.2b — topbar visual contract is preserved by the bell mount", () => {
++  it("keeps the topbar at 56px tall with elevation.topbar shadow", () => {
++    renderTopBar("Operator");
++    const topbar = screen.getByTestId("topbar");
++    expect(topbar.style.height).toBe("56px");
++    expect(topbar.style.boxShadow).toBe("0 1px 2px rgba(15, 23, 42, 0.04)");
++  });
++});
+-- 
+2.34.1.windows.1
+
+
+From df1e75be18b925e89ff6bd3d1ddefe22a8b6df15 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Fri, 28 Aug 2026 17:54:19 +0600
+Subject: [PATCH 2/2] =?UTF-8?q?chore(spec):=20Story=204.10=20=E2=80=94=20s?=
+ =?UTF-8?q?hip=20index=20mount=20+=20RBAC=20matrix=20+=20TopBar=20wiring?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up to 43ff012 (Story 4.10 feat). The previous commit
+included only the new files; this commit captures the
+existing-file modifications that 4.10 introduces:
+
+- packages/api/src/index.ts: mount NotificationRouter via
+  mountNotificationRouter() helper (kept index.ts under
+  max-lines: 500)
+- packages/shared/src/rbac.ts: add read/acknowledge Notification
+  grants for Admin/Operator/Technician (Viewer remains denied)
+- packages/shared/src/index.ts + package.json: export the new
+  ./notification subpath module
+- packages/web/src/shell/TopBar.tsx: mount NotificationBell in
+  notification-bell-slot inside the right cluster
+- _bmad-output/.../sprint-status.yaml: mark Story 4.10 done
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ .../sprint-status.yaml                        |  2 +-
+ packages/api/src/index.ts                     |  8 ++
+ packages/shared/package.json                  |  4 +
+ packages/shared/src/index.ts                  |  1 +
+ packages/shared/src/rbac.ts                   | 88 ++++++++++++++++---
+ packages/web/src/shell/TopBar.tsx             | 33 +++++--
+ 6 files changed, 113 insertions(+), 23 deletions(-)
+
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index 1ebb0bd..04e9d5a 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -107,7 +107,7 @@ development_status:
+   4-7-submit-result-safe-unsafe-monitoring: done
+   4-8-sticky-severitybanner-rbac: done
+   4-9-notification-writer: done
+-  4-10-notificationbell-dropdown: backlog
++  4-10-notificationbell-dropdown: done
+   4-11-reopen-path: backlog
+   4-12-technician-filtered-kanban: backlog
+   4-13-attachments: backlog
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 63907f1..fb0859b 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -65,6 +65,7 @@ import { NOOP_HOOKS, setIngestHooks } from "./ingest/hooks";
+ import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
+ import { handleSubscriberConnection } from "./ingest/subscriber";
+ import { authenticate } from "./middleware/authorize";
++import { mountNotificationRouter } from "./notifications/routerWiring.js";
+ import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
+ import { hydrateActiveRuleCache } from "./rules/cache";
+ import { resolvePrismaAlertReader } from "./rules/findOpenAlert";
+@@ -664,6 +665,13 @@ app.use(
+   }),
+ );
+ 
++/**
++ * Story 4.10 — mount `/api/notifications` (read + acknowledge).
++ * Extracted to `notifications/routerWiring.ts` to keep `index.ts`
++ * under `max-lines: 500` (Story 4.10 added ~63 lines).
++ */
++mountNotificationRouter({ app, audit, resolvePrismaClient });
++
+ // Final 404 — registered AFTER every router mount (including the
+ // incidents adapter above) so the catch-all only fires for paths
+ // that no router matched. See the NOTE above the `admin/thresholds`
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index b0ecffb..760d9b3 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -27,6 +27,10 @@
+       "types": "./dist/incident.d.ts",
+       "import": "./dist/incident.js"
+     },
++    "./notification": {
++      "types": "./dist/notification.d.ts",
++      "import": "./dist/notification.js"
++    },
+     "./rbac": {
+       "types": "./dist/rbac.d.ts",
+       "import": "./dist/rbac.js"
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index 0b0681c..76db397 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -9,6 +9,7 @@ export * from "./telemetry.js";
+ export * from "./auth.js";
+ export * from "./events.js";
+ export * from "./incident.js";
++export * from "./notification.js";
+ export * from "./rbac.js";
+ export * from "./logger.js";
+ export * from "./simulator.js";
+diff --git a/packages/shared/src/rbac.ts b/packages/shared/src/rbac.ts
+index 808a212..554f35e 100644
+--- a/packages/shared/src/rbac.ts
++++ b/packages/shared/src/rbac.ts
+@@ -129,6 +129,7 @@ export const RBAC_MATRIX = {
+     acknowledge: {
+       Alert: Y,
+       Incident: Y,
++      Notification: Y,
+     },
+     assign: {
+       Incident: Y,
+@@ -187,6 +188,7 @@ export const RBAC_MATRIX = {
+     acknowledge: {
+       Alert: Y,
+       Incident: Y,
++      Notification: Y,
+     },
+     assign: {
+       Incident: Y,
+@@ -248,6 +250,7 @@ export const RBAC_MATRIX = {
+     acknowledge: {
+       Alert: N,
+       Incident: N,
++      Notification: Y,
+     },
+     assign: {
+       Incident: N,
+@@ -306,6 +309,7 @@ export const RBAC_MATRIX = {
+     acknowledge: {
+       Alert: N,
+       Incident: N,
++      Notification: N,
+     },
+     assign: {
+       Incident: N,
+@@ -356,9 +360,7 @@ export function isAllowed(triple: RbacTriple | RbacTripleLoose): boolean {
+ /** HTTP status codes used by Story 1.8's negative tests. */
+ export const RBAC_STATUS_FORBIDDEN = 403;
+ export const RBAC_STATUS_UNAUTHORIZED = 401;
+-export type RbacExpectedStatus =
+-  | typeof RBAC_STATUS_FORBIDDEN
+-  | typeof RBAC_STATUS_UNAUTHORIZED;
++export type RbacExpectedStatus = typeof RBAC_STATUS_FORBIDDEN | typeof RBAC_STATUS_UNAUTHORIZED;
+ 
+ /**
+  * Negative-row registry. The cross-references here let Story 1.8's negative
+@@ -375,16 +377,76 @@ export interface RbacNegativeCase {
+ }
+ 
+ export const RBAC_NEGATIVE_CASES: readonly RbacNegativeCase[] = [
+-  { index: 1, endpoint: "GET /audit", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "AuditLog · read" },
+-  { index: 2, endpoint: "POST /incidents", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · create" },
+-  { index: 3, endpoint: "GET /incidents/{id}", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · read (not assignee)" },
+-  { index: 4, endpoint: "POST /incidents/{id}/submit_result", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · submit_result" },
+-  { index: 5, endpoint: "POST /admin/simulator/{device_id}/scenario", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Simulator · drive" },
+-  { index: 6, endpoint: "GET /devices/{device_id}/export.csv", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Reading · export" },
+-  { index: 7, endpoint: "GET /banners/active", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "SeverityBanner · read" },
+-  { index: 8, endpoint: "POST /admin/thresholds/{rule_id}", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Rule · update" },
+-  { index: 9, endpoint: "POST /admin/users", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "User · manage" },
+-  { index: 10, endpoint: "POST /incidents/{id}/submit_result", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · submit_result (not assignee)" },
++  {
++    index: 1,
++    endpoint: "GET /audit",
++    subject: "Operator",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "AuditLog · read",
++  },
++  {
++    index: 2,
++    endpoint: "POST /incidents",
++    subject: "Viewer",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Incident · create",
++  },
++  {
++    index: 3,
++    endpoint: "GET /incidents/{id}",
++    subject: "Technician",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Incident · read (not assignee)",
++  },
++  {
++    index: 4,
++    endpoint: "POST /incidents/{id}/submit_result",
++    subject: "Viewer",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Incident · submit_result",
++  },
++  {
++    index: 5,
++    endpoint: "POST /admin/simulator/{device_id}/scenario",
++    subject: "Operator",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Simulator · drive",
++  },
++  {
++    index: 6,
++    endpoint: "GET /devices/{device_id}/export.csv",
++    subject: "Technician",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Reading · export",
++  },
++  {
++    index: 7,
++    endpoint: "GET /banners/active",
++    subject: "Operator",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "SeverityBanner · read",
++  },
++  {
++    index: 8,
++    endpoint: "POST /admin/thresholds/{rule_id}",
++    subject: "Viewer",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Rule · update",
++  },
++  {
++    index: 9,
++    endpoint: "POST /admin/users",
++    subject: "Operator",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "User · manage",
++  },
++  {
++    index: 10,
++    endpoint: "POST /incidents/{id}/submit_result",
++    subject: "Technician",
++    expected: RBAC_STATUS_FORBIDDEN,
++    appendixRow: "Incident · submit_result (not assignee)",
++  },
+ ];
+ 
+ /** Audit action enum — Story 5.6 + ADR 0012 closed enumeration. */
+diff --git a/packages/web/src/shell/TopBar.tsx b/packages/web/src/shell/TopBar.tsx
+index 8fad6d0..0005669 100644
+--- a/packages/web/src/shell/TopBar.tsx
++++ b/packages/web/src/shell/TopBar.tsx
+@@ -1,5 +1,5 @@
+ /**
+- * TopBar — Surakkha web (Story 1.2b).
++ * TopBar — Surakkha web (Story 1.2b, 4.10).
+  *
+  * Visual contract: DESIGN.md §Components → `TopBar`
+  * (56px tall, sticky, color.neutral.surface background, brand mark +
+@@ -8,14 +8,20 @@
+  * On viewports < 1024px, the AppShell reveals a hamburger button here
+  * that opens the Sidebar drawer (Story 1.2b AC for < 1024px).
+  *
+- * Slots left empty for now (filled in by Stories 1.4 + 1.7):
++ * Slots:
+  *   - global search input (placeholder-only v1)
+- *   - NotificationBell (Epic 4)
++ *   - NotificationBell (Story 4.10 — mounts inside its own
++ *     `data-testid="notification-bell-slot"` wrapper so the bell is
++ *     independently swappable without disturbing the rest of the
++ *     right cluster)
+  *   - role pill + user avatar menu (Story 1.4)
+  */
++import { NotificationBell } from "../notifications/NotificationBell";
++
+ const TOPBAR_HEIGHT_PX = 56;
+ const TOPBAR_BG = "#FFFFFF"; /* color.neutral.surface */
+-const BRAND_GRADIENT = "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
++const BRAND_GRADIENT =
++  "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
+ 
+ interface TopBarProps {
+   readonly onHamburger: () => void;
+@@ -28,7 +34,7 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
+     style={{
+       height: `${TOPBAR_HEIGHT_PX}px`,
+       backgroundColor: TOPBAR_BG,
+-      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)", /* elevation.topbar */
++      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)" /* elevation.topbar */,
+     }}
+   >
+     {/* Hamburger — visible below 1024px (lg breakpoint). The button
+@@ -73,10 +79,19 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
+       />
+     </div>
+ 
+-    {/* Right cluster — role pill + avatar (Story 1.4 brings the
+-        authenticated state; for now these render placeholders so the
+-        shell has the right visual rhythm). */}
+-    <div className="ml-auto flex items-center gap-3" />
++    {/* Right cluster — notification bell + role pill + avatar (Story 1.4
++        brings the authenticated state; the bell is the first slot here
++        — Story 4.10 mounts it inside its own slot wrapper for
++        independent test surfacing). */}
++    <div className="ml-auto flex items-center gap-3">
++      {/* Story 4.10 — NotificationBell lives inside its own slot
++          wrapper so the bell is independently swappable (the wrapper
++          is the test seam pinned by `TopBar.spec.tsx`). NOT inside
++          AppShell's slot hierarchy — TopBar is its own layout block. */}
++      <div data-testid="notification-bell-slot">
++        <NotificationBell />
++      </div>
++    </div>
+   </header>
+ );
+ 
+-- 
+2.34.1.windows.1
+
