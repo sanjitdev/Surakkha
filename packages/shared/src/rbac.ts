@@ -129,6 +129,7 @@ export const RBAC_MATRIX = {
     acknowledge: {
       Alert: Y,
       Incident: Y,
+      Notification: Y,
     },
     assign: {
       Incident: Y,
@@ -187,6 +188,7 @@ export const RBAC_MATRIX = {
     acknowledge: {
       Alert: Y,
       Incident: Y,
+      Notification: Y,
     },
     assign: {
       Incident: Y,
@@ -248,6 +250,7 @@ export const RBAC_MATRIX = {
     acknowledge: {
       Alert: N,
       Incident: N,
+      Notification: Y,
     },
     assign: {
       Incident: N,
@@ -306,6 +309,7 @@ export const RBAC_MATRIX = {
     acknowledge: {
       Alert: N,
       Incident: N,
+      Notification: N,
     },
     assign: {
       Incident: N,
@@ -356,9 +360,7 @@ export function isAllowed(triple: RbacTriple | RbacTripleLoose): boolean {
 /** HTTP status codes used by Story 1.8's negative tests. */
 export const RBAC_STATUS_FORBIDDEN = 403;
 export const RBAC_STATUS_UNAUTHORIZED = 401;
-export type RbacExpectedStatus =
-  | typeof RBAC_STATUS_FORBIDDEN
-  | typeof RBAC_STATUS_UNAUTHORIZED;
+export type RbacExpectedStatus = typeof RBAC_STATUS_FORBIDDEN | typeof RBAC_STATUS_UNAUTHORIZED;
 
 /**
  * Negative-row registry. The cross-references here let Story 1.8's negative
@@ -375,16 +377,76 @@ export interface RbacNegativeCase {
 }
 
 export const RBAC_NEGATIVE_CASES: readonly RbacNegativeCase[] = [
-  { index: 1, endpoint: "GET /audit", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "AuditLog · read" },
-  { index: 2, endpoint: "POST /incidents", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · create" },
-  { index: 3, endpoint: "GET /incidents/{id}", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · read (not assignee)" },
-  { index: 4, endpoint: "POST /incidents/{id}/submit_result", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · submit_result" },
-  { index: 5, endpoint: "POST /admin/simulator/{device_id}/scenario", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Simulator · drive" },
-  { index: 6, endpoint: "GET /devices/{device_id}/export.csv", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Reading · export" },
-  { index: 7, endpoint: "GET /banners/active", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "SeverityBanner · read" },
-  { index: 8, endpoint: "POST /admin/thresholds/{rule_id}", subject: "Viewer", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Rule · update" },
-  { index: 9, endpoint: "POST /admin/users", subject: "Operator", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "User · manage" },
-  { index: 10, endpoint: "POST /incidents/{id}/submit_result", subject: "Technician", expected: RBAC_STATUS_FORBIDDEN, appendixRow: "Incident · submit_result (not assignee)" },
+  {
+    index: 1,
+    endpoint: "GET /audit",
+    subject: "Operator",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "AuditLog · read",
+  },
+  {
+    index: 2,
+    endpoint: "POST /incidents",
+    subject: "Viewer",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Incident · create",
+  },
+  {
+    index: 3,
+    endpoint: "GET /incidents/{id}",
+    subject: "Technician",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Incident · read (not assignee)",
+  },
+  {
+    index: 4,
+    endpoint: "POST /incidents/{id}/submit_result",
+    subject: "Viewer",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Incident · submit_result",
+  },
+  {
+    index: 5,
+    endpoint: "POST /admin/simulator/{device_id}/scenario",
+    subject: "Operator",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Simulator · drive",
+  },
+  {
+    index: 6,
+    endpoint: "GET /devices/{device_id}/export.csv",
+    subject: "Technician",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Reading · export",
+  },
+  {
+    index: 7,
+    endpoint: "GET /banners/active",
+    subject: "Operator",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "SeverityBanner · read",
+  },
+  {
+    index: 8,
+    endpoint: "POST /admin/thresholds/{rule_id}",
+    subject: "Viewer",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Rule · update",
+  },
+  {
+    index: 9,
+    endpoint: "POST /admin/users",
+    subject: "Operator",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "User · manage",
+  },
+  {
+    index: 10,
+    endpoint: "POST /incidents/{id}/submit_result",
+    subject: "Technician",
+    expected: RBAC_STATUS_FORBIDDEN,
+    appendixRow: "Incident · submit_result (not assignee)",
+  },
 ];
 
 /** Audit action enum — Story 5.6 + ADR 0012 closed enumeration. */

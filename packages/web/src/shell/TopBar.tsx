@@ -1,5 +1,5 @@
 /**
- * TopBar — Surakkha web (Story 1.2b).
+ * TopBar — Surakkha web (Story 1.2b, 4.10).
  *
  * Visual contract: DESIGN.md §Components → `TopBar`
  * (56px tall, sticky, color.neutral.surface background, brand mark +
@@ -8,14 +8,20 @@
  * On viewports < 1024px, the AppShell reveals a hamburger button here
  * that opens the Sidebar drawer (Story 1.2b AC for < 1024px).
  *
- * Slots left empty for now (filled in by Stories 1.4 + 1.7):
+ * Slots:
  *   - global search input (placeholder-only v1)
- *   - NotificationBell (Epic 4)
+ *   - NotificationBell (Story 4.10 — mounts inside its own
+ *     `data-testid="notification-bell-slot"` wrapper so the bell is
+ *     independently swappable without disturbing the rest of the
+ *     right cluster)
  *   - role pill + user avatar menu (Story 1.4)
  */
+import { NotificationBell } from "../notifications/NotificationBell";
+
 const TOPBAR_HEIGHT_PX = 56;
 const TOPBAR_BG = "#FFFFFF"; /* color.neutral.surface */
-const BRAND_GRADIENT = "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
+const BRAND_GRADIENT =
+  "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
 
 interface TopBarProps {
   readonly onHamburger: () => void;
@@ -28,7 +34,7 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
     style={{
       height: `${TOPBAR_HEIGHT_PX}px`,
       backgroundColor: TOPBAR_BG,
-      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)", /* elevation.topbar */
+      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)" /* elevation.topbar */,
     }}
   >
     {/* Hamburger — visible below 1024px (lg breakpoint). The button
@@ -73,10 +79,19 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
       />
     </div>
 
-    {/* Right cluster — role pill + avatar (Story 1.4 brings the
-        authenticated state; for now these render placeholders so the
-        shell has the right visual rhythm). */}
-    <div className="ml-auto flex items-center gap-3" />
+    {/* Right cluster — notification bell + role pill + avatar (Story 1.4
+        brings the authenticated state; the bell is the first slot here
+        — Story 4.10 mounts it inside its own slot wrapper for
+        independent test surfacing). */}
+    <div className="ml-auto flex items-center gap-3">
+      {/* Story 4.10 — NotificationBell lives inside its own slot
+          wrapper so the bell is independently swappable (the wrapper
+          is the test seam pinned by `TopBar.spec.tsx`). NOT inside
+          AppShell's slot hierarchy — TopBar is its own layout block. */}
+      <div data-testid="notification-bell-slot">
+        <NotificationBell />
+      </div>
+    </div>
   </header>
 );
 

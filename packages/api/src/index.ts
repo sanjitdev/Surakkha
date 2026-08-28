@@ -65,6 +65,7 @@ import { NOOP_HOOKS, setIngestHooks } from "./ingest/hooks";
 import { buildIngestServer, INGEST_PATH_PREFIX } from "./ingest/server";
 import { handleSubscriberConnection } from "./ingest/subscriber";
 import { authenticate } from "./middleware/authorize";
+import { mountNotificationRouter } from "./notifications/routerWiring.js";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 import { hydrateActiveRuleCache } from "./rules/cache";
 import { resolvePrismaAlertReader } from "./rules/findOpenAlert";
@@ -663,6 +664,13 @@ app.use(
     resolveActorUserId,
   }),
 );
+
+/**
+ * Story 4.10 — mount `/api/notifications` (read + acknowledge).
+ * Extracted to `notifications/routerWiring.ts` to keep `index.ts`
+ * under `max-lines: 500` (Story 4.10 added ~63 lines).
+ */
+mountNotificationRouter({ app, audit, resolvePrismaClient });
 
 // Final 404 — registered AFTER every router mount (including the
 // incidents adapter above) so the catch-all only fires for paths

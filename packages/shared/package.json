@@ -27,6 +27,10 @@
       "types": "./dist/incident.d.ts",
       "import": "./dist/incident.js"
     },
+    "./notification": {
+      "types": "./dist/notification.d.ts",
+      "import": "./dist/notification.js"
+    },
     "./rbac": {
       "types": "./dist/rbac.d.ts",
       "import": "./dist/rbac.js"
