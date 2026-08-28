@@ -1,0 +1,1479 @@
+diff --git a/_bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md b/_bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md
+new file mode 100644
+index 0000000..d166a22
+--- /dev/null
++++ b/_bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md
+@@ -0,0 +1,138 @@
++---
++title: "Story 4.5 — Acknowledge Flow (Operator One-Click)"
++type: "feature"
++created: "2026-08-28"
++status: "done"
++review_loop_iteration: 0
++baseline_commit: "5f43c64" # chore(spec): mark Story 4.4 done — review iteration 1 complete
++context:
++  - _bmad-output/implementation-artifacts/epic-4-context.md
++  - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
++  - _bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md
++  - _bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md
++  - docs/architecture.md
++---
++
++<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
++
++## Intent
++
++**Problem:** Story 4.2 shipped `POST /api/incidents/:id/acknowledge` (server-enforced OPEN → ACKNOWLEDGED transition, Admin + Operator RBAC, audit + `incident:state_changed` socket emit), and Story 4.4 shipped the read-only `/incidents/:id` detail page that surfaces the row + audit timeline. The detail page's body has no action affordances today — Operators can SEE that an incident is OPEN, but they cannot ACK it without leaving the UI to a curl / pgAdmin. SLA timer never starts.
++
++**Approach:** Add an Acknowledge button on the detail page header (visible only when the row's `state === "OPEN"` AND the viewer is Admin or Operator). One click → `POST /api/incidents/:id/acknowledge` via the existing `apiFetch`. On success: invalidate the detail-page row query (TanStack Query re-fetch); the `incident:state_changed` socket event is the source of truth for both the detail page's row cache and the Kanban's active list cache (both update from the same event — no optimistic UI). Show a transient success toast inline (matching the existing ThresholdsPage pattern: 4s TTL, no library). Disabled while the mutation is in flight. Errors render a transient error toast; the row stays as-is.
++
++## Boundaries & Constraints
++
++**Always:**
++
++- The button is rendered on the detail page only — NOT on Kanban cards. Kanban is the operator's "what do I need to work on next" surface; clicking through to `/incidents/:id` is the explicit acknowledgement workflow per Story 4.4's design notes.
++- The button is gated by the SAME `actionSlotsFor(incident, viewerRole)` contract from Story 4.1 (`packages/web/src/components/IncidentCard.types.ts:83-94`). For an OPEN incident viewed by an Operator/Admin, this returns the `acknowledge` slot. The detail page calls the same helper — single source of truth for which actions render.
++- The mutation is disabled while in flight (no double-click idempotency risk; the server already rejects 409 on second-call from a non-OPEN state).
++- Toast feedback is inline state (matching `ThresholdsPage.tsx:56-69`'s `pushToast` pattern), NOT a library — the codebase has no toast dependency today.
++- The button visually disappears once the row's state is no longer OPEN (driven by the existing `useIncidentDetailSocket` subscription). The socket event is the source of truth; the local row cache updates BEFORE the button re-renders.
++- The body of the existing `<IncidentDetailBody />` gains an actions region below the `<dl>` and above the audit timeline. The header gets the Acknowledge button on the right (next to the existing severity + state label row) — Operator ergonomics, not visual hierarchy.
++
++**Ask First:**
++
++- None. The action surface, RBAC, and error UX are all pinned by existing patterns (4.1 + 4.2 + 4.4).
++
++**Never:**
++
++- Optimistic UI for the mutation. Server is authoritative; the cache mutation IS the optimistic surface via the existing `incident:state_changed` subscription.
++- A Kanban card-level button. 4.4 design notes are explicit: clicking a card → `/incidents/:id` → action there. Adding a Kanban-level Acknowledge violates that flow.
++- A new toast library. The codebase has none; ThresholdsPage inlines the pattern. This story reuses it; if a future story wants a shared `<ToastRegion />`, that's a separate epic-6 sweep.
++- A new shared `useAcknowledgeMutation` hook. The detail page is the only consumer in 4.5; abstracting prematurely is YAGNI. Stories 4.6 / 4.7 / 4.11 each ship their own one-shot mutation on the detail page; the extraction is a future cleanup.
++- A `confirm` dialog before the call. Acknowledge is reversible (reopen path, 4.11). No confirmation friction.
++
++## I/O & Edge-Case Matrix
++
++| Scenario             | Input / State                                                                                                                  | Expected Output / Behavior                                                                                                                                                                                     | Error Handling                            |
++| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
++| `HAPPY_PATH`         | OPEN incident + Admin/Operator viewer                                                                                          | Button visible, enabled. Click → POST 200 → toast "Acknowledged" → row re-fetched via cache invalid → socket event lands → row shows `state: "ACKNOWLEDGED"`, `acknowledged_at` populated → button disappears. | N/A                                       |
++| `NOT_OPEN`           | Incident in any state ≠ OPEN (ACKNOWLEDGED, INSPECTING, SAFE, UNSAFE, MONITORING, RESOLVED, REOPENED)                          | Button not rendered (gated by `actionSlotsFor` returning `null` for non-OPEN states).                                                                                                                          | N/A                                       |
++| `RBAC_DENIED`        | OPEN incident + Technician or Viewer viewer                                                                                    | Button not rendered (gated by `actionSlotsFor` — both roles return `null` for `acknowledge`).                                                                                                                  | N/A                                       |
++| `MUTATION_IN_FLIGHT` | User clicks twice in quick succession                                                                                          | First click fires POST; button becomes disabled (in-flight state). Second click is a no-op (button is `disabled`).                                                                                             | N/A                                       |
++| `CONFLICT_409`       | Server returns 409 (`invalid_state_transition` — row was already acknowledged by another operator between page load and click) | Error toast "Already acknowledged". Row cache invalidated; on next fetch, row shows ACKNOWLEDGED. Button disappears.                                                                                           | Toast; no row revert.                     |
++| `FORBIDDEN_403`      | Server returns 403 (token role drift between page load and click)                                                              | Error toast "Not authorized". Row cache invalidated; on next fetch, page renders `<RbacDenied />`.                                                                                                             | Toast → re-render to RBAC denied surface. |
++| `NOT_FOUND_404`      | Server returns 404 (incident deleted between page load and click)                                                              | Error toast "Incident not found". Row cache invalidated; page renders `<NotFound />`.                                                                                                                          | Toast → re-render to NotFound surface.    |
++| `SERVER_ERROR_500`   | Server returns 500                                                                                                             | Error toast "Failed to acknowledge. Try again." Button re-enables (mutation error state).                                                                                                                      | Toast; manual retry.                      |
++| `SOCKET_EVENT`       | `incident:state_changed` arrives during/after the mutation                                                                     | Row cache updates via the existing `useIncidentDetailSocket` subscriber. Button re-renders based on the new state. No double-update race — TanStack Query reconciles the invalidate + the socket mutation.     | N/A                                       |
++
++</frozen-after-approval>
++
++## Code Map
++
++**Web (`packages/web/`):**
++
++- `incidents/IncidentDetailPage.tsx` — add `useAcknowledgeMutation` inline (TanStack `useMutation`) + new `<IncidentDetailActions />` child component (renders the Acknowledge button or nothing). Wire into `<IncidentDetailBody />` after the `<dl>`. The detail page's existing dispatch already handles row state; this adds a write-side parallel.
++- `incidents/useAcknowledgeMutation.ts` — NEW. TanStack `useMutation` that wraps `apiFetch("/api/incidents/:id/acknowledge", { method: "POST" })`. Exposes `{ mutate, isPending, error }`. On success: invalidate `incidentDetailQueryKey(id)`. On error: classifies 4xx (tagged toast) vs 5xx (retry-able toast).
++- `incidents/IncidentDetailPage.spec.tsx` — extend `renderDetail` to accept `initialRole`. Add ~6 new tests: HAPPY_PATH, NOT_OPEN (button absent for ACKNOWLEDGED row), RBAC_DENIED (Technician viewer), MUTATION_IN_FLIGHT (button disabled during mutate), CONFLICT_409 (toast + row reconciled), NOT_FOUND_404 (toast + NotFound renders), SERVER_ERROR_500 (toast + button re-enabled).
++- `incidents/IncidentDetailActions.spec.tsx` — NEW. ~3 unit tests for the button's visibility logic (OPEN + Operator → visible; OPEN + Technician → not; ACKNOWLEDGED + Operator → not).
++- `incidents/toast.ts` — NEW. Tiny `useToasts()` hook + `<ToastRegion />` renderer (mirrors `ThresholdsPage.tsx:56-69` + `ThresholdsPopulatedView.tsx:18-23`). `<ToastRegion />` is mounted by `IncidentDetailPage` at the page root.
++- `incidents/toast.spec.ts` — NEW. ~3 tests: TTL expiry, success vs error tones, no toast region → no DOM.
++
++**Shared (`packages/shared/`):**
++
++- No changes. `ActionVerbSchema` at `incident.ts:114-121` already includes `"acknowledge"`.
++
++**Backend (`packages/api/`):**
++
++- No changes. `POST /api/incidents/:id/acknowledge` exists at `router.ts:349-353` with full RBAC + audit + state-machine enforcement. The mutation is a thin client over this existing endpoint.
++
++## Tasks & Acceptance
++
++**Execution:**
++
++- [x] 1. Write spec doc (this file). Status: draft.
++- [x] 2. Create `packages/web/src/incidents/toast.ts` with `useToasts()` hook + `<ToastRegion />` (mirrors ThresholdsPage inlined pattern).
++- [x] 3. Add `toast.spec.ts` (3 cases: TTL, tones, mount/unmount).
++- [x] 4. Create `packages/web/src/incidents/useAcknowledgeMutation.ts` wrapping `apiFetch` POST + 4xx/5xx classification.
++- [x] 5. Edit `IncidentDetailPage.tsx` to mount `<ToastRegion />`, render `<IncidentDetailActions />` inside `<IncidentDetailBody />`, and wire the mutation.
++- [x] 6. Create `IncidentDetailActions.tsx` — visibility gate via `actionSlotsFor`, button rendering, disabled state.
++- [x] 7. Add `IncidentDetailActions.spec.tsx` (3 visibility cases).
++- [x] 8. Extend `IncidentDetailPage.spec.tsx` `renderDetail` to accept `initialRole`; add 6 detail-page ack-flow tests.
++- [x] 9. Run `pnpm -F @surakkha/web test`, `pnpm -r typecheck`. All green.
++- [x] 10. Lint-fix + commit (2 commits) + push.
++
++**Acceptance Criteria:**
++
++1. The Acknowledge button renders on `/incidents/:id` for an OPEN incident viewed by Admin or Operator. Pinned in `IncidentDetailActions.spec.tsx`.
++2. The Acknowledge button does NOT render when the row's state is not OPEN, regardless of viewer role. Pinned in `IncidentDetailActions.spec.tsx`.
++3. The Acknowledge button does NOT render for a Technician or Viewer viewer of an OPEN incident. Pinned in `IncidentDetailActions.spec.tsx`.
++4. Clicking the button fires `POST /api/incidents/:id/acknowledge` exactly once; double-clicks are no-ops (button is disabled while in flight). Pinned in `IncidentDetailPage.spec.tsx`.
++5. On 200: a success toast appears, the row cache is invalidated, and the `incident:state_changed` socket event drives the cache mutation. The row shows `state: "ACKNOWLEDGED"` and `acknowledged_at` populated. The button disappears. Pinned in `IncidentDetailPage.spec.tsx`.
++6. On 409 (`invalid_state_transition`): an error toast appears; row cache invalidated; on next fetch the row shows ACKNOWLEDGED and the button disappears. Pinned in `IncidentDetailPage.spec.tsx`.
++7. On 404: an error toast appears; on next fetch the page renders `<NotFound />`. Pinned in `IncidentDetailPage.spec.tsx`.
++8. On 500: an error toast appears; the button re-enables (manual retry). Pinned in `IncidentDetailPage.spec.tsx`.
++
++## Spec Change Log
++
++_Empty until the first bad_spec loopback._
++
++## Design Notes
++
++**Why a button on the detail page only (not the Kanban).** 4.4 design notes are explicit that the Kanban is the "what do I need to work on next" surface — it routes to the detail page via `onClick`, where the explicit action workflow lives. Adding a Kanban-level button violates that flow and creates a UX ambiguity (click card = open detail; click button = ack?). Operator ergonomics win: one click on the Kanban → one click on the detail page button = two clear intentional steps. 4.5 honors this.
++
++**Why no optimistic UI.** Story 4.4's design notes: "Optimistic UI for socket-driven state changes. The server is authoritative; cache mutation IS the optimistic surface." The mutation handler invalidates the row query; the `incident:state_changed` socket event is the source of truth for cache mutation; both update from the same event. There's no place for a separate optimistic path without violating the contract.
++
++**Why inline toast, not a library.** The codebase has no toast dependency. `ThresholdsPage.tsx:56-69` + `ThresholdsPopulatedView.tsx:18-23` ship an inline `pushToast` pattern with `setTimeout` cleanup and a `<ToastRegion />` renderer. This story mirrors it in a tiny `toast.ts` module so Stories 4.6 / 4.7 / 4.11 can reuse. Extracting to a shared `<ToastRegion />` across all pages is a future epic-6 sweep — premature here.
++
++**Why `actionSlotsFor` (Story 4.1 contract) is the gate, not a role check inline.** The detail page already imports `SEVERITY_DOT_BG`, `SEVERITY_LABEL`, `STATE_LABEL` from `KanbanCard.tsx` (4.4 design notes: "classnames + testids mirror `KanbanCard.tsx` conventions"). Extending the same principle to the action affordance: the visibility gate is `actionSlotsFor(incident, viewerRole)`, the same single source of truth that Kanban cards will eventually consume. A future story that ships card-level buttons on the Kanban (out of scope here) reuses this contract verbatim.
++
++**Why not extract `useAcknowledgeMutation` as a generic hook.** 4.5 is the only consumer today. Stories 4.6 (assign), 4.7 (submit-result), 4.11 (reopen) each ship their own mutation; abstracting prematurely creates three near-duplicate hooks with shared boilerplate. The future cleanup (one shared `useIncidentMutation({ verb })` factory) is deferred to a post-epic-4 sweep.
++
++## Verification
++
++**Commands:**
++
++- `pnpm -F @surakkha/web test` — expected: existing 297 + ~9 new (3 toast + 3 actions + 6 detail-page ack-flow − 3 already-pinned duplicate cases) green.
++- `pnpm -r typecheck` — expected: clean.
++
++**Manual checks (if no CLI):**
++
++- Boot api + web; seed incidents (per RUNBOOK.md §4); navigate to `/incidents`; click an OPEN card → land on `/incidents/:id`.
++- Verify the Acknowledge button appears in the header (right side).
++- Click it. Verify: success toast appears for ~4s; row's state pill flips to "ACKNOWLEDGED"; button disappears.
++- Verify: a separate browser tab on `/incidents` Kanban sees the card move to the ACKNOWLEDGED column within ~1s (the same socket event drives both).
++- Switch role to Viewer via the role selector (or log in as a Technician). Verify: button does NOT render on an OPEN incident.
++- Curl the row's state to ACKNOWLEDGED manually. Verify: detail page's button disappears on the next socket event.
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index 6b1a45b..b539791 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -1,5 +1,5 @@
+ # generated: 2026-08-21
+-# last_updated: 2026-08-28T00:00:00.000Z
++# last_updated: 2026-08-28T01:00:00.000Z
+ # project: Surakkha
+ # project_key: NOKEY
+ # tracking_system: file-system
+@@ -51,7 +51,7 @@
+ #     backlog     → backlog
+ 
+ generated: 2026-08-21
+-last_updated: 2026-08-28T00:00:00.000Z
++last_updated: 2026-08-28T02:00:00.000Z
+ project: Surakkha
+ project_key: NOKEY
+ tracking_system: file-system
+@@ -102,7 +102,7 @@ development_status:
+   4-2-incident-state-machine-implementation: done
+   4-3-kanban-column-projection: done
+   4-4-incident-detail-page: done
+-  4-5-acknowledge-flow: backlog
++  4-5-acknowledge-flow: done
+   4-6-assign-technician-inspecting-transition: backlog
+   4-7-submit-result-safe-unsafe-monitoring: backlog
+   4-8-sticky-severitybanner-rbac: backlog
+@@ -495,13 +495,13 @@ stories:
+ 
+   - id: "4.5"
+     title: "Acknowledge Flow"
+-    status: backlog
++    status: done
+     epic: "4"
+     commit: null
+-    shipped: null
++    shipped: "2026-08-28"
+     covers: []
+     ledger:
+-      context: null
++      context: "_bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md"
+       review: null
+ 
+   - id: "4.6"
+diff --git a/packages/web/src/incidents/IncidentDetailActions.spec.tsx b/packages/web/src/incidents/IncidentDetailActions.spec.tsx
+new file mode 100644
+index 0000000..bd8e700
+--- /dev/null
++++ b/packages/web/src/incidents/IncidentDetailActions.spec.tsx
+@@ -0,0 +1,123 @@
++/**
++ * `IncidentDetailActions.spec.tsx` — Story 4.5.
++ *
++ * Unit tests for the Acknowledge button's visibility logic. Mirrors
++ * the Story 4.1 contract: `actionSlotsFor(incident, viewerRole)` is
++ * the SINGLE source of truth for which actions render. Three cases:
++ *
++ *   1. OPEN + Operator       → button visible.
++ *   2. OPEN + Technician     → button NOT visible (RBAC: Technician
++ *                              cannot acknowledge).
++ *   3. ACKNOWLEDGED + Operator → button NOT visible (state is past
++ *                              OPEN; no slot returned by `actionSlotsFor`).
++ *
++ * The mutation wiring (`isPending`, `onAcknowledge`) is the
++ * `IncidentDetailPage.spec.tsx`'s job — those tests mount the full
++ * detail page so they can drive the button's real behavior. This
++ * spec file pins the visibility contract only.
++ */
++import { type IncidentPayload } from "@surakkha/shared/incident";
++import { cleanup, render, screen } from "@testing-library/react";
++import { afterEach, describe, expect, it, vi } from "vitest";
++
++import { IncidentDetailActions } from "./IncidentDetailActions";
++
++const INCIDENT_ID = "11111111-1111-4111-8111-111111111111";
++const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
++
++const makeIncident = (overrides: Partial<IncidentPayload> = {}): IncidentPayload => ({
++  id: INCIDENT_ID,
++  device_id: DEVICE_A,
++  severity: "warning",
++  metric: "tds_ppm",
++  value: 312,
++  opened_at: "2026-08-27T00:00:00.000Z",
++  state: "OPEN",
++  assignee_user_id: null,
++  acknowledged_at: null,
++  resolved_at: null,
++  ...overrides,
++});
++
++afterEach(() => {
++  cleanup();
++});
++
++describe("Story 4.5 — IncidentDetailActions visibility", () => {
++  it("renders the Acknowledge button for OPEN + Operator", () => {
++    const incident = makeIncident({ state: "OPEN" });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Operator"
++        isPending={false}
++        onAcknowledge={() => undefined}
++      />,
++    );
++    expect(screen.getByTestId("incident-detail-actions")).toBeInTheDocument();
++    expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
++      "Acknowledge",
++    );
++    expect(screen.getByTestId("incident-detail-acknowledge-button")).not.toBeDisabled();
++  });
++
++  it("does NOT render the Acknowledge button for OPEN + Technician (RBAC)", () => {
++    const incident = makeIncident({ state: "OPEN" });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Technician"
++        isPending={false}
++        onAcknowledge={() => undefined}
++      />,
++    );
++    // The component returns `null` — no actions region, no button.
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++  });
++
++  it("does NOT render the Acknowledge button for ACKNOWLEDGED + Operator (NOT_OPEN)", () => {
++    const incident = makeIncident({ state: "ACKNOWLEDGED" });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Operator"
++        isPending={false}
++        onAcknowledge={() => undefined}
++      />,
++    );
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++  });
++
++  it("disables the button while the mutation is in flight (MUTATION_IN_FLIGHT)", () => {
++    const incident = makeIncident({ state: "OPEN" });
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Operator"
++        isPending={true}
++        onAcknowledge={() => undefined}
++      />,
++    );
++    const button = screen.getByTestId("incident-detail-acknowledge-button");
++    expect(button).toBeDisabled();
++    expect(button).toHaveTextContent("Acknowledging...");
++  });
++
++  it("fires onAcknowledge on click", () => {
++    const incident = makeIncident({ state: "OPEN" });
++    const onAcknowledge = vi.fn();
++    render(
++      <IncidentDetailActions
++        incident={incident}
++        viewerRole="Operator"
++        isPending={false}
++        onAcknowledge={onAcknowledge}
++      />,
++    );
++    screen.getByTestId("incident-detail-acknowledge-button").click();
++    expect(onAcknowledge).toHaveBeenCalledTimes(1);
++  });
++});
+diff --git a/packages/web/src/incidents/IncidentDetailActions.tsx b/packages/web/src/incidents/IncidentDetailActions.tsx
+new file mode 100644
+index 0000000..e2c5e31
+--- /dev/null
++++ b/packages/web/src/incidents/IncidentDetailActions.tsx
+@@ -0,0 +1,95 @@
++/**
++ * `IncidentDetailActions` — Story 4.5.
++ *
++ * The Acknowledge button on the detail page. Mounted by
++ * `<IncidentDetailBody />` between the `<dl>` and the audit timeline.
++ *
++ * Visibility gate: `actionSlotsFor(incident, viewerRole)` from
++ * Story 4.1's contract module (`@/components/IncidentCard.types`).
++ * The gate is the SAME single source of truth that Kanban cards
++ * will eventually consume for card-level affordances (out of scope
++ * for 4.5). Returns:
++ *
++ *   - "acknowledge" in the slot list → render the button
++ *   - otherwise                       → render nothing
++ *
++ * The button is `disabled` while the mutation is in flight (idempotent
++ * re-click protection; the api also rejects 409 on second-call, but
++ * the disable prevents the round-trip + flash entirely). On click,
++ * the mutation fires; success + error toasts surface via the
++ * page's `useToasts()` queue.
++ *
++ * Why a dedicated component (not inline JSX in IncidentDetailBody):
++ * 4.6 (assign) and 4.7 (submit-result) each ship their own action
++ * region; extracting the action surface today keeps the body
++ * component under the lint `max-lines-per-function: 200` ceiling
++ * AND makes the per-action visibility test trivial (mount the
++ * component, assert presence / absence).
++ */
++import { type IncidentPayload } from "@surakkha/shared/incident";
++import { type Role } from "@surakkha/shared/rbac";
++
++import { actionSlotsFor } from "../components/IncidentCard.types";
++
++/**
++ * Props for `<IncidentDetailActions />`.
++ *
++ * `mutation` is the full `useMutation` result so the component
++ * controls button-disabled + click forwarding without re-creating
++ * the mutation (the page owns the mutation lifecycle). Pattern
++ * mirrors ThresholdsPage's `onDeactivate` / `onActivate` props
++ * threaded through `<ThresholdsPopulatedView />`.
++ */
++interface IncidentDetailActionsProps {
++  readonly incident: IncidentPayload;
++  readonly viewerRole: Role | null;
++  readonly isPending: boolean;
++  readonly onAcknowledge: () => void;
++}
++
++/**
++ * Render the Acknowledge button, or nothing if the slot is gated.
++ *
++ * Returns `null` for every case where the slot is NOT available —
++ * we intentionally render nothing rather than a disabled button
++ * with a tooltip, because:
++ *
++ *   - The detail page's header already surfaces the state pill; the
++ *     "no button" affordance IS the read-only signal.
++ *   - Future actions (assign / submit-result / reopen in Stories
++ *     4.6 / 4.7 / 4.11) will gate the same way; rendering nothing
++ *     for closed slots keeps the actions region consistent.
++ *
++ * Style choices mirror the ThresholdsPage palette so the operator
++ * gets a consistent button affordance across the app. The button
++ * copy is "Acknowledge" — concise verb.
++ */
++export const IncidentDetailActions = ({
++  incident,
++  viewerRole,
++  isPending,
++  onAcknowledge,
++}: IncidentDetailActionsProps) => {
++  const slots = actionSlotsFor(incident, viewerRole);
++  const canAcknowledge = slots.includes("acknowledge");
++  if (!canAcknowledge) return null;
++
++  return (
++    <div data-testid="incident-detail-actions" className="flex flex-col gap-2">
++      <button
++        type="button"
++        data-testid="incident-detail-acknowledge-button"
++        disabled={isPending}
++        onClick={onAcknowledge}
++        className="self-start rounded-input border px-4 py-2 text-sm font-medium text-white"
++        style={{
++          backgroundColor: isPending ? "#94A3B8" : "#0F172A",
++          borderColor: "#0F172A",
++          cursor: isPending ? "not-allowed" : "pointer",
++        }}
++      >
++        {isPending ? "Acknowledging..." : "Acknowledge"}
++      </button>
++    </div>
++  );
++};
+diff --git a/packages/web/src/incidents/IncidentDetailPage.spec.tsx b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+index 07699cc..591686d 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.spec.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+@@ -33,7 +33,7 @@
+ import { type IncidentStateChangedEvent } from "@surakkha/shared/events";
+ import { type IncidentPayload } from "@surakkha/shared/incident";
+ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+-import { cleanup, render, screen, waitFor } from "@testing-library/react";
++import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { MemoryRouter, Route, Routes } from "react-router-dom";
+ 
+@@ -94,7 +94,7 @@ const buildQueryClient = (): QueryClient =>
+     },
+   });
+ 
+-const renderDetail = () => {
++const renderDetail = (role: "Admin" | "Operator" | "Technician" | "Viewer" = "Operator") => {
+   const qc = buildQueryClient();
+   return render(
+     <QueryClientProvider client={qc}>
+@@ -104,7 +104,7 @@ const renderDetail = () => {
+           which leaves the detail page's `id` undefined and the
+           queries disabled (the loading skeleton renders forever). */}
+       <MemoryRouter initialEntries={[`/incidents/${INCIDENT_ID}`]}>
+-        <CurrentRoleProvider initialRole="Operator">
++        <CurrentRoleProvider initialRole={role}>
+           <AppShell>
+             <Routes>
+               <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+@@ -512,3 +512,333 @@ describe("Story 4.4 — useIncidentDetailSocket mount/unmount cleanup", () => {
+     ).not.toThrow();
+   });
+ });
++
++// ============================================================================
++// Story 4.5 — Acknowledge Flow
++// ============================================================================
++//
++// Coverage matrix (each spec AC bullet → at least one `it(...)`):
++//
++//   AC "HAPPY_PATH"             — OPEN + Operator → click → POST 200 →
++//                                success toast "Acknowledged" → row
++//                                invalidates → socket event lands →
++//                                data-state="ACKNOWLEDGED" → button
++//                                disappears.
++//   AC "NOT_OPEN"               — ACKNOWLEDGED row → button NOT rendered.
++//   AC "MUTATION_IN_FLIGHT"     — click twice in quick succession →
++//                                second click is a no-op (button
++//                                disabled during in-flight mutation).
++//   AC "CONFLICT_409"           — server returns 409 → error toast
++//                                "Already acknowledged".
++//   AC "FORBIDDEN_403"          — server returns 403 → error toast
++//                                "Not authorized".
++//   AC "NOT_FOUND_404"          — server returns 404 → error toast
++//                                "Incident not found" + page renders
++//                                <NotFound /> on next fetch.
++//   AC "SERVER_ERROR_500"       — server returns 500 → error toast
++//                                "Failed to acknowledge. Try again."
++//                                + button re-enables.
++
++// The apiFetch helper prepends `config.apiOrigin` (e.g. `https://api.test`),
++// so the absolute URL passed to our `installFetch` handler ends with this
++// segment rather than equalling it. `endsWith` keeps the helper comparison
++// robust if the origin changes.
++const ACK_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/acknowledge`;
++
++describe("Story 4.5 — AC: happy path (POST 200 → success toast → state reconciled)", () => {
++  it("fires POST, surfaces 'Acknowledged' toast, and the row transitions to ACKNOWLEDGED via socket event", async () => {
++    let ackCallCount = 0;
++    installFetch(async (url, init) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        ackCallCount += 1;
++        expect(init?.method).toBe("POST");
++        return new Response(
++          JSON.stringify(
++            baseIncident({
++              state: "ACKNOWLEDGED",
++              acknowledged_at: "2026-08-27T01:00:00.000Z",
++            }),
++          ),
++          { status: 200 },
++        );
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    // Acknowledge button visible for OPEN + Operator.
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    // Click → POST + success toast.
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-toast-success")).toHaveTextContent("Acknowledged");
++    });
++    expect(ackCallCount).toBe(1);
++
++    // The socket-driven state mutation arrives; the row's
++    // `data-state` updates to ACKNOWLEDGED. The button then
++    // disappears because the gate (`actionSlotsFor`) returns no
++    // slot for ACKNOWLEDGED + Operator.
++    expect(activeSocket).not.toBeNull();
++    activeSocket?.__emitStateChanged({
++      incident_id: INCIDENT_ID,
++      from_state: "OPEN",
++      to_state: "ACKNOWLEDGED",
++      changed_at: "2026-08-27T01:00:00.000Z",
++      actor_user_id: "00000000-0000-4000-8000-00000000a001",
++    });
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
++        "data-state",
++        "ACKNOWLEDGED",
++      );
++    });
++    await waitFor(() => {
++      expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++    });
++  });
++});
++
++describe("Story 4.5 — AC: NOT_OPEN (button absent for ACKNOWLEDGED row)", () => {
++  it("does NOT render the Acknowledge button when state === 'ACKNOWLEDGED'", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
++    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
++  });
++});
++
++describe("Story 4.5 — AC: MUTATION_IN_FLIGHT (button disabled, double-click is a no-op)", () => {
++  it("disables the button while in flight and a second click does not fire another POST", async () => {
++    let ackCallCount = 0;
++    let resolveAck: (() => void) | null = null;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        ackCallCount += 1;
++        // Hold the response open so the button stays `disabled`.
++        await new Promise<void>((resolve) => {
++          resolveAck = resolve;
++        });
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    // First click: fires POST.
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeDisabled();
++    });
++    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
++      "Acknowledging...",
++    );
++    expect(ackCallCount).toBe(1);
++
++    // Second click: button is `disabled`, fireEvent.click is a no-op
++    // for disabled buttons (React swallows the click before the
++    // handler fires).
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++    expect(ackCallCount).toBe(1);
++
++    // Resolve the in-flight mutation so the test cleans up cleanly.
++    resolveAck?.();
++  });
++});
++
++describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged')", () => {
++  it("surfaces the 'Already acknowledged' error toast and invalidates the row cache", async () => {
++    let ackCallCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        ackCallCount += 1;
++        return new Response(
++          JSON.stringify({
++            error: "invalid_state_transition",
++            from: "ACKNOWLEDGED",
++            attempted: "acknowledge",
++          }),
++          { status: 409 },
++        );
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
++        "Already acknowledged",
++      );
++    });
++    expect(ackCallCount).toBe(1);
++  });
++});
++
++describe("Story 4.5 — AC: FORBIDDEN_403 (error toast 'Not authorized')", () => {
++  it("surfaces the 'Not authorized' error toast when the server returns 403", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent("Not authorized");
++    });
++  });
++});
++
++describe("Story 4.5 — AC: NOT_FOUND_404 (error toast 'Incident not found' + page renders NotFound)", () => {
++  it("surfaces the 'Incident not found' error toast and <NotFound /> renders on the next fetch", async () => {
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        // First fetch: returns the row. Second fetch (after the
++        // mutation invalidates the cache): 404 — the row was
++        // deleted between the click and the re-fetch.
++        rowFetchCount += 1;
++        if (rowFetchCount === 1) {
++          return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), {
++            status: 200,
++          });
++        }
++        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++
++    // Toast appears immediately.
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
++        "Incident not found",
++      );
++    });
++
++    // After the mutation's `onSuccess` invalidates the row query, the
++    // next fetch returns 404 → page renders <NotFound />.
++    await waitFor(() => {
++      expect(screen.getByTestId("not-found")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
++  });
++});
++
++describe("Story 4.5 — AC: SERVER_ERROR_500 (error toast 'Failed to acknowledge. Try again.')", () => {
++  it("surfaces the retryable error toast and re-enables the button for manual retry", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ACK_URL_SUFFIX)) {
++        return new Response("internal", { status: 500 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
++        "Failed to acknowledge. Try again.",
++      );
++    });
++
++    // Button re-enables (mutation is no longer in flight).
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-acknowledge-button")).not.toBeDisabled();
++    });
++    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
++      "Acknowledge",
++    );
++  });
++});
+diff --git a/packages/web/src/incidents/IncidentDetailPage.tsx b/packages/web/src/incidents/IncidentDetailPage.tsx
+index cc4d9a9..be4504d 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.tsx
+@@ -1,28 +1,32 @@
+ /**
+- * `IncidentDetailPage` — Story 4.4.
++ * `IncidentDetailPage` — Story 4.4 + Story 4.5.
+  *
+- * The read-only detail view at `/incidents/:id`. Renders the
+- * parent incident row + the IncidentEvent audit timeline.
+- * Subscribes to `incident:state_changed` and mutates the cached
+- * row in place; resolved incidents STAY visible (different from
+- * the Kanban's drop-on-RESOLVED — the detail page is read-only;
+- * resolved incidents are first-class).
++ * The detail view at `/incidents/:id`. Renders the parent incident
++ * row + the IncidentEvent audit timeline. Subscribes to
++ * `incident:state_changed` and mutates the cached row in place;
++ * resolved incidents STAY visible (different from the Kanban's
++ * drop-on-RESOLVED — the detail page surfaces the resolved row as
++ * a first-class citizen).
++ *
++ * Story 4.5 layers in the Acknowledge button + a page-local toast
++ * surface. The button is gated by `actionSlotsFor` (single source
++ * of truth across the Kanban card affordance contract + the detail
++ * page action region). Click → `POST /api/incidents/:id/acknowledge`
++ * → toast feedback. The mutation does NOT mutate the cache
++ * directly; on success it invalidates the row query so the existing
++ * `useIncidentDetailSocket` subscriber reconciles via the next
++ * socket event.
+  *
+  * Wire shape (canonical from `@surakkha/shared/incident`):
+  *
+- *   GET /api/incidents/:id            → IncidentPayload
+- *   GET /api/incidents/:id/events     → { events: IncidentEventPayload[] }
++ *   GET  /api/incidents/:id                  → IncidentPayload
++ *   GET  /api/incidents/:id/events           → { events: IncidentEventPayload[] }
++ *   POST /api/incidents/:id/acknowledge      → IncidentPayload (200) / error envelope (4xx/5xx)
+  *
+- * The two fetches run in parallel; each has its own cache key
++ * The two reads run in parallel; each has its own cache key
+  * (`["incidents", "detail", id]` for the row;
+  * `["incidents", "detail", id, "events"]` for the timeline).
+  *
+- * Why no action affordances: Story 4.4 is the read-only frame;
+- * Stories 4.5 / 4.6 / 4.7 / 4.11 ship the acknowledge / assign /
+- * submit-result / reopen buttons. The detail page surfaces the
+- * data (state, assignee, resolved_at) that those buttons will
+- * mutate.
+- *
+  * Why a 404 surface here but not on the Kanban: the active list
+  * (Kanban) never 404s — it's a list endpoint. The per-incident
+  * read can 404 when the id is bogus or the row was deleted.
+@@ -42,6 +46,7 @@ import {
+   type IncidentPayload,
+   IncidentPayloadSchema,
+ } from "@surakkha/shared/incident";
++import { type Role } from "@surakkha/shared/rbac";
+ import { useQuery, useQueryClient } from "@tanstack/react-query";
+ import { useMemo } from "react";
+ import { useParams } from "react-router-dom";
+@@ -50,10 +55,14 @@ import { z } from "zod";
+ import { NotFound } from "../access/NotFound";
+ import { RbacDenied } from "../access/RbacDenied";
+ import { apiFetch } from "../api/apiClient";
++import { useCurrentRole } from "../auth/CurrentRoleContext";
+ 
++import { IncidentDetailActions } from "./IncidentDetailActions";
+ import { IncidentDetailNotFoundError } from "./IncidentDetailNotFoundError";
+ import { IncidentDetailRbacDeniedError } from "./IncidentDetailRbacDeniedError";
+ import { SEVERITY_DOT_BG, SEVERITY_LABEL, STATE_LABEL } from "./KanbanCard";
++import { ToastRegion, useToasts } from "./toast";
++import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
+ import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
+ 
+ /** HTTP status code sentinels — RBAC denial + not-found. */
+@@ -120,10 +129,22 @@ const ISO_DATE_PREFIX_LENGTH = 10;
+  * Queries (row + timeline); each has its own cache key so the
+  * socket mutator updates the row independently of the timeline
+  * fetch.
++ *
++ * Story 4.5 adds:
++ *   - `useToasts()` — page-local toast queue mounted as
++ *     `<ToastRegion />` at the page root (top of the return tree).
++ *   - `useAcknowledgeMutation(id)` — TanStack mutation wrapping
++ *     `POST /api/incidents/:id/acknowledge`. Success → success toast;
++ *     failure → classified error toast. The mutation invalidates the
++ *     row cache on success; the cache mutation IS the optimistic
++ *     surface via the socket event.
+  */
+ export const IncidentDetailPage = () => {
+   const { id } = useParams<{ id: string }>();
+   const queryClient = useQueryClient();
++  const viewerRole = useCurrentRole();
++  const { toasts, pushToast } = useToasts();
++  const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
+ 
+   useIncidentDetailSocket(id ?? "");
+ 
+@@ -192,17 +213,42 @@ export const IncidentDetailPage = () => {
+     [timelineQuery.data?.events],
+   );
+ 
++  // Success + error handlers for the Acknowledge mutation. The
++  // handlers are defined as local function references; the
++  // `mutate()` call invokes them after the Promise settles.
++  // The mutation itself owns the `isPending` state, so the button
++  // visibility + disabled state reads through `acknowledgeMutation.isPending`.
++  const handleAcknowledge = (): void => {
++    acknowledgeMutation.mutate(undefined, {
++      onSuccess: () => {
++        pushToast("success", "Acknowledged");
++      },
++      onError: (err: AcknowledgeMutationError) => {
++        // The mutation classifier pinned the toast copy. The
++        // `status` is preserved on the error for any future
++        // routing logic that wants to switch on it.
++        pushToast("error", err.message);
++      },
++    });
++  };
++
+   return (
+-    <IncidentDetailDispatch
+-      rowQuery={rowQuery}
+-      incident={incident}
+-      timeline={timeline}
+-      onRetry={() => {
+-        void queryClient.invalidateQueries({
+-          queryKey: incidentDetailQueryKey(id ?? ""),
+-        });
+-      }}
+-    />
++    <>
++      <IncidentDetailDispatch
++        rowQuery={rowQuery}
++        incident={incident}
++        timeline={timeline}
++        viewerRole={viewerRole}
++        isAck={acknowledgeMutation.isPending}
++        onAcknowledge={handleAcknowledge}
++        onRetry={() => {
++          void queryClient.invalidateQueries({
++            queryKey: incidentDetailQueryKey(id ?? ""),
++          });
++        }}
++      />
++      <ToastRegion toasts={toasts} />
++    </>
+   );
+ };
+ 
+@@ -211,16 +257,27 @@ export const IncidentDetailPage = () => {
+  * row query's error/success state. Extracted from
+  * `IncidentDetailPage` to keep its cyclomatic complexity under
+  * the `complexity: 10` lint ceiling.
++ *
++ * Story 4.5 threads `viewerRole`, `isAck`, and
++ * `onAcknowledge` so the body can render `<IncidentDetailActions />`
++ * (visible only when `actionSlotsFor` returns the `acknowledge`
++ * slot for the current viewer).
+  */
+ const IncidentDetailDispatch = ({
+   rowQuery,
+   incident,
+   timeline,
++  viewerRole,
++  isAck,
++  onAcknowledge,
+   onRetry,
+ }: {
+   readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
+   readonly incident: IncidentPayload | undefined;
+   readonly timeline: readonly IncidentEventPayload[];
++  readonly viewerRole: Role | null;
++  readonly isAck: boolean;
++  readonly onAcknowledge: () => void;
+   readonly onRetry: () => void;
+ }) => {
+   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
+@@ -235,22 +292,37 @@ const IncidentDetailDispatch = ({
+   if (incident === undefined) {
+     return <IncidentDetailSkeleton />;
+   }
+-  return <IncidentDetailBody incident={incident} timeline={timeline} />;
++  return (
++    <IncidentDetailBody
++      incident={incident}
++      timeline={timeline}
++      viewerRole={viewerRole}
++      isAck={isAck}
++      onAcknowledge={onAcknowledge}
++    />
++  );
+ };
+ 
+ /**
+  * The detail-page body (incident row + audit timeline). Extracted
+  * from `IncidentDetailPage` so the page component stays under the
+  * `max-lines-per-function: 200` lint ceiling; the body renders
+- * the header (severity dot + state label), the field `<dl>`, and
+- * the timeline list.
++ * the header (severity dot + state label), the field `<dl>`, the
++ * `<IncidentDetailActions />` region (Story 4.5 — between the `<dl>`
++ * and the audit timeline), and the timeline list.
+  */
+ const IncidentDetailBody = ({
+   incident,
+   timeline,
++  viewerRole,
++  isAck,
++  onAcknowledge,
+ }: {
+   readonly incident: IncidentPayload;
+   readonly timeline: readonly IncidentEventPayload[];
++  readonly viewerRole: Role | null;
++  readonly isAck: boolean;
++  readonly onAcknowledge: () => void;
+ }) => (
+   <div
+     data-testid="incident-detail-root"
+@@ -306,6 +378,13 @@ const IncidentDetailBody = ({
+       </dd>
+     </dl>
+ 
++    <IncidentDetailActions
++      incident={incident}
++      viewerRole={viewerRole}
++      isPending={isAck}
++      onAcknowledge={onAcknowledge}
++    />
++
+     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">
+       <h2 className="text-md font-semibold text-neutral-body">Audit timeline</h2>
+       {timeline.length === 0 ? (
+diff --git a/packages/web/src/incidents/toast.spec.tsx b/packages/web/src/incidents/toast.spec.tsx
+new file mode 100644
+index 0000000..127230c
+--- /dev/null
++++ b/packages/web/src/incidents/toast.spec.tsx
+@@ -0,0 +1,132 @@
++/**
++ * `toast.spec.ts` — Story 4.5.
++ *
++ * Three test groups covering the toast primitive's three contracts:
++ *
++ *   1. TTL expiry — pushed toasts auto-drop after `TOAST_TTL_MS`
++ *      (matches the ThresholdsPage 4_000 ms window).
++ *   2. Success vs error tones — `data-tone` and `data-testid` distinguish
++ *      the two; the rendered `<li>` count matches the push count.
++ *   3. No `<ToastRegion />` mounted → no DOM. The hook can be used
++ *      without the region, and the region renders nothing for an empty
++ *      queue.
++ *
++ * The hook + region are tested independently of any parent
++ * `IncidentDetailPage` wrapper — these are unit tests of the
++ * primitive itself, not integration tests of the mutation flow
++ * (those live in `IncidentDetailPage.spec.tsx`).
++ */
++import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++
++import { ToastRegion, useToasts, TOAST_TTL_MS } from "./toast";
++
++beforeEach(() => {
++  vi.useFakeTimers();
++});
++
++afterEach(() => {
++  // RTL does not auto-clean between `it`s. Without explicit
++  // `cleanup()` the prior test's `<ToastRegion />` DOM stays
++  // mounted, polluting subsequent `getByTestId` / `queryByTestId`
++  // calls with stale elements.
++  cleanup();
++  vi.useRealTimers();
++});
++
++describe("Story 4.5 — toast TTL expiry", () => {
++  it("auto-drops a pushed toast after TOAST_TTL_MS", () => {
++    // `TOAST_TTL_MS` MUST match the ThresholdsPage 4_000 ms; pin it
++    // here so the two toast surfaces stay in lock-step.
++    expect(TOAST_TTL_MS).toBe(4_000);
++
++    const { result } = renderHook(() => useToasts());
++    act(() => {
++      result.current.pushToast("success", "Acknowledged");
++    });
++
++    // Immediately after push: toast visible.
++    expect(result.current.toasts).toHaveLength(1);
++    expect(result.current.toasts[0]?.tone).toBe("success");
++    expect(result.current.toasts[0]?.message).toBe("Acknowledged");
++
++    // Just before TTL: still visible.
++    act(() => {
++      vi.advanceTimersByTime(TOAST_TTL_MS - 1);
++    });
++    expect(result.current.toasts).toHaveLength(1);
++
++    // Exactly TTL: dropped. The setTimeout fires under act(); the
++    // queue collapses to empty.
++    act(() => {
++      vi.advanceTimersByTime(1);
++    });
++    expect(result.current.toasts).toHaveLength(0);
++  });
++
++  it("cancels pending TTL timers on unmount (no late setState)", () => {
++    const { result, unmount } = renderHook(() => useToasts());
++    act(() => {
++      result.current.pushToast("error", "Already acknowledged");
++    });
++    expect(result.current.toasts).toHaveLength(1);
++
++    // Unmount BEFORE TTL elapses. The cleanup effect runs `clearTimeout`
++    // on every tracked timer. Advancing the clock should NOT fire a
++    // late `setState` because the timer was cancelled. If we left a
++    // dangling timer, React would warn about `setState on unmounted
++    // component` (the test rig does not capture this warning, but the
++    // cleanup is the contract). The check is the lack of throw.
++    unmount();
++    expect(() => {
++      act(() => {
++        vi.advanceTimersByTime(TOAST_TTL_MS + 1_000);
++      });
++    }).not.toThrow();
++  });
++});
++
++describe("Story 4.5 — toast success vs error tones", () => {
++  it("renders one region <li> per toast, with the right tone testid", () => {
++    const { result } = renderHook(() => useToasts());
++    act(() => {
++      result.current.pushToast("success", "Acknowledged");
++      result.current.pushToast("error", "Failed to acknowledge. Try again.");
++    });
++
++    render(<ToastRegion toasts={result.current.toasts} />);
++
++    const region = screen.getByTestId("incident-detail-toast-region");
++    expect(region).toBeInTheDocument();
++    expect(screen.getByTestId("incident-detail-toast-success")).toHaveTextContent("Acknowledged");
++    expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
++      "Failed to acknowledge. Try again.",
++    );
++
++    // The two entries differ by tone (data-tone attribute).
++    expect(screen.getByTestId("incident-detail-toast-success")).toHaveAttribute(
++      "data-tone",
++      "success",
++    );
++    expect(screen.getByTestId("incident-detail-toast-error")).toHaveAttribute("data-tone", "error");
++  });
++
++  it("renders no <li> when the queue is empty", () => {
++    render(<ToastRegion toasts={[]} />);
++    const region = screen.getByTestId("incident-detail-toast-region");
++    expect(region).toBeInTheDocument();
++    expect(region.querySelectorAll("li")).toHaveLength(0);
++  });
++});
++
++describe("Story 4.5 — toast region mount/unmount", () => {
++  it("does NOT render any toast region when <ToastRegion /> is not mounted", () => {
++    // Pairs with "with region → with DOM": absence of `<ToastRegion />`
++    // means absence of `data-testid="incident-detail-toast-region"`.
++    // This guards against a regression where the page accidentally
++    // renders a fresh `<ul>` for every toast inside the body content.
++    const { container } = render(<div data-testid="no-toast-here">No toasts here.</div>);
++    expect(screen.queryByTestId("incident-detail-toast-region")).toBeNull();
++    expect(container.querySelector("[data-testid='incident-detail-toast-region']")).toBeNull();
++  });
++});
+diff --git a/packages/web/src/incidents/toast.tsx b/packages/web/src/incidents/toast.tsx
+new file mode 100644
+index 0000000..5ffaa19
+--- /dev/null
++++ b/packages/web/src/incidents/toast.tsx
+@@ -0,0 +1,158 @@
++/**
++ * `toast.ts` — Story 4.5.
++ *
++ * Tiny inline toast surface for the Incident detail page. Mirrors the
++ * pattern that already lives in
++ * `packages/web/src/admin/thresholds/ThresholdsPage.tsx:56-69` and
++ * `ThresholdsPopulatedView.tsx:18-23`: a `useToasts()` hook that
++ * exposes a `pushToast(tone, message)` imperative API, paired with a
++ * `<ToastRegion />` renderer that walks the live toast list. No
++ * external toast library is introduced — Stories 4.6 / 4.7 / 4.11
++ * each consume this same primitive from the detail page; extracting
++ * to a shared `<ToastRegion />` across all pages is a future Epic-6
++ * sweep.
++ *
++ * Why inline (not a library):
++ *
++ *   - The codebase has zero toast dependencies today. Pulling in a
++ *     third-party library for a single 4-second transient would be
++ *     premature.
++ *   - ThresholdsPage already owns an inline pattern; mirroring it
++ *     keeps the operator UX consistent (same green/red palette, same
++ *     4-second TTL).
++ *
++ * Design notes:
++ *
++ *   - `useToasts()` owns the toast list state + a `Set<Timeout>`
++ *     ref-tracked timer pool so unmount cleanly cancels pending `setTimeout`
++ *     callbacks (no late `setState` on an unmounted tree).
++ *   - `<ToastRegion />` is mounted at the page root by
++ *     `IncidentDetailPage`. It renders an `aria-live="polite"` `<ul>`
++ *     mirroring the Thresholds convention.
++ *   - The `ToastEntry.id` counter is page-scoped (a single
++ *     `useRef<number>(0)`); toasts do NOT collide across mounts because
++ *     the hook is page-local.
++ *   - TTL is 4_000 ms — matches `ThresholdsPage`'s `TOAST_TTL_MS`.
++ */
++
++import { useCallback, useEffect, useRef, useState } from "react";
++
++const TOAST_TTL_MS = 4_000;
++
++export type ToastTone = "success" | "error";
++
++export interface ToastEntry {
++  readonly id: number;
++  readonly tone: ToastTone;
++  readonly message: string;
++}
++
++interface UseToastsResult {
++  readonly toasts: readonly ToastEntry[];
++  readonly pushToast: (tone: ToastTone, message: string) => void;
++}
++
++/**
++ * `useToasts()` — page-local toast queue with auto-expiry TTL.
++ *
++ * Returns the live toast list (consumed by `<ToastRegion />`) plus a
++ * stable `pushToast(tone, message)` callback. Each push schedules a
++ * `setTimeout` to drop the toast after `TOAST_TTL_MS`; the timer is
++ * tracked in a `useRef` so unmount cancels every pending timer in one
++ * pass.
++ *
++ * The hook's contract:
++ *   - `pushToast` is referentially stable across renders (wrapped in
++ *     `useCallback` with no deps) so consumers can safely include it
++ *     in a `useEffect` dep array without re-firing on every render.
++ *   - `toasts` updates synchronously after `pushToast` returns, then
++ *     is filtered after the TTL elapses. The two states are visibly
++ *     distinct in tests (the post-TTL render no longer contains the
++ *     dropped toast id).
++ */
++export const useToasts = (): UseToastsResult => {
++  const [toasts, setToasts] = useState<readonly ToastEntry[]>([]);
++  const nextIdRef = useRef(0);
++  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
++
++  const pushToast = useCallback((tone: ToastTone, message: string): void => {
++    const id = nextIdRef.current + 1;
++    nextIdRef.current = id;
++    setToasts((cur) => [...cur, { id, tone, message }]);
++    const dropExpired = (cur: readonly ToastEntry[]): readonly ToastEntry[] =>
++      cur.filter((t) => t.id !== id);
++    const timer = setTimeout(() => {
++      timersRef.current.delete(timer);
++      setToasts(dropExpired);
++    }, TOAST_TTL_MS);
++    timersRef.current.add(timer);
++  }, []);
++
++  // Cancel every tracked timer on unmount so a late TTL `setState`
++  // does not fire on a torn-down tree. Mirrors ThresholdsPage:73-79.
++  useEffect(() => {
++    const timers = timersRef.current;
++    return () => {
++      for (const t of timers) clearTimeout(t);
++      timers.clear();
++    };
++  }, []);
++
++  return { toasts, pushToast };
++};
++
++/**
++ * `TOAST_TTL_MS` — exported so tests can pin the exact duration that
++ * the ThresholdsPage pattern uses. Keeps the two toast surfaces in
++ * sync.
++ */
++export { TOAST_TTL_MS };
++
++/**
++ * `<ToastRegion />` — renders the current toast queue.
++ *
++ * Mounted by `IncidentDetailPage` at the page root. Mirrors the
++ * ThresholdsPage markup: `aria-live="polite"` `<ul>` with one
++ * `<li>` per toast. The `data-testid="incident-detail-toast-region"`
++ * is the seam for the Acknowledge-flow test rig.
++ *
++ * Tone palette — re-uses the ThresholdsPage colours so the operator
++ * gets the same green / red visual language for "success" /
++ * "error" across the app:
++ *   - success: pale green (`#E8F6EE`) bg, deep-green (`#0F6B3A`) text
++ *   - error:   pale red   (`#FEE2E2`) bg, deep-red   (`#7F1D1D`) text
++ */
++export const ToastRegion = ({ toasts }: { readonly toasts: readonly ToastEntry[] }) => {
++  const TOAST_BG: Record<ToastTone, string> = {
++    success: "#E8F6EE",
++    error: "#FEE2E2",
++  };
++  const TOAST_TEXT: Record<ToastTone, string> = {
++    success: "#0F6B3A",
++    error: "#7F1D1D",
++  };
++
++  return (
++    <ul
++      data-testid="incident-detail-toast-region"
++      aria-live="polite"
++      className="flex flex-col gap-2"
++    >
++      {toasts.map((t) => (
++        <li
++          key={t.id}
++          data-testid={`incident-detail-toast-${t.tone}`}
++          data-tone={t.tone}
++          className="rounded-input border px-4 py-2 text-md"
++          style={{
++            backgroundColor: TOAST_BG[t.tone],
++            borderColor: TOAST_TEXT[t.tone],
++            color: TOAST_TEXT[t.tone],
++          }}
++        >
++          {t.message}
++        </li>
++      ))}
++    </ul>
++  );
++};
+diff --git a/packages/web/src/incidents/useAcknowledgeMutation.ts b/packages/web/src/incidents/useAcknowledgeMutation.ts
+new file mode 100644
+index 0000000..35ac45b
+--- /dev/null
++++ b/packages/web/src/incidents/useAcknowledgeMutation.ts
+@@ -0,0 +1,151 @@
++/**
++ * `useAcknowledgeMutation` — Story 4.5.
++ *
++ * TanStack `useMutation` over `POST /api/incidents/:id/acknowledge`.
++ * Wraps `apiFetch` from `../api/apiClient` (handles Bearer auth +
++ * 401 refresh + offline state). On success: invalidates the detail
++ * row's TanStack Query cache (`["incidents", "detail", id]`) so the
++ * existing `useIncidentDetailSocket` subscriber's next socket event
++ * — or a re-fetch — reconciles state.
++ *
++ * 4xx classification (the spec's "tagged" vs "retryable" toast lanes):
++ *
++ *   - 409 `invalid_state_transition`  → "Already acknowledged"
++ *   - 403                              → "Not authorized"
++ *   - 404                              → "Incident not found"
++ *
++ * 5xx classification (retryable toast):
++ *
++ *   - any other status code            → "Failed to acknowledge. Try again."
++ *
++ * The error object is a `AcknowledgeMutationError` whose `.message` is
++ * the toast copy; the detail page calls `pushToast("error", err.message)`
++ * in its `onError` handler. The mutation does NOT push toasts itself —
++ * the page wires `pushToast` so the page-scoped toast queue owns the
++ * surface (mirrors ThresholdsPage).
++ *
++ * Why no optimistic UI: the spec is explicit ("No optimistic UI for the
++ * mutation. Server is authoritative; the cache mutation IS the
++ * optimistic surface via the existing `incident:state_changed`
++ * subscription"). The mutation handler invalidates the row query; the
++ * socket event drives the actual cache mutation; both update from the
++ * same source of truth.
++ *
++ * Why no extraction as a generic hook: 4.5 is the only consumer today;
++ * Stories 4.6 (assign), 4.7 (submit-result), 4.11 (reopen) each ship
++ * their own one-shot mutation. A future post-Epic-4 sweep can refactor
++ * to a `useIncidentMutation({ verb })` factory once the pattern is
++ * stable across three stories.
++ */
++import { useMutation, useQueryClient } from "@tanstack/react-query";
++
++import { apiFetch } from "../api/apiClient";
++
++import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
++
++/**
++ * HTTP status sentinels. Mirror the
++ * `IncidentDetailRbacDeniedError` / `IncidentDetailNotFoundError`
++ * constants at `IncidentDetailPage.tsx:60-61` so the mutation
++ * classifies failures identically to the read path.
++ */
++const HTTP_FORBIDDEN = 403;
++const HTTP_NOT_FOUND = 404;
++const HTTP_CONFLICT = 409;
++
++/**
++ * 4xx range bounds used to decide whether a failed mutation
++ * should invalidate the row query (4xx → server told us truth
++ * about the row; 5xx → server is broken, leave the row alone so
++ * the operator can retry).
++ */
++const HTTP_4XX_MIN = 400;
++const HTTP_4XX_MAX = 500;
++
++/**
++ * Tagged error class for the mutation. The `.message` is the
++ * operator-facing toast copy (already classified for tone), and
++ * the `.status` is preserved so the page can route 404 / 403 to
++ * the right re-render branch (NotFound / RbacDenied) when the row
++ * cache invalidates and returns the next fetch's verdict.
++ */
++export class AcknowledgeMutationError extends Error {
++  public readonly status: number;
++  public constructor(status: number, message: string) {
++    super(message);
++    this.name = "AcknowledgeMutationError";
++    this.status = status;
++  }
++}
++
++/**
++ * Classify the api's failure response into the operator-facing copy.
++ * 409 / 403 / 404 get pinned copy (server-rejected). All other 4xx +
++ * 5xx collapse to the retryable line so the operator sees one
++ * consistent prompt for unknown failures.
++ */
++const classifyAcknowledgeError = (status: number): AcknowledgeMutationError => {
++  if (status === HTTP_CONFLICT) {
++    return new AcknowledgeMutationError(status, "Already acknowledged");
++  }
++  if (status === HTTP_FORBIDDEN) {
++    return new AcknowledgeMutationError(status, "Not authorized");
++  }
++  if (status === HTTP_NOT_FOUND) {
++    return new AcknowledgeMutationError(status, "Incident not found");
++  }
++  return new AcknowledgeMutationError(status, "Failed to acknowledge. Try again.");
++};
++
++/**
++ * `useAcknowledgeMutation` — TanStack `useMutation` for the
++ * Acknowledge button.
++ *
++ * Returns `{ mutate, isPending, error, ... }` (the standard TanStack
++ * shape). The page wires `onSuccess` to `pushToast("success", "Acknowledged")`
++ * and `onError` to `pushToast("error", err.message)`; both calls flow
++ * into the page-scoped toast queue.
++ *
++ * On success the row query at `["incidents", "detail", id]` is
++ * invalidated so the next refetch + the existing
++ * `useIncidentDetailSocket` subscriber converge on the new state.
++ * The mutation itself does NOT touch the cache directly — that would
++ * create an optimistic UI path the spec explicitly forbids.
++ *
++ * On 4xx failure (4xx-classified `AcknowledgeMutationError`) we
++ * ALSO invalidate the row query: a 409 means another operator
++ * acknowledged between page load and click (the row is now in a
++ * non-OPEN state — re-fetch tells the truth); a 404 means the
++ * row was deleted (re-fetch surfaces `<NotFound />`); a 403 means
++ * a token/role drift (re-fetch surfaces `<RbacDenied />`).
++ */
++export const useAcknowledgeMutation = (id: string) => {
++  const queryClient = useQueryClient();
++  return useMutation<void, AcknowledgeMutationError, void>({
++    mutationFn: async (): Promise<void> => {
++      const res = await apiFetch(`/api/incidents/${id}/acknowledge`, {
++        method: "POST",
++      });
++      if (!res.ok) {
++        throw classifyAcknowledgeError(res.status);
++      }
++      // The api returns 200 with a refreshed `IncidentPayload`; we
++      // do NOT parse it here — the page's row query invalidation
++      // is the source of truth for the next read, and the socket
++      // event drives the cache mutation.
++    },
++    onSuccess: () => {
++      void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
++    },
++    // 4xx failures all invalidate the cache so the next fetch can
++    // update the read-side surface (NotFound / RbacDenied / row
++    // shows ACKNOWLEDGED for 409). We deliberately do NOT
++    // invalidate on 5xx — the row is presumed unchanged and the
++    // operator may retry against the same id.
++    onError: (err) => {
++      if (err.status >= HTTP_4XX_MIN && err.status < HTTP_4XX_MAX) {
++        void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
++      }
++    },
++  });
++};

@@ -63,6 +63,7 @@ import { IncidentDetailRbacDeniedError } from "./IncidentDetailRbacDeniedError";
 import { SEVERITY_DOT_BG, SEVERITY_LABEL, STATE_LABEL } from "./KanbanCard";
 import { ToastRegion, useToasts } from "./toast";
 import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
+import { type AssignMutationError, useAssignMutation } from "./useAssignMutation";
 import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
 
 /** HTTP status code sentinels — RBAC denial + not-found. */
@@ -145,6 +146,7 @@ export const IncidentDetailPage = () => {
   const viewerRole = useCurrentRole();
   const { toasts, pushToast } = useToasts();
   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
+  const assignMutation = useAssignMutation(id ?? "");
 
   useIncidentDetailSocket(id ?? "");
 
@@ -232,6 +234,22 @@ export const IncidentDetailPage = () => {
     });
   };
 
+  // Success + error handlers for the Assign mutation. Mirrors
+  // `handleAcknowledge` with the verb-specific copy swapped.
+  const handleAssign = (assigneeUserId: string): void => {
+    assignMutation.mutate(
+      { assigneeUserId },
+      {
+        onSuccess: () => {
+          pushToast("success", "Technician assigned");
+        },
+        onError: (err: AssignMutationError) => {
+          pushToast("error", err.message);
+        },
+      },
+    );
+  };
+
   return (
     <>
       <IncidentDetailDispatch
@@ -240,7 +258,9 @@ export const IncidentDetailPage = () => {
         timeline={timeline}
         viewerRole={viewerRole}
         isAck={acknowledgeMutation.isPending}
+        isAssign={assignMutation.isPending}
         onAcknowledge={handleAcknowledge}
+        onAssign={handleAssign}
         onRetry={() => {
           void queryClient.invalidateQueries({
             queryKey: incidentDetailQueryKey(id ?? ""),
@@ -269,7 +289,9 @@ const IncidentDetailDispatch = ({
   timeline,
   viewerRole,
   isAck,
+  isAssign,
   onAcknowledge,
+  onAssign,
   onRetry,
 }: {
   readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
@@ -277,7 +299,9 @@ const IncidentDetailDispatch = ({
   readonly timeline: readonly IncidentEventPayload[];
   readonly viewerRole: Role | null;
   readonly isAck: boolean;
+  readonly isAssign: boolean;
   readonly onAcknowledge: () => void;
+  readonly onAssign: (assigneeUserId: string) => void;
   readonly onRetry: () => void;
 }) => {
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
@@ -298,7 +322,9 @@ const IncidentDetailDispatch = ({
       timeline={timeline}
       viewerRole={viewerRole}
       isAck={isAck}
+      isAssign={isAssign}
       onAcknowledge={onAcknowledge}
+      onAssign={onAssign}
     />
   );
 };
@@ -316,13 +342,17 @@ const IncidentDetailBody = ({
   timeline,
   viewerRole,
   isAck,
+  isAssign,
   onAcknowledge,
+  onAssign,
 }: {
   readonly incident: IncidentPayload;
   readonly timeline: readonly IncidentEventPayload[];
   readonly viewerRole: Role | null;
   readonly isAck: boolean;
+  readonly isAssign: boolean;
   readonly onAcknowledge: () => void;
+  readonly onAssign: (assigneeUserId: string) => void;
 }) => (
   <div
     data-testid="incident-detail-root"
@@ -381,8 +411,10 @@ const IncidentDetailBody = ({
     <IncidentDetailActions
       incident={incident}
       viewerRole={viewerRole}
-      isPending={isAck}
+      isAck={isAck}
+      isAssign={isAssign}
       onAcknowledge={onAcknowledge}
+      onAssign={onAssign}
     />
 
     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">

@@ -634,8 +634,11 @@ describe("Story 4.5 — AC: NOT_OPEN (button absent for ACKNOWLEDGED row)", () =
     await waitFor(() => {
       expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
     });
+    // Acknowledge button absent for ACKNOWLEDGED row. The actions
+    // region may be present (Story 4.6 adds the Assign slot which
+    // IS available for ACKNOWLEDGED + Operator), but the
+    // Acknowledge button specifically must be absent.
     expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
-    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
   });
 });
 
@@ -1029,5 +1032,349 @@ describe("Story 4.5 — AC: Viewer cannot see the Acknowledge button even on an 
     });
     expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
     expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+  });
+});
+
+// ============================================================================
+// Story 4.6 — Assign Technician + INSPECTING Transition
+// ============================================================================
+//
+// Coverage matrix (each spec AC bullet → at least one `it(...)`):
+//
+//   AC "HAPPY_PATH"             — ACKNOWLEDGED + Operator + Technician
+//                                selected → click Assign → POST 200 → toast
+//                                "Technician assigned" → row invalidates
+//                                → socket event lands → data-state="INSPECTING"
+//                                → Assign form disappears.
+//   AC "NOT_OPEN"               — OPEN row → Assign form NOT rendered.
+//   AC "RBAC_DENIED"            — ACKNOWLEDGED + Technician viewer → Assign
+//                                form NOT rendered.
+//   AC "MUTATION_IN_FLIGHT"     — click Assign twice → second click no-op
+//                                (button disabled during in-flight mutation).
+//   AC "CONFLICT_409"           — server returns 409 → error toast
+//                                "Already assigned" → row reconciles.
+//   AC "SERVER_ERROR_500"       — server returns 500 → error toast
+//                                "Failed to assign. Try again." + button
+//                                re-enables.
+//
+// Mirrors the 4.5 ack-flow test rig exactly: same `installFetch`
+// pattern, same `renderDetail(role)` factory, same `activeSocket.__emitStateChanged`
+// reconciliation pattern. The Technician id for assign tests is the
+// first `SEEDED_TECHNICIAN_IDS` entry (TECH_ID — see
+// `seededTechnicians.ts:21`).
+const ASSIGN_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/assign`;
+const ASSIGN_TECH_ID = "00000000-0000-4000-8000-00000000a003";
+
+/** Drive the inline form: pick the seeded Technician + click Assign. */
+const pickAndAssign = (): void => {
+  const select = screen.getByTestId(
+    "incident-detail-assign-select",
+  ) as unknown as HTMLSelectElement;
+  fireEvent.change(select, { target: { value: ASSIGN_TECH_ID } });
+  fireEvent.click(screen.getByTestId("incident-detail-assign-button"));
+};
+
+describe("Story 4.6 — AC: happy path (POST 200 → success toast → state reconciled)", () => {
+  it("fires POST with { assignee_user_id }, surfaces 'Technician assigned' toast, and the row transitions to INSPECTING via socket event", async () => {
+    let assignCallCount = 0;
+    let assignBody: { assignee_user_id?: string } | null = null;
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
+        assignCallCount += 1;
+        expect(init?.method).toBe("POST");
+        assignBody = JSON.parse(init?.body as string) as { assignee_user_id?: string };
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "INSPECTING",
+              assignee_user_id: ASSIGN_TECH_ID,
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    // Assign form visible for ACKNOWLEDGED + Operator; Acknowledge
+    // button NOT visible (slot matrix: ACKNOWLEDGED+Operator returns
+    // ["assign"] only).
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+
+    // Button disabled until a Technician is picked (NO_TECH_SELECTED).
+    expect(screen.getByTestId("incident-detail-assign-button")).toBeDisabled();
+
+    // Pick + click → POST + success toast.
+    pickAndAssign();
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Technician assigned");
+    });
+    expect(assignCallCount).toBe(1);
+    expect(assignBody?.assignee_user_id).toBe(ASSIGN_TECH_ID);
+
+    // Socket-driven state mutation arrives; row's data-state updates
+    // to INSPECTING. The Assign form disappears because the
+    // `assign` slot returns null for INSPECTING + Operator.
+    expect(activeSocket).not.toBeNull();
+    activeSocket?.__emitStateChanged({
+      incident_id: INCIDENT_ID,
+      from_state: "ACKNOWLEDGED",
+      to_state: "INSPECTING",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
+        "data-state",
+        "INSPECTING",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
+    });
+  });
+});
+
+describe("Story 4.6 — AC: NOT_OPEN (Assign form absent for OPEN row)", () => {
+  it("does NOT render the Assign form when state === 'OPEN'", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    // OPEN + Operator: Acknowledge button visible, Assign form absent
+    // (slot matrix returns ["acknowledge"] only for OPEN+Operator).
+    expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
+  });
+});
+
+describe("Story 4.6 — AC: RBAC_DENIED (Technician cannot see Assign form on ACKNOWLEDGED)", () => {
+  it("does NOT render the Assign form when a Technician views an ACKNOWLEDGED incident", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-assign-button")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+  });
+});
+
+describe("Story 4.6 — AC: MUTATION_IN_FLIGHT (Assign button disabled, double-click is a no-op)", () => {
+  it("disables the Assign button while in flight and a second click does not fire another POST", async () => {
+    let assignCallCount = 0;
+    let resolveAssign: (() => void) | null = null;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
+        assignCallCount += 1;
+        // Hold the response open so the button stays `disabled`.
+        await new Promise<void>((resolve) => {
+          resolveAssign = resolve;
+        });
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "INSPECTING",
+              assignee_user_id: ASSIGN_TECH_ID,
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
+    });
+
+    // Wrap the post-click assertions in try/finally so the
+    // dangling promise held open by `await new Promise(...)` above
+    // is always resolved — even if an assertion throws. Otherwise
+    // a failed assertion leaks the unresolved promise and the
+    // fetch handler hangs across subsequent tests.
+    try {
+      // Pick the Technician + click Assign: fires POST.
+      const select = screen.getByTestId(
+        "incident-detail-assign-select",
+      ) as unknown as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: ASSIGN_TECH_ID } });
+      fireEvent.click(screen.getByTestId("incident-detail-assign-button"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-assign-button")).toBeDisabled();
+      });
+      expect(screen.getByTestId("incident-detail-assign-button")).toHaveTextContent("Assigning...");
+      expect(assignCallCount).toBe(1);
+
+      // Second click: button is `disabled`, fireEvent.click is a
+      // no-op for disabled buttons (React swallows the click before
+      // the handler fires).
+      fireEvent.click(screen.getByTestId("incident-detail-assign-button"));
+      expect(assignCallCount).toBe(1);
+    } finally {
+      // Resolve the in-flight mutation so the test cleans up cleanly.
+      resolveAssign?.();
+    }
+  });
+});
+
+describe("Story 4.6 — AC: CONFLICT_409 (error toast 'Already assigned' + row reconciles to INSPECTING)", () => {
+  it("surfaces the 'Already assigned' error toast, invalidates the row, and the row reconciles to INSPECTING on the next fetch", async () => {
+    let assignCallCount = 0;
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // First fetch: ACKNOWLEDGED. Second fetch (after the
+        // mutation's `onError` invalidates the cache because 409
+        // is 4xx): INSPECTING — the world moved on while the
+        // operator was clicking. The row query should reconcile
+        // to that.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+            status: 200,
+          });
+        }
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "INSPECTING",
+              assignee_user_id: ASSIGN_TECH_ID,
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
+        assignCallCount += 1;
+        return new Response(
+          JSON.stringify({
+            error: "invalid_state_transition",
+            from: "INSPECTING",
+            attempted: "assign",
+          }),
+          { status: 409 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
+    });
+
+    pickAndAssign();
+
+    // Toast appears immediately.
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already assigned");
+    });
+    expect(assignCallCount).toBe(1);
+
+    // The mutation's `onError` invalidates the row query (4xx
+    // branch); the next fetch returns INSPECTING. The row's
+    // `data-state` updates; the Assign form disappears because
+    // `actionSlotsFor` returns no `assign` slot for INSPECTING.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
+        "data-state",
+        "INSPECTING",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-assign-form")).toBeNull();
+    });
+    expect(rowFetchCount).toBe(2);
+  });
+});
+
+describe("Story 4.6 — AC: SERVER_ERROR_500 (error toast 'Failed to assign. Try again.')", () => {
+  it("surfaces the retryable error toast and re-enables the Assign button for manual retry", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
+        return new Response("internal", { status: 500 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
+    });
+
+    pickAndAssign();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Failed to assign. Try again.");
+    });
+
+    // Button re-enables (mutation is no longer in flight).
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-assign-button")).not.toBeDisabled();
+    });
+    expect(screen.getByTestId("incident-detail-assign-button")).toHaveTextContent("Assign");
   });
 });
