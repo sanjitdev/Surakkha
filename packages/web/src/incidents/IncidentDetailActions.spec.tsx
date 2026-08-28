@@ -46,7 +46,7 @@
  * detail page so they can drive the buttons' real behavior. This
  * spec file pins the visibility contract only.
  */
-import { type IncidentPayload } from "@surakkha/shared/incident";
+import { type IncidentPayload, InspectionOutcomeSchema } from "@surakkha/shared/incident";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -559,5 +559,46 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
     button.click();
     expect(onSubmitResult).toHaveBeenCalledTimes(1);
     expect(onSubmitResult).toHaveBeenCalledWith("UNSAFE");
+  });
+});
+
+/**
+ * Regression pin (Story 4.7 step-04 review):
+ *
+ * `INSPECTION_OUTCOMES` at `IncidentDetailActions.tsx:267` mirrors
+ * `InspectionOutcomeSchema` LITERALLY as `["SAFE", "UNSAFE",
+ * "MONITORING"]`. The mirror is deliberate (the spec explains why
+ * we don't import the schema — zod runtime coupling), but it IS a
+ * drift risk: if the schema grows to add a 4th outcome (e.g.
+ * `NEEDS_FOLLOWUP`), the schema will accept it from the server
+ * while the UI cannot produce it. This test fails loudly the
+ * moment the schema and the literal diverge.
+ */
+describe("Story 4.7 — InspectionOutcomeSchema drift pin", () => {
+  it("renders exactly one radio per InspectionOutcomeSchema enum value, in canonical order", () => {
+    render(
+      <IncidentDetailActions
+        incident={makeIncident({ state: "INSPECTING", assignee_user_id: TECH_ID })}
+        viewerRole="Technician"
+        viewerUserId={TECH_ID}
+        onAcknowledge={vi.fn()}
+        onAssign={vi.fn()}
+        onSubmitResult={vi.fn()}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        technicians={[]}
+      />,
+    );
+
+    const schemaValues = InspectionOutcomeSchema.options;
+    const radios = screen.getAllByRole("radio");
+    // Exactly one radio per schema value — no missing, no extra.
+    expect(radios).toHaveLength(schemaValues.length);
+    // And the testids follow the schema order, which is the order
+    // the user sees top-to-bottom on the rendered form.
+    expect(radios.map((r) => r.getAttribute("data-testid"))).toEqual(
+      schemaValues.map((v) => `incident-detail-submit-result-radio-${v}`),
+    );
   });
 });

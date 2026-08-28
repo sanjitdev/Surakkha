@@ -2114,6 +2114,105 @@ describe("Story 4.7 — AC: SERVER_ERROR_500 (error toast 'Failed to submit resu
   });
 });
 
+describe("Story 4.7 — AC: FORBIDDEN_403 (error toast 'Not authorized' + page renders <RbacDenied />)", () => {
+  it("surfaces the 'Not authorized' error toast, invalidates the row, and <RbacDenied /> renders on the next fetch", async () => {
+    setViewerAsTechnician();
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // First fetch: 200. Second fetch (after the mutation's
+        // `onError` invalidates the cache because 403 is 4xx):
+        // 403 — the technician-assignee ownership drifted between
+        // page load and click, so the next fetch surfaces the
+        // RBAC contract via <RbacDenied />.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "forbidden", required_role: "Technician" }), {
+          status: 403,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Not authorized");
+    });
+
+    // After the mutation's `onError` invalidates the row query
+    // (4xx branch), the next fetch returns 403 → page renders
+    // <RbacDenied />.
+    await waitFor(() => {
+      expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
+    expect(rowFetchCount).toBe(2);
+  });
+});
+
+describe("Story 4.7 — AC: NOT_FOUND_404 (error toast 'Incident not found' + page renders <NotFound />)", () => {
+  it("surfaces the 'Incident not found' error toast, invalidates the row, and <NotFound /> renders on the next fetch", async () => {
+    setViewerAsTechnician();
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // First fetch: 200. Second fetch (after the mutation's
+        // `onError` invalidates the cache because 404 is 4xx):
+        // 404 — the incident was deleted between page load and
+        // click, so the next fetch surfaces the NotFound contract.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(inspectingIncidentForTech()), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(SUBMIT_RESULT_URL_SUFFIX)) {
+        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Technician");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
+    });
+
+    pickOutcomeAndSubmit("SAFE");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Incident not found");
+    });
+
+    // After the mutation's `onError` invalidates the row query
+    // (4xx branch), the next fetch returns 404 → page renders
+    // <NotFound />.
+    await waitFor(() => {
+      expect(screen.getByTestId("not-found")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
+    expect(rowFetchCount).toBe(2);
+  });
+});
+
 describe("Story 4.7 — AC: TOKEN_EXPIRED_401 (error toast 'Session expired' — no row invalidation)", () => {
   it("surfaces the 'Session expired' toast and does NOT re-fetch the row (5xx-class UX)", async () => {
     setViewerAsTechnician();
@@ -2162,6 +2261,13 @@ describe("Story 4.7 — AC: TOKEN_EXPIRED_401 (error toast 'Session expired' —
     // slot does NOT depend on `viewerUserId`.
     expect(rowFetchCount).toBe(1);
     expect(screen.getByTestId("incident-detail-root")).toHaveAttribute("data-state", "INSPECTING");
+    // Regression pin: the technician-only form must be GONE after
+    // a 401 — `actionSlotsFor` returns `[]` when the INSPECTING
+    // slot has no viewerUserId to match against. Without this
+    // assertion a regression that drops the role gate would ship
+    // silently (matches the 4.6 mirror assertion `getByTestId(...
+    // assign-form).toBeInTheDocument()` for the opposite claim).
+    expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
   });
 });
 
