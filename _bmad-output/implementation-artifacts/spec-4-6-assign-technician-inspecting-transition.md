@@ -3,8 +3,9 @@ title: "Story 4.6 — Assign Technician + INSPECTING Transition"
 type: "feature"
 created: "2026-08-28"
 status: "done"
-review_loop_iteration: 0
+review_loop_iteration: 1
 baseline_commit: "194fdd6"
+shipped_commit: "c0fd7b9"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-1-incident-card-types.md
@@ -145,6 +146,29 @@ context:
 - Verify: a separate browser tab on `/incidents` Kanban sees the card move to the ACKNOWLEDGED column (the projection rules INSPECTING onto ACKNOWLEDGED per `projectKanbanColumn` at `incident.ts:81-96`).
 - Switch role to Viewer (or log in as Technician). Verify: button does NOT render on an ACKNOWLEDGED incident.
 - Curl the row's state to INSPECTING manually. Verify: detail page's Assign button disappears on the next socket event.
+
+## Spec Change Log
+
+### Loop 1 (review_loop_iteration: 0 → 1)
+
+Applied at commit `c0fd7b9` on 2026-08-28 during step-04 review triage.
+
+**KEEP (no spec change required — these are forward-compat / out-of-scope; defer to follow-up):**
+
+- **`isAssignPending` prop name** (rejected by ESLint `^is[A-Z]([A-Z0-9]?[a-z0-9]+|[A-Z])*`) — renamed to `isAssign`. Matches 4.5's `isAck` convention. Worth a lint rule update as a future cleanup (project-wide smell); defer to a follow-up sprint.
+- **`useAssignMutation` direct unit test** — page-level coverage is consistent with 4.5's pattern. Same project-wide deferred-cleanup candidate.
+- **422 / 412 / 429 / 503 explicit error-classifier branches** — server doesn't emit them today; catch-all `default` routes to retryable bucket.
+- **Socket vs mutation race convergence** — `useIncidentDetailSocket` reconciles; cache eventually consistent in both orderings.
+- **Late-login `viewerUserId` transition** — page re-renders on token change; not needed for v1.
+
+**PATCH (spec contract unchanged; code/test edits applied to close review findings):**
+
+- **`<label htmlFor>` / `<select id>` a11y pairing** — `IncidentDetailActions.tsx` — the `<label htmlFor="incident-detail-assign-select">` was paired with a `<select>` that had no matching `id`, so the label association was broken (screen readers would announce the label but the `<select>` was unlabeled). Closed by re-attaching `id="incident-detail-assign-select"` on the `<select>` + dropping the redundant `aria-label` now that the htmlFor association is live. `eslint-disable react/forbid-dom-props` rationale mirrors `forms/FormField.tsx:73`.
+- **NOT_FOUND_404 page-level coverage added** — `IncidentDetailPage.spec.tsx` — AC #9 was named in the I/O matrix but the diff had no test that fired the assign mutation with a 404 response. Closed.
+- **FORBIDDEN_403 page-level coverage added** — same rationale; AC #8 closed.
+- **TOKEN_EXPIRED_401 page-level coverage added** — AC #10 closed with row-invalidation assertion (`rowFetchCount === 1`).
+- **BODY_VALIDATION_400 page-level coverage added** — AC #11 closed.
+- **TOAST_TTL integration test added** — `vi.useFakeTimers()` drives `act` + microtask flushing + `vi.advanceTimersByTime(4_001)` to assert the 4-second auto-dismiss contract at the integration level (the per-component test would not catch a regression in the toast-region wiring).
 
 ## Suggested Review Order
 

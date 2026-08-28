@@ -1,0 +1,351 @@
+From c0fd7b927a0d1161731c12313c53599b51b5bf77 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Fri, 28 Aug 2026 15:28:01 +0600
+Subject: [PATCH] =?UTF-8?q?fix(web):=20Story=204.6=20review=20fixes=20?=
+ =?UTF-8?q?=E2=80=94=20label-select=20association=20+=204xx/401/400/404/40?=
+ =?UTF-8?q?3=20+=20TTL=20integration=20test?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patches identified during the Step-04 adversarial / edge-case / verification-gap review of Story 4.6:
+
+- IncidentDetailActions.tsx: re-attach `id="incident-detail-assign-select"`
+  on the Technician <select> so the sibling `<label htmlFor>` actually
+  targets it (a11y). Wrapped in eslint-disable react/forbid-dom-props
+  with an inline rationale mirroring forms/FormField.tsx:73. Drop the
+  redundant `aria-label` since the htmlFor association is now live.
+- IncidentDetailPage.spec.tsx: add 5 new test suites that close the
+  verification-gap report — NOT_FOUND_404 (toast + <NotFound />),
+  FORBIDDEN_403 (toast + <RbacDenied /> + rowFetchCount === 2),
+  TOKEN_EXPIRED_401 (5xx-class: toast + rowFetchCount === 1, no
+  invalidation), BODY_VALIDATION_400 (4xx-class: toast + rowFetchCount
+  === 2), and a TOAST_TTL fake-timer integration test that exercises
+  the 4-second auto-dismiss path with `vi.useFakeTimers()`.
+
+Spec status flipped from in-progress to in-review as part of the same
+commit so the artifact tracks the patch delivery.
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ ...assign-technician-inspecting-transition.md |   2 +-
+ .../src/incidents/IncidentDetailActions.tsx   |   7 +-
+ .../src/incidents/IncidentDetailPage.spec.tsx | 267 ++++++++++++++++++
+ 3 files changed, 274 insertions(+), 2 deletions(-)
+
+diff --git a/_bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md b/_bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md
+index 9dc3346..b089c86 100644
+--- a/_bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md
++++ b/_bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md
+@@ -2,7 +2,7 @@
+ title: "Story 4.6 — Assign Technician + INSPECTING Transition"
+ type: "feature"
+ created: "2026-08-28"
+-status: "in-progress"
++status: "in-review"
+ review_loop_iteration: 0
+ baseline_commit: "194fdd6"
+ context:
+diff --git a/packages/web/src/incidents/IncidentDetailActions.tsx b/packages/web/src/incidents/IncidentDetailActions.tsx
+index adf29a3..37688c0 100644
+--- a/packages/web/src/incidents/IncidentDetailActions.tsx
++++ b/packages/web/src/incidents/IncidentDetailActions.tsx
+@@ -183,14 +183,19 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
+         Assign technician
+       </label>
+       <div className="flex items-center gap-2">
++        {/* eslint-disable react/forbid-dom-props -- the `id` is the
++            target of the sibling `<label htmlFor>` above. The rule's
++            intent (avoid duplicate / colliding DOM ids) does not
++            apply to a single, test-stable testid-derived value. */}
+         <select
+-          aria-label="Assign technician"
++          id="incident-detail-assign-select"
+           data-testid="incident-detail-assign-select"
+           value={selectedAssignee}
+           disabled={isPending}
+           onChange={(e) => setSelectedAssignee(e.target.value)}
+           className="rounded-input border border-neutral-border bg-neutral-surface px-3 py-2 text-sm text-neutral-body disabled:cursor-not-allowed disabled:bg-neutral-page"
+         >
++          {/* eslint-enable react/forbid-dom-props */}
+           <option value="" disabled>
+             Select a technician...
+           </option>
+diff --git a/packages/web/src/incidents/IncidentDetailPage.spec.tsx b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+index 6f20e8f..3d3250f 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.spec.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+@@ -1378,3 +1378,270 @@ describe("Story 4.6 — AC: SERVER_ERROR_500 (error toast 'Failed to assign. Try
+     expect(screen.getByTestId("incident-detail-assign-button")).toHaveTextContent("Assign");
+   });
+ });
++
++describe("Story 4.6 — AC: NOT_FOUND_404 (error toast 'Incident not found' + page renders NotFound)", () => {
++  it("surfaces the 'Incident not found' error toast and <NotFound /> renders on the next fetch", async () => {
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        // First fetch: returns the row. Second fetch (after the
++        // mutation invalidates the cache): 404 — the row was
++        // deleted between the click and the re-fetch.
++        rowFetchCount += 1;
++        if (rowFetchCount === 1) {
++          return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++            status: 200,
++          });
++        }
++        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++    });
++
++    pickAndAssign();
++
++    // Toast appears immediately.
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Incident not found");
++    });
++
++    // After the mutation's `onSuccess` invalidates the row query, the
++    // next fetch returns 404 → page renders <NotFound />.
++    await waitFor(() => {
++      expect(screen.getByTestId("not-found")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
++  });
++});
++
++describe("Story 4.6 — AC: FORBIDDEN_403 (error toast 'Not authorized' + page renders <RbacDenied />)", () => {
++  it("surfaces the 'Not authorized' error toast, invalidates the row, and <RbacDenied /> renders on the next fetch", async () => {
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        // First fetch: 200. Second fetch (after the mutation's
++        // `onError` invalidates the cache because 403 is 4xx):
++        // 403 — the role drifted between page load and click, so
++        // the next fetch surfaces the RBAC contract via <RbacDenied />.
++        rowFetchCount += 1;
++        if (rowFetchCount === 1) {
++          return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++            status: 200,
++          });
++        }
++        return new Response(JSON.stringify({ error: "forbidden", required_role: "Technician" }), {
++          status: 403,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++    });
++
++    pickAndAssign();
++
++    // Toast appears immediately.
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Not authorized");
++    });
++
++    // After the mutation's `onError` invalidates the row query (4xx
++    // branch), the next fetch returns 403 → page renders <RbacDenied />.
++    await waitFor(() => {
++      expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
++    expect(rowFetchCount).toBe(2);
++  });
++});
++
++describe("Story 4.6 — AC: TOKEN_EXPIRED_401 (error toast 'Session expired' — no row invalidation)", () => {
++  it("surfaces the 'Session expired' toast and does NOT re-fetch the row (5xx-class UX)", async () => {
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        rowFetchCount += 1;
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
++        return new Response(JSON.stringify({ error: "token_expired" }), { status: 401 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++    });
++
++    pickAndAssign();
++
++    // Toast appears immediately with the 5xx-class copy.
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent(
++        "Session expired — please sign in again",
++      );
++    });
++
++    // The row query was NOT invalidated (401 is 5xx-class UX; the
++    // operator must re-auth before any retry can succeed). The page
++    // still shows the ACKNOWLEDGED row + Assign form so a manual
++    // retry after re-auth would work.
++    expect(rowFetchCount).toBe(1);
++    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
++      "data-state",
++      "ACKNOWLEDGED",
++    );
++    expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++  });
++});
++
++describe("Story 4.6 — AC: BODY_VALIDATION_400 (error toast 'Invalid request' — row invalidates)", () => {
++  it("surfaces the 'Invalid request' error toast (4xx class — row invalidates)", async () => {
++    let rowFetchCount = 0;
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        rowFetchCount += 1;
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
++        // 400 is a defense-in-depth response (the client should
++        // not produce a malformed body, but the server's Zod
++        // validator catches the case). The toast copy is the
++        // distinct "Invalid request" line.
++        return new Response(JSON.stringify({ error: "invalid_request" }), { status: 400 });
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    renderDetail("Operator");
++
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++    });
++
++    pickAndAssign();
++
++    await waitFor(() => {
++      expect(screen.getByTestId("toast-region")).toHaveTextContent("Invalid request");
++    });
++
++    // 400 is in the 4xx range and is NOT 401, so the mutation's
++    // `onError` invalidates the row query. The next fetch
++    // returns the same row (still ACKNOWLEDGED — the world hasn't
++    // moved on); the form stays visible.
++    expect(rowFetchCount).toBe(2);
++    expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
++      "data-state",
++      "ACKNOWLEDGED",
++    );
++  });
++});
++
++// ============================================================================
++// Story 4.6 — TTL pin at the integration level
++// ============================================================================
++//
++// Pinned here (not just in `toast.spec.tsx`) so a regression that
++// moved the TTL constant or accidentally skipped the timer in the
++// page wiring would still fail at the integration seam.
++//
++// Note on `act` + fake timers: `waitFor` polls via real-time
++// `setTimeout`, which fake timers intercept — meaning a `waitFor`
++// under fake timers never resolves. We drive the scenario with
++// `act` + microtask flushing instead so the React reconciler
++// settles between deterministic clock advances.
++describe("Story 4.6 — AC: success toast leaves the DOM after TTL", () => {
++  it("drops the success toast after 4001ms (the TTL contract at integration level)", async () => {
++    installFetch(async (url) => {
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
++        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
++          status: 200,
++        });
++      }
++      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
++        return new Response(JSON.stringify({ events: [] }), { status: 200 });
++      }
++      if (url.endsWith(ASSIGN_URL_SUFFIX)) {
++        return new Response(
++          JSON.stringify(
++            baseIncident({
++              state: "INSPECTING",
++              assignee_user_id: ASSIGN_TECH_ID,
++            }),
++          ),
++          { status: 200 },
++        );
++      }
++      return new Response("{}", { status: 404 });
++    });
++
++    // Drive the page-load path under real timers so the row
++    // query resolves.
++    renderDetail("Operator");
++    await waitFor(() => {
++      expect(screen.getByTestId("incident-detail-assign-form")).toBeInTheDocument();
++    });
++
++    // From here, run under fake timers.
++    vi.useFakeTimers();
++    try {
++      pickAndAssign();
++
++      // Flush the mutation's promise chain inside `act` so the
++      // React reconciler commits before we assert.
++      await act(async () => {
++        await Promise.resolve();
++      });
++
++      // The toast `<li>` is now mounted. Assert directly on the
++      // rendered DOM — no `waitFor` under fake timers.
++      const region = screen.getByTestId("toast-region");
++      expect(region).toHaveTextContent("Technician assigned");
++      expect(region.children.length).toBe(1);
++
++      // Advance past the 4_000ms TTL.
++      act(() => {
++        vi.advanceTimersByTime(4_001);
++      });
++
++      // Region is now empty.
++      expect(region.children.length).toBe(0);
++    } finally {
++      vi.useRealTimers();
++    }
++  });
++});
+-- 
+2.34.1.windows.1
+
