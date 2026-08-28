@@ -1,27 +1,31 @@
 /**
- * `IncidentDetailPage` — Story 4.4.
+ * `IncidentDetailPage` — Story 4.4 + Story 4.5.
  *
- * The read-only detail view at `/incidents/:id`. Renders the
- * parent incident row + the IncidentEvent audit timeline.
- * Subscribes to `incident:state_changed` and mutates the cached
- * row in place; resolved incidents STAY visible (different from
- * the Kanban's drop-on-RESOLVED — the detail page is read-only;
- * resolved incidents are first-class).
+ * The detail view at `/incidents/:id`. Renders the parent incident
+ * row + the IncidentEvent audit timeline. Subscribes to
+ * `incident:state_changed` and mutates the cached row in place;
+ * resolved incidents STAY visible (different from the Kanban's
+ * drop-on-RESOLVED — the detail page surfaces the resolved row as
+ * a first-class citizen).
+ *
+ * Story 4.5 layers in the Acknowledge button + a page-local toast
+ * surface. The button is gated by `actionSlotsFor` (single source
+ * of truth across the Kanban card affordance contract + the detail
+ * page action region). Click → `POST /api/incidents/:id/acknowledge`
+ * → toast feedback. The mutation does NOT mutate the cache
+ * directly; on success it invalidates the row query so the existing
+ * `useIncidentDetailSocket` subscriber reconciles via the next
+ * socket event.
  *
  * Wire shape (canonical from `@surakkha/shared/incident`):
  *
- *   GET /api/incidents/:id            → IncidentPayload
- *   GET /api/incidents/:id/events     → { events: IncidentEventPayload[] }
+ *   GET  /api/incidents/:id                  → IncidentPayload
+ *   GET  /api/incidents/:id/events           → { events: IncidentEventPayload[] }
+ *   POST /api/incidents/:id/acknowledge      → IncidentPayload (200) / error envelope (4xx/5xx)
  *
- * The two fetches run in parallel; each has its own cache key
+ * The two reads run in parallel; each has its own cache key
  * (`["incidents", "detail", id]` for the row;
  * `["incidents", "detail", id, "events"]` for the timeline).
- *
- * Why no action affordances: Story 4.4 is the read-only frame;
- * Stories 4.5 / 4.6 / 4.7 / 4.11 ship the acknowledge / assign /
- * submit-result / reopen buttons. The detail page surfaces the
- * data (state, assignee, resolved_at) that those buttons will
- * mutate.
  *
  * Why a 404 surface here but not on the Kanban: the active list
  * (Kanban) never 404s — it's a list endpoint. The per-incident
@@ -42,6 +46,7 @@ import {
   type IncidentPayload,
   IncidentPayloadSchema,
 } from "@surakkha/shared/incident";
+import { type Role } from "@surakkha/shared/rbac";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useParams } from "react-router-dom";
@@ -50,10 +55,14 @@ import { z } from "zod";
 import { NotFound } from "../access/NotFound";
 import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
+import { useCurrentRole } from "../auth/CurrentRoleContext";
 
+import { IncidentDetailActions } from "./IncidentDetailActions";
 import { IncidentDetailNotFoundError } from "./IncidentDetailNotFoundError";
 import { IncidentDetailRbacDeniedError } from "./IncidentDetailRbacDeniedError";
 import { SEVERITY_DOT_BG, SEVERITY_LABEL, STATE_LABEL } from "./KanbanCard";
+import { ToastRegion, useToasts } from "./toast";
+import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
 import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
 
 /** HTTP status code sentinels — RBAC denial + not-found. */
@@ -120,10 +129,22 @@ const ISO_DATE_PREFIX_LENGTH = 10;
  * Queries (row + timeline); each has its own cache key so the
  * socket mutator updates the row independently of the timeline
  * fetch.
+ *
+ * Story 4.5 adds:
+ *   - `useToasts()` — page-local toast queue mounted as
+ *     `<ToastRegion />` at the page root (top of the return tree).
+ *   - `useAcknowledgeMutation(id)` — TanStack mutation wrapping
+ *     `POST /api/incidents/:id/acknowledge`. Success → success toast;
+ *     failure → classified error toast. The mutation invalidates the
+ *     row cache on success; the cache mutation IS the optimistic
+ *     surface via the socket event.
  */
 export const IncidentDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const viewerRole = useCurrentRole();
+  const { toasts, pushToast } = useToasts();
+  const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
 
   useIncidentDetailSocket(id ?? "");
 
@@ -192,17 +213,42 @@ export const IncidentDetailPage = () => {
     [timelineQuery.data?.events],
   );
 
+  // Success + error handlers for the Acknowledge mutation. The
+  // handlers are defined as local function references; the
+  // `mutate()` call invokes them after the Promise settles.
+  // The mutation itself owns the `isPending` state, so the button
+  // visibility + disabled state reads through `acknowledgeMutation.isPending`.
+  const handleAcknowledge = (): void => {
+    acknowledgeMutation.mutate(undefined, {
+      onSuccess: () => {
+        pushToast("success", "Acknowledged");
+      },
+      onError: (err: AcknowledgeMutationError) => {
+        // The mutation classifier pinned the toast copy. The
+        // `status` is preserved on the error for any future
+        // routing logic that wants to switch on it.
+        pushToast("error", err.message);
+      },
+    });
+  };
+
   return (
-    <IncidentDetailDispatch
-      rowQuery={rowQuery}
-      incident={incident}
-      timeline={timeline}
-      onRetry={() => {
-        void queryClient.invalidateQueries({
-          queryKey: incidentDetailQueryKey(id ?? ""),
-        });
-      }}
-    />
+    <>
+      <IncidentDetailDispatch
+        rowQuery={rowQuery}
+        incident={incident}
+        timeline={timeline}
+        viewerRole={viewerRole}
+        isAck={acknowledgeMutation.isPending}
+        onAcknowledge={handleAcknowledge}
+        onRetry={() => {
+          void queryClient.invalidateQueries({
+            queryKey: incidentDetailQueryKey(id ?? ""),
+          });
+        }}
+      />
+      <ToastRegion toasts={toasts} />
+    </>
   );
 };
 
@@ -211,16 +257,27 @@ export const IncidentDetailPage = () => {
  * row query's error/success state. Extracted from
  * `IncidentDetailPage` to keep its cyclomatic complexity under
  * the `complexity: 10` lint ceiling.
+ *
+ * Story 4.5 threads `viewerRole`, `isAck`, and
+ * `onAcknowledge` so the body can render `<IncidentDetailActions />`
+ * (visible only when `actionSlotsFor` returns the `acknowledge`
+ * slot for the current viewer).
  */
 const IncidentDetailDispatch = ({
   rowQuery,
   incident,
   timeline,
+  viewerRole,
+  isAck,
+  onAcknowledge,
   onRetry,
 }: {
   readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
   readonly incident: IncidentPayload | undefined;
   readonly timeline: readonly IncidentEventPayload[];
+  readonly viewerRole: Role | null;
+  readonly isAck: boolean;
+  readonly onAcknowledge: () => void;
   readonly onRetry: () => void;
 }) => {
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
@@ -235,22 +292,37 @@ const IncidentDetailDispatch = ({
   if (incident === undefined) {
     return <IncidentDetailSkeleton />;
   }
-  return <IncidentDetailBody incident={incident} timeline={timeline} />;
+  return (
+    <IncidentDetailBody
+      incident={incident}
+      timeline={timeline}
+      viewerRole={viewerRole}
+      isAck={isAck}
+      onAcknowledge={onAcknowledge}
+    />
+  );
 };
 
 /**
  * The detail-page body (incident row + audit timeline). Extracted
  * from `IncidentDetailPage` so the page component stays under the
  * `max-lines-per-function: 200` lint ceiling; the body renders
- * the header (severity dot + state label), the field `<dl>`, and
- * the timeline list.
+ * the header (severity dot + state label), the field `<dl>`, the
+ * `<IncidentDetailActions />` region (Story 4.5 — between the `<dl>`
+ * and the audit timeline), and the timeline list.
  */
 const IncidentDetailBody = ({
   incident,
   timeline,
+  viewerRole,
+  isAck,
+  onAcknowledge,
 }: {
   readonly incident: IncidentPayload;
   readonly timeline: readonly IncidentEventPayload[];
+  readonly viewerRole: Role | null;
+  readonly isAck: boolean;
+  readonly onAcknowledge: () => void;
 }) => (
   <div
     data-testid="incident-detail-root"
@@ -305,6 +377,13 @@ const IncidentDetailBody = ({
         {formatDateOrDash(incident.resolved_at)}
       </dd>
     </dl>
+
+    <IncidentDetailActions
+      incident={incident}
+      viewerRole={viewerRole}
+      isPending={isAck}
+      onAcknowledge={onAcknowledge}
+    />
 
     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">
       <h2 className="text-md font-semibold text-neutral-body">Audit timeline</h2>

@@ -33,7 +33,7 @@
 import { type IncidentStateChangedEvent } from "@surakkha/shared/events";
 import { type IncidentPayload } from "@surakkha/shared/incident";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -94,7 +94,7 @@ const buildQueryClient = (): QueryClient =>
     },
   });
 
-const renderDetail = () => {
+const renderDetail = (role: "Admin" | "Operator" | "Technician" | "Viewer" = "Operator") => {
   const qc = buildQueryClient();
   return render(
     <QueryClientProvider client={qc}>
@@ -104,7 +104,7 @@ const renderDetail = () => {
           which leaves the detail page's `id` undefined and the
           queries disabled (the loading skeleton renders forever). */}
       <MemoryRouter initialEntries={[`/incidents/${INCIDENT_ID}`]}>
-        <CurrentRoleProvider initialRole="Operator">
+        <CurrentRoleProvider initialRole={role}>
           <AppShell>
             <Routes>
               <Route path="/incidents/:id" element={<IncidentDetailPage />} />
@@ -510,5 +510,335 @@ describe("Story 4.4 — useIncidentDetailSocket mount/unmount cleanup", () => {
         actor_user_id: "00000000-0000-4000-8000-00000000a001",
       }),
     ).not.toThrow();
+  });
+});
+
+// ============================================================================
+// Story 4.5 — Acknowledge Flow
+// ============================================================================
+//
+// Coverage matrix (each spec AC bullet → at least one `it(...)`):
+//
+//   AC "HAPPY_PATH"             — OPEN + Operator → click → POST 200 →
+//                                success toast "Acknowledged" → row
+//                                invalidates → socket event lands →
+//                                data-state="ACKNOWLEDGED" → button
+//                                disappears.
+//   AC "NOT_OPEN"               — ACKNOWLEDGED row → button NOT rendered.
+//   AC "MUTATION_IN_FLIGHT"     — click twice in quick succession →
+//                                second click is a no-op (button
+//                                disabled during in-flight mutation).
+//   AC "CONFLICT_409"           — server returns 409 → error toast
+//                                "Already acknowledged".
+//   AC "FORBIDDEN_403"          — server returns 403 → error toast
+//                                "Not authorized".
+//   AC "NOT_FOUND_404"          — server returns 404 → error toast
+//                                "Incident not found" + page renders
+//                                <NotFound /> on next fetch.
+//   AC "SERVER_ERROR_500"       — server returns 500 → error toast
+//                                "Failed to acknowledge. Try again."
+//                                + button re-enables.
+
+// The apiFetch helper prepends `config.apiOrigin` (e.g. `https://api.test`),
+// so the absolute URL passed to our `installFetch` handler ends with this
+// segment rather than equalling it. `endsWith` keeps the helper comparison
+// robust if the origin changes.
+const ACK_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/acknowledge`;
+
+describe("Story 4.5 — AC: happy path (POST 200 → success toast → state reconciled)", () => {
+  it("fires POST, surfaces 'Acknowledged' toast, and the row transitions to ACKNOWLEDGED via socket event", async () => {
+    let ackCallCount = 0;
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        ackCallCount += 1;
+        expect(init?.method).toBe("POST");
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "ACKNOWLEDGED",
+              acknowledged_at: "2026-08-27T01:00:00.000Z",
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    // Acknowledge button visible for OPEN + Operator.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    // Click → POST + success toast.
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-toast-success")).toHaveTextContent("Acknowledged");
+    });
+    expect(ackCallCount).toBe(1);
+
+    // The socket-driven state mutation arrives; the row's
+    // `data-state` updates to ACKNOWLEDGED. The button then
+    // disappears because the gate (`actionSlotsFor`) returns no
+    // slot for ACKNOWLEDGED + Operator.
+    expect(activeSocket).not.toBeNull();
+    activeSocket?.__emitStateChanged({
+      incident_id: INCIDENT_ID,
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: "00000000-0000-4000-8000-00000000a001",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
+        "data-state",
+        "ACKNOWLEDGED",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+    });
+  });
+});
+
+describe("Story 4.5 — AC: NOT_OPEN (button absent for ACKNOWLEDGED row)", () => {
+  it("does NOT render the Acknowledge button when state === 'ACKNOWLEDGED'", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+  });
+});
+
+describe("Story 4.5 — AC: MUTATION_IN_FLIGHT (button disabled, double-click is a no-op)", () => {
+  it("disables the button while in flight and a second click does not fire another POST", async () => {
+    let ackCallCount = 0;
+    let resolveAck: (() => void) | null = null;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        ackCallCount += 1;
+        // Hold the response open so the button stays `disabled`.
+        await new Promise<void>((resolve) => {
+          resolveAck = resolve;
+        });
+        return new Response(JSON.stringify(baseIncident({ state: "ACKNOWLEDGED" })), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    // First click: fires POST.
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeDisabled();
+    });
+    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
+      "Acknowledging...",
+    );
+    expect(ackCallCount).toBe(1);
+
+    // Second click: button is `disabled`, fireEvent.click is a no-op
+    // for disabled buttons (React swallows the click before the
+    // handler fires).
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+    expect(ackCallCount).toBe(1);
+
+    // Resolve the in-flight mutation so the test cleans up cleanly.
+    resolveAck?.();
+  });
+});
+
+describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged')", () => {
+  it("surfaces the 'Already acknowledged' error toast and invalidates the row cache", async () => {
+    let ackCallCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        ackCallCount += 1;
+        return new Response(
+          JSON.stringify({
+            error: "invalid_state_transition",
+            from: "ACKNOWLEDGED",
+            attempted: "acknowledge",
+          }),
+          { status: 409 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
+        "Already acknowledged",
+      );
+    });
+    expect(ackCallCount).toBe(1);
+  });
+});
+
+describe("Story 4.5 — AC: FORBIDDEN_403 (error toast 'Not authorized')", () => {
+  it("surfaces the 'Not authorized' error toast when the server returns 403", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent("Not authorized");
+    });
+  });
+});
+
+describe("Story 4.5 — AC: NOT_FOUND_404 (error toast 'Incident not found' + page renders NotFound)", () => {
+  it("surfaces the 'Incident not found' error toast and <NotFound /> renders on the next fetch", async () => {
+    let rowFetchCount = 0;
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        // First fetch: returns the row. Second fetch (after the
+        // mutation invalidates the cache): 404 — the row was
+        // deleted between the click and the re-fetch.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+
+    // Toast appears immediately.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
+        "Incident not found",
+      );
+    });
+
+    // After the mutation's `onSuccess` invalidates the row query, the
+    // next fetch returns 404 → page renders <NotFound />.
+    await waitFor(() => {
+      expect(screen.getByTestId("not-found")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
+  });
+});
+
+describe("Story 4.5 — AC: SERVER_ERROR_500 (error toast 'Failed to acknowledge. Try again.')", () => {
+  it("surfaces the retryable error toast and re-enables the button for manual retry", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        return new Response("internal", { status: 500 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
+        "Failed to acknowledge. Try again.",
+      );
+    });
+
+    // Button re-enables (mutation is no longer in flight).
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).not.toBeDisabled();
+    });
+    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
+      "Acknowledge",
+    );
   });
 });
