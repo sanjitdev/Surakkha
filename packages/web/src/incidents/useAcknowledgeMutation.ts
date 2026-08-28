@@ -13,10 +13,24 @@
  *   - 409 `invalid_state_transition`  → "Already acknowledged"
  *   - 403                              → "Not authorized"
  *   - 404                              → "Incident not found"
+ *   - 401 (token refresh failed)       → "Session expired — please sign
+ *                                       in again"  (5xx-class: the row
+ *                                       is presumed unchanged and the
+ *                                       operator must re-auth before
+ *                                       any retry can succeed; the 4xx
+ *                                       row-invalidation branch does
+ *                                       NOT cover 401)
  *
  * 5xx classification (retryable toast):
  *
  *   - any other status code            → "Failed to acknowledge. Try again."
+ *
+ * Network throws (offline / abort / DNS failure) are caught by the
+ * `mutationFn` try/catch and classified as `status: 0` so the
+ * `onError` status-range check never reads `undefined`. The 0
+ * sentinel is below the `HTTP_4XX_MIN` floor and falls into the
+ * "do not invalidate" branch (5xx-class UX; the row is presumed
+ * unchanged and the operator may retry).
  *
  * The error object is a `AcknowledgeMutationError` whose `.message` is
  * the toast copy; the detail page calls `pushToast("error", err.message)`
@@ -49,15 +63,29 @@ import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
  * constants at `IncidentDetailPage.tsx:60-61` so the mutation
  * classifies failures identically to the read path.
  */
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
+
+/**
+ * Network-throw sentinel. `apiFetch` throws a bare `Error` (no
+ * `.status`) on connection failures / aborts / DNS errors. The
+ * `mutationFn` try/catch rethrows as `AcknowledgeMutationError`
+ * with this status so `onError`'s range check stays valid.
+ */
+const HTTP_NETWORK_THROW = 0;
 
 /**
  * 4xx range bounds used to decide whether a failed mutation
  * should invalidate the row query (4xx → server told us truth
  * about the row; 5xx → server is broken, leave the row alone so
  * the operator can retry).
+ *
+ * NOTE: 401 is classified separately and explicitly EXCLUDED from
+ * the row-invalidation branch — see `onError` below. A 401 means
+ * the refresh token is exhausted and the operator must re-auth
+ * before any retry can succeed; the row is presumed unchanged.
  */
 const HTTP_4XX_MIN = 400;
 const HTTP_4XX_MAX = 500;
@@ -80,9 +108,12 @@ export class AcknowledgeMutationError extends Error {
 
 /**
  * Classify the api's failure response into the operator-facing copy.
- * 409 / 403 / 404 get pinned copy (server-rejected). All other 4xx +
- * 5xx collapse to the retryable line so the operator sees one
- * consistent prompt for unknown failures.
+ * 401 / 409 / 403 / 404 get pinned copy (server-rejected). 401 is its
+ * own branch because the toast must reflect "session expired"
+ * (a retry without re-auth can never succeed) instead of the generic
+ * retryable line. All other 4xx + 5xx collapse to the retryable
+ * line so the operator sees one consistent prompt for unknown
+ * failures.
  */
 const classifyAcknowledgeError = (status: number): AcknowledgeMutationError => {
   if (status === HTTP_CONFLICT) {
@@ -93,6 +124,12 @@ const classifyAcknowledgeError = (status: number): AcknowledgeMutationError => {
   }
   if (status === HTTP_NOT_FOUND) {
     return new AcknowledgeMutationError(status, "Incident not found");
+  }
+  if (status === HTTP_UNAUTHORIZED) {
+    // 5xx-class UX: the row is presumed unchanged; the operator must
+    // re-auth before any retry can succeed. The 4xx row-invalidation
+    // branch in `onError` explicitly excludes 401.
+    return new AcknowledgeMutationError(status, "Session expired — please sign in again");
   }
   return new AcknowledgeMutationError(status, "Failed to acknowledge. Try again.");
 };
@@ -118,16 +155,47 @@ const classifyAcknowledgeError = (status: number): AcknowledgeMutationError => {
  * non-OPEN state — re-fetch tells the truth); a 404 means the
  * row was deleted (re-fetch surfaces `<NotFound />`); a 403 means
  * a token/role drift (re-fetch surfaces `<RbacDenied />`).
+ *
+ * 401 is 5xx-class: `apiFetch`'s internal refresh has already
+ * failed, the operator is effectively signed out, and re-trying
+ * the call will never succeed until re-auth. We deliberately do
+ * NOT invalidate the row query for 401 (a re-fetch against the
+ * same expired token would 401 too and surface a second toast).
+ * The `onError` status-range check explicitly excludes 401.
+ *
+ * Network throws (offline / abort / DNS) are caught inside
+ * `mutationFn` and rethrown as `AcknowledgeMutationError` with
+ * `status: 0` so `onError`'s `err.status >= HTTP_4XX_MIN` check
+ * never reads `undefined`. Status 0 falls into the "do not
+ * invalidate" branch (5xx-class UX; the operator may retry).
  */
 export const useAcknowledgeMutation = (id: string) => {
   const queryClient = useQueryClient();
   return useMutation<void, AcknowledgeMutationError, void>({
     mutationFn: async (): Promise<void> => {
-      const res = await apiFetch(`/api/incidents/${id}/acknowledge`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        throw classifyAcknowledgeError(res.status);
+      // Catch synchronous throws from `apiFetch` (network errors
+      // surface as a bare `Error` with no `.status`). Without this
+      // guard, `onError`'s `err.status >= HTTP_4XX_MIN` check would
+      // read `undefined >= 400` → false → no invalidation, and the
+      // toast copy would be the raw thrown message (not classified).
+      try {
+        const res = await apiFetch(`/api/incidents/${id}/acknowledge`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          throw classifyAcknowledgeError(res.status);
+        }
+      } catch (err) {
+        // If the thrown value is already a tagged
+        // `AcknowledgeMutationError` (status-classified by
+        // `classifyAcknowledgeError` above), rethrow as-is.
+        if (err instanceof AcknowledgeMutationError) {
+          throw err;
+        }
+        // Network throw / DNS failure / abort — classify as
+        // status 0 (network sentinel) so the `onError` range check
+        // treats it as "do not invalidate" (5xx-class UX).
+        throw classifyAcknowledgeError(HTTP_NETWORK_THROW);
       }
       // The api returns 200 with a refreshed `IncidentPayload`; we
       // do NOT parse it here — the page's row query invalidation
@@ -137,13 +205,22 @@ export const useAcknowledgeMutation = (id: string) => {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
     },
-    // 4xx failures all invalidate the cache so the next fetch can
+    // 4xx failures invalidate the cache so the next fetch can
     // update the read-side surface (NotFound / RbacDenied / row
     // shows ACKNOWLEDGED for 409). We deliberately do NOT
-    // invalidate on 5xx — the row is presumed unchanged and the
-    // operator may retry against the same id.
+    // invalidate on:
+    //   - 5xx               — row presumed unchanged; manual retry.
+    //   - 401               — token refresh exhausted (5xx-class UX);
+    //                         operator must re-auth before any retry
+    //                         can succeed; invalidating would trigger
+    //                         a redundant refetch that would also 401.
+    //   - status 0 (network throw) — same reasoning as 5xx.
     onError: (err) => {
-      if (err.status >= HTTP_4XX_MIN && err.status < HTTP_4XX_MAX) {
+      if (
+        err.status >= HTTP_4XX_MIN &&
+        err.status < HTTP_4XX_MAX &&
+        err.status !== HTTP_UNAUTHORIZED
+      ) {
         void queryClient.invalidateQueries({ queryKey: incidentDetailQueryKey(id) });
       }
     },

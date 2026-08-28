@@ -81,12 +81,16 @@ export const IncidentDetailActions = ({
         data-testid="incident-detail-acknowledge-button"
         disabled={isPending}
         onClick={onAcknowledge}
-        className="self-start rounded-input border px-4 py-2 text-sm font-medium text-white"
-        style={{
-          backgroundColor: isPending ? "#94A3B8" : "#0F172A",
-          borderColor: "#0F172A",
-          cursor: isPending ? "not-allowed" : "pointer",
-        }}
+        className={[
+          "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
+          // Slate palette: match the codebase's slate tokens
+          // (`text-slate-900` body, `border-slate-300` subtle border).
+          // Disabled state uses `disabled:bg-slate-400` so the
+          // button reads as visibly muted while the mutation is
+          // in flight — matches ThresholdsPage's deactivate affordance.
+          "border-slate-900 bg-slate-900 hover:bg-slate-700",
+          "disabled:bg-slate-400 disabled:cursor-not-allowed",
+        ].join(" ")}
       >
         {isPending ? "Acknowledging..." : "Acknowledge"}
       </button>

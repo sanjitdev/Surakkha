@@ -96,24 +96,24 @@ describe("Story 4.5 — toast success vs error tones", () => {
 
     render(<ToastRegion toasts={result.current.toasts} />);
 
-    const region = screen.getByTestId("incident-detail-toast-region");
+    const region = screen.getByTestId("toast-region");
     expect(region).toBeInTheDocument();
-    expect(screen.getByTestId("incident-detail-toast-success")).toHaveTextContent("Acknowledged");
-    expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
+    // Testid prefix is neutral `toast-{tone}-{id}` so Stories 4.6 /
+    // 4.7 / 4.11 can reuse this primitive without inheriting an
+    // `incident-detail-` namespace.
+    expect(screen.getByTestId("toast-success-1")).toHaveTextContent("Acknowledged");
+    expect(screen.getByTestId("toast-error-2")).toHaveTextContent(
       "Failed to acknowledge. Try again.",
     );
 
     // The two entries differ by tone (data-tone attribute).
-    expect(screen.getByTestId("incident-detail-toast-success")).toHaveAttribute(
-      "data-tone",
-      "success",
-    );
-    expect(screen.getByTestId("incident-detail-toast-error")).toHaveAttribute("data-tone", "error");
+    expect(screen.getByTestId("toast-success-1")).toHaveAttribute("data-tone", "success");
+    expect(screen.getByTestId("toast-error-2")).toHaveAttribute("data-tone", "error");
   });
 
   it("renders no <li> when the queue is empty", () => {
     render(<ToastRegion toasts={[]} />);
-    const region = screen.getByTestId("incident-detail-toast-region");
+    const region = screen.getByTestId("toast-region");
     expect(region).toBeInTheDocument();
     expect(region.querySelectorAll("li")).toHaveLength(0);
   });
@@ -122,11 +122,11 @@ describe("Story 4.5 — toast success vs error tones", () => {
 describe("Story 4.5 — toast region mount/unmount", () => {
   it("does NOT render any toast region when <ToastRegion /> is not mounted", () => {
     // Pairs with "with region → with DOM": absence of `<ToastRegion />`
-    // means absence of `data-testid="incident-detail-toast-region"`.
-    // This guards against a regression where the page accidentally
-    // renders a fresh `<ul>` for every toast inside the body content.
+    // means absence of `data-testid="toast-region"`. This guards
+    // against a regression where the page accidentally renders a
+    // fresh `<ul>` for every toast inside the body content.
     const { container } = render(<div data-testid="no-toast-here">No toasts here.</div>);
-    expect(screen.queryByTestId("incident-detail-toast-region")).toBeNull();
-    expect(container.querySelector("[data-testid='incident-detail-toast-region']")).toBeNull();
+    expect(screen.queryByTestId("toast-region")).toBeNull();
+    expect(container.querySelector("[data-testid='toast-region']")).toBeNull();
   });
 });

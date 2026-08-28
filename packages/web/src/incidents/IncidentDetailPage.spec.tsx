@@ -33,7 +33,7 @@
 import { type IncidentStateChangedEvent } from "@surakkha/shared/events";
 import { type IncidentPayload } from "@surakkha/shared/incident";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -149,6 +149,10 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = ORIGINAL_FETCH;
   _resetApiClientConfig();
+  // Always restore real timers between tests so a test that
+  // enabled fake timers (e.g. the TTL pin) does not leak into
+  // the next test's `waitFor` polling.
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -578,10 +582,11 @@ describe("Story 4.5 — AC: happy path (POST 200 → success toast → state rec
       expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
     });
 
-    // Click → POST + success toast.
+    // Click → POST + success toast. Toast testid is
+    // `toast-success-{id}` (neutral prefix per Patch 2).
     fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
     await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-toast-success")).toHaveTextContent("Acknowledged");
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Acknowledged");
     });
     expect(ackCallCount).toBe(1);
 
@@ -664,33 +669,59 @@ describe("Story 4.5 — AC: MUTATION_IN_FLIGHT (button disabled, double-click is
       expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
     });
 
-    // First click: fires POST.
-    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
-    await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeDisabled();
-    });
-    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
-      "Acknowledging...",
-    );
-    expect(ackCallCount).toBe(1);
+    // Wrap the post-click assertions in try/finally so the
+    // dangling promise held open by `await new Promise(...)` above
+    // is always resolved — even if an assertion throws. Otherwise
+    // a failed assertion leaks the unresolved promise and the
+    // fetch handler hangs across subsequent tests.
+    try {
+      // First click: fires POST.
+      fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeDisabled();
+      });
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
+        "Acknowledging...",
+      );
+      expect(ackCallCount).toBe(1);
 
-    // Second click: button is `disabled`, fireEvent.click is a no-op
-    // for disabled buttons (React swallows the click before the
-    // handler fires).
-    fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
-    expect(ackCallCount).toBe(1);
-
-    // Resolve the in-flight mutation so the test cleans up cleanly.
-    resolveAck?.();
+      // Second click: button is `disabled`, fireEvent.click is a no-op
+      // for disabled buttons (React swallows the click before the
+      // handler fires).
+      fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+      expect(ackCallCount).toBe(1);
+    } finally {
+      // Resolve the in-flight mutation so the test cleans up cleanly.
+      resolveAck?.();
+    }
   });
 });
 
-describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged')", () => {
-  it("surfaces the 'Already acknowledged' error toast and invalidates the row cache", async () => {
+describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged' + row reconciles to ACKNOWLEDGED)", () => {
+  it("surfaces the 'Already acknowledged' error toast, invalidates the row, and the row reconciles to ACKNOWLEDGED on the next fetch", async () => {
     let ackCallCount = 0;
+    let rowFetchCount = 0;
     installFetch(async (url) => {
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
-        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+        // First fetch: OPEN. Second fetch (after the mutation's
+        // `onError` invalidates the cache because 409 is 4xx):
+        // ACKNOWLEDGED — the world moved on while the operator
+        // was clicking. The row query should reconcile to that.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), {
+            status: 200,
+          });
+        }
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "ACKNOWLEDGED",
+              acknowledged_at: "2026-08-27T01:00:00.000Z",
+            }),
+          ),
+          { status: 200 },
+        );
       }
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
         return new Response(JSON.stringify({ events: [] }), { status: 200 });
@@ -717,20 +748,47 @@ describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged')", 
 
     fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
 
+    // Toast appears immediately.
     await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
-        "Already acknowledged",
-      );
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already acknowledged");
     });
     expect(ackCallCount).toBe(1);
+
+    // The mutation's `onError` invalidates the row query (4xx branch);
+    // the next fetch returns ACKNOWLEDGED. The row's `data-state`
+    // updates; the button disappears because `actionSlotsFor` returns
+    // no slot for ACKNOWLEDGED + Operator.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toHaveAttribute(
+        "data-state",
+        "ACKNOWLEDGED",
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+    });
+    expect(rowFetchCount).toBe(2);
   });
 });
 
-describe("Story 4.5 — AC: FORBIDDEN_403 (error toast 'Not authorized')", () => {
-  it("surfaces the 'Not authorized' error toast when the server returns 403", async () => {
+describe("Story 4.5 — AC: FORBIDDEN_403 (error toast 'Not authorized' + page renders <RbacDenied />)", () => {
+  it("surfaces the 'Not authorized' error toast, invalidates the row, and <RbacDenied /> renders on the next fetch", async () => {
+    let rowFetchCount = 0;
     installFetch(async (url) => {
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
-        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+        // First fetch: 200. Second fetch (after the mutation's
+        // `onError` invalidates the cache because 403 is 4xx):
+        // 403 — the role drifted between page load and click, so
+        // the next fetch surfaces the RBAC contract via <RbacDenied />.
+        rowFetchCount += 1;
+        if (rowFetchCount === 1) {
+          return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ error: "forbidden", required_role: "Technician" }), {
+          status: 403,
+        });
       }
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
         return new Response(JSON.stringify({ events: [] }), { status: 200 });
@@ -749,9 +807,18 @@ describe("Story 4.5 — AC: FORBIDDEN_403 (error toast 'Not authorized')", () =>
 
     fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
 
+    // Toast appears immediately.
     await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent("Not authorized");
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Not authorized");
     });
+
+    // After the mutation's `onError` invalidates the row query (4xx
+    // branch), the next fetch returns 403 → page renders <RbacDenied />.
+    await waitFor(() => {
+      expect(screen.getByTestId("rbac-denied")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-root")).toBeNull();
+    expect(rowFetchCount).toBe(2);
   });
 });
 
@@ -790,9 +857,7 @@ describe("Story 4.5 — AC: NOT_FOUND_404 (error toast 'Incident not found' + pa
 
     // Toast appears immediately.
     await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
-        "Incident not found",
-      );
+      expect(screen.getByTestId("toast-region")).toHaveTextContent("Incident not found");
     });
 
     // After the mutation's `onSuccess` invalidates the row query, the
@@ -828,7 +893,7 @@ describe("Story 4.5 — AC: SERVER_ERROR_500 (error toast 'Failed to acknowledge
     fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("incident-detail-toast-error")).toHaveTextContent(
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
         "Failed to acknowledge. Try again.",
       );
     });
@@ -840,5 +905,129 @@ describe("Story 4.5 — AC: SERVER_ERROR_500 (error toast 'Failed to acknowledge
     expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
       "Acknowledge",
     );
+  });
+});
+
+// ============================================================================
+// Story 4.5 — TTL pin at the integration level
+// ============================================================================
+//
+// Pinned here (not just in `toast.spec.tsx`) so a regression that
+// moved the TTL constant or accidentally skipped the timer in the
+// page wiring would still fail at the integration seam.
+//
+// Note on `act` + fake timers: `waitFor` polls via real-time
+// `setTimeout`, which fake timers intercept — meaning a `waitFor`
+// under fake timers never resolves. We drive the scenario with
+// `act` + microtask flushing instead (`await Promise.resolve()`-style
+// flushes in `act`) so the React reconciler settles between
+// deterministic clock advances.
+describe("Story 4.5 — AC: success toast leaves the DOM after TTL", () => {
+  it("drops the success toast after 4001ms (the TTL contract at integration level)", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(ACK_URL_SUFFIX)) {
+        return new Response(
+          JSON.stringify(
+            baseIncident({
+              state: "ACKNOWLEDGED",
+              acknowledged_at: "2026-08-27T01:00:00.000Z",
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    // Drive the page-load path under real timers so the row
+    // query resolves; `act` flushes the reconciler between
+    // microtask checkpoints. Use REAL timers for the load path
+    // — switching to fake timers before render leaves React's
+    // scheduler's internal `setTimeout(0)` lanes stranded.
+    renderDetail("Operator");
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+    });
+
+    // From here, run under fake timers. The TTL fires at 4_000ms
+    // and we need deterministic control over the clock. The
+    // mutation is synchronous (resolve → onSuccess →
+    // invalidate → refetch settles → pushToast) but its promise
+    // chain still needs a microtask flush to render the toast.
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
+
+      // Flush the mutation's promise chain (resolve → onSuccess
+      // → invalidate → refetch settles → pushToast → setState)
+      // inside `act` so the React reconciler commits before we
+      // assert. `await Promise.resolve()` only flushes one
+      // microtask; the `act` boundary ensures React's internal
+      // effects settle too.
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // The toast `<li>` is now mounted. Assert directly on the
+      // rendered DOM — no `waitFor` under fake timers.
+      const region = screen.getByTestId("toast-region");
+      expect(region).toHaveTextContent("Acknowledged");
+      expect(region.children.length).toBe(1);
+
+      // Advance past the 4_000ms TTL — the toast's setTimeout
+      // fires under fake timers; the queue's setState then
+      // schedules a re-render. Wrap the advance + re-render in
+      // `act` so React commits the empty queue before we
+      // assert.
+      act(() => {
+        vi.advanceTimersByTime(4_001);
+      });
+
+      // Region is now empty. We assert on the region's child
+      // list (zero children) rather than
+      // `queryByTestId("toast-...")` because the success toast's
+      // id is page-local and not predictable from outside the
+      // `useToasts()` hook.
+      expect(region.children.length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ============================================================================
+// Story 4.5 — Viewer role at the page integration level
+// ============================================================================
+//
+// Pinned here (not just in `IncidentDetailActions.spec.tsx`) so a
+// regression that introduced an inline role check inside
+// `IncidentDetailPage` (bypassing `actionSlotsFor`) would fail at
+// the integration seam. The unit test pins the contract for the
+// button; this test pins the contract for the page.
+describe("Story 4.5 — AC: Viewer cannot see the Acknowledge button even on an OPEN incident", () => {
+  it("does NOT render the Acknowledge button for an OPEN incident viewed by a Viewer", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "OPEN" })), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Viewer");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
   });
 });

@@ -113,8 +113,17 @@ export { TOAST_TTL_MS };
  *
  * Mounted by `IncidentDetailPage` at the page root. Mirrors the
  * ThresholdsPage markup: `aria-live="polite"` `<ul>` with one
- * `<li>` per toast. The `data-testid="incident-detail-toast-region"`
- * is the seam for the Acknowledge-flow test rig.
+ * `<li>` per toast. The toast testid prefix is neutral
+ * (`toast-{tone}-{id}`) so Stories 4.6 / 4.7 / 4.11 can reuse
+ * this primitive without inheriting a `incident-detail-`
+ * namespace.
+ *
+ * Accessibility:
+ *   - The region itself announces politely (success / info tones).
+ *   - Each error-tone `<li>` upgrades to `role="alert"` +
+ *     `aria-live="assertive"` so failures are announced immediately
+ *     instead of waiting for the next idle — failures are the
+ *     class of message the operator MUST see right now.
  *
  * Tone palette — re-uses the ThresholdsPage colours so the operator
  * gets the same green / red visual language for "success" /
@@ -133,16 +142,18 @@ export const ToastRegion = ({ toasts }: { readonly toasts: readonly ToastEntry[]
   };
 
   return (
-    <ul
-      data-testid="incident-detail-toast-region"
-      aria-live="polite"
-      className="flex flex-col gap-2"
-    >
+    <ul data-testid="toast-region" aria-live="polite" className="flex flex-col gap-2">
       {toasts.map((t) => (
         <li
           key={t.id}
-          data-testid={`incident-detail-toast-${t.tone}`}
+          data-testid={`toast-${t.tone}-${t.id}`}
           data-tone={t.tone}
+          // Error toasts are the "operator MUST see this now" class —
+          // upgrade to role="alert" + aria-live="assertive" so screen
+          // readers announce immediately. Success / info stay polite.
+          {...(t.tone === "error"
+            ? { role: "alert", "aria-live": "assertive" }
+            : { "aria-live": "polite" })}
           className="rounded-input border px-4 py-2 text-md"
           style={{
             backgroundColor: TOAST_BG[t.tone],

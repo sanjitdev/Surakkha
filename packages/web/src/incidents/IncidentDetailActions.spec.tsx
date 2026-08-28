@@ -3,13 +3,17 @@
  *
  * Unit tests for the Acknowledge button's visibility logic. Mirrors
  * the Story 4.1 contract: `actionSlotsFor(incident, viewerRole)` is
- * the SINGLE source of truth for which actions render. Three cases:
+ * the SINGLE source of truth for which actions render.
  *
- *   1. OPEN + Operator       → button visible.
- *   2. OPEN + Technician     → button NOT visible (RBAC: Technician
- *                              cannot acknowledge).
- *   3. ACKNOWLEDGED + Operator → button NOT visible (state is past
- *                              OPEN; no slot returned by `actionSlotsFor`).
+ * Coverage matrix (parameterized over the four-role RBAC contract
+ * so AC #1 "Admin OR Operator" and AC #3 "Technician OR Viewer"
+ * are both pinned):
+ *
+ *   1. OPEN + Admin          → button visible.   (AC #1)
+ *   2. OPEN + Operator       → button visible.   (AC #1)
+ *   3. OPEN + Technician     → button NOT visible. (AC #3)
+ *   4. OPEN + Viewer         → button NOT visible. (AC #3)
+ *   5. ACKNOWLEDGED + Operator → button NOT visible. (AC #2 — past OPEN)
  *
  * The mutation wiring (`isPending`, `onAcknowledge`) is the
  * `IncidentDetailPage.spec.tsx`'s job — those tests mount the full
@@ -44,37 +48,39 @@ afterEach(() => {
 });
 
 describe("Story 4.5 — IncidentDetailActions visibility", () => {
-  it("renders the Acknowledge button for OPEN + Operator", () => {
-    const incident = makeIncident({ state: "OPEN" });
-    render(
-      <IncidentDetailActions
-        incident={incident}
-        viewerRole="Operator"
-        isPending={false}
-        onAcknowledge={() => undefined}
-      />,
-    );
-    expect(screen.getByTestId("incident-detail-actions")).toBeInTheDocument();
-    expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
-    expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
-      "Acknowledge",
-    );
-    expect(screen.getByTestId("incident-detail-acknowledge-button")).not.toBeDisabled();
-  });
-
-  it("does NOT render the Acknowledge button for OPEN + Technician (RBAC)", () => {
-    const incident = makeIncident({ state: "OPEN" });
-    render(
-      <IncidentDetailActions
-        incident={incident}
-        viewerRole="Technician"
-        isPending={false}
-        onAcknowledge={() => undefined}
-      />,
-    );
-    // The component returns `null` — no actions region, no button.
-    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
-    expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+  // Parameterized over the full four-role RBAC matrix. AC #1 names
+  // "Admin OR Operator"; AC #3 names "Technician OR Viewer". A
+  // coincidental green on Technician alone is not a four-role pin —
+  // we exercise all four roles explicitly.
+  describe.each([
+    { role: "Admin", expectVisible: true },
+    { role: "Operator", expectVisible: true },
+    { role: "Technician", expectVisible: false },
+    { role: "Viewer", expectVisible: false },
+  ] as const)("OPEN + $role", ({ role, expectVisible }) => {
+    it(`${expectVisible ? "renders" : "does NOT render"} the Acknowledge button`, () => {
+      const incident = makeIncident({ state: "OPEN" });
+      render(
+        <IncidentDetailActions
+          incident={incident}
+          viewerRole={role}
+          isPending={false}
+          onAcknowledge={() => undefined}
+        />,
+      );
+      if (expectVisible) {
+        expect(screen.getByTestId("incident-detail-actions")).toBeInTheDocument();
+        expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeInTheDocument();
+        expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
+          "Acknowledge",
+        );
+        expect(screen.getByTestId("incident-detail-acknowledge-button")).not.toBeDisabled();
+      } else {
+        // The component returns `null` — no actions region, no button.
+        expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+        expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
+      }
+    });
   });
 
   it("does NOT render the Acknowledge button for ACKNOWLEDGED + Operator (NOT_OPEN)", () => {
