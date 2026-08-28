@@ -2,7 +2,7 @@
 title: "Story 4.6 — Assign Technician + INSPECTING Transition"
 type: "feature"
 created: "2026-08-28"
-status: "in-progress"
+status: "in-review"
 review_loop_iteration: 0
 baseline_commit: "194fdd6"
 context:

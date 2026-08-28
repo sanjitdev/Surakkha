@@ -183,14 +183,19 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
         Assign technician
       </label>
       <div className="flex items-center gap-2">
+        {/* eslint-disable react/forbid-dom-props -- the `id` is the
+            target of the sibling `<label htmlFor>` above. The rule's
+            intent (avoid duplicate / colliding DOM ids) does not
+            apply to a single, test-stable testid-derived value. */}
         <select
-          aria-label="Assign technician"
+          id="incident-detail-assign-select"
           data-testid="incident-detail-assign-select"
           value={selectedAssignee}
           disabled={isPending}
           onChange={(e) => setSelectedAssignee(e.target.value)}
           className="rounded-input border border-neutral-border bg-neutral-surface px-3 py-2 text-sm text-neutral-body disabled:cursor-not-allowed disabled:bg-neutral-page"
         >
+          {/* eslint-enable react/forbid-dom-props */}
           <option value="" disabled>
             Select a technician...
           </option>
