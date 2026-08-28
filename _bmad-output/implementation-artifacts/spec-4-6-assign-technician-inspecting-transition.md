@@ -2,7 +2,7 @@
 title: "Story 4.6 — Assign Technician + INSPECTING Transition"
 type: "feature"
 created: "2026-08-28"
-status: "in-review"
+status: "done"
 review_loop_iteration: 0
 baseline_commit: "194fdd6"
 context:
@@ -89,15 +89,15 @@ context:
 
 **Execution:**
 
-- [ ] 1. Write spec doc (this file). Status: draft → ready-for-dev.
-- [ ] 2. Create `packages/web/src/incidents/seededTechnicians.ts` with `SEEDED_TECHNICIAN_IDS` constant.
-- [ ] 3. Create `packages/web/src/incidents/useAssignMutation.ts` mirroring `useAcknowledgeMutation.ts` (4xx invalidates; 5xx + network throw do not; `AssignMutationError` tagged class; status 0 sentinel).
-- [ ] 4. Extend `IncidentDetailActions.tsx` with the Assign inline form (Technician `<select>` + Assign button), gated by `actionSlotsFor` returning the `assign` slot. Existing Acknowledge button logic stays untouched.
-- [ ] 5. Extend `IncidentDetailActions.spec.tsx` visibility matrix: ACKNOWLEDGED + Operator → both buttons visible; OPEN + Operator → only Acknowledge; ACKNOWLEDGED + Technician → nothing.
-- [ ] 6. Extend `IncidentDetailPage.tsx` to mount `useAssignMutation`, define `handleAssign`, thread `isAssign` + `onAssign` props through Dispatch → Body → Actions.
-- [ ] 7. Extend `IncidentDetailPage.spec.tsx` with 6 assign-flow tests (HAPPY_PATH, NOT_OPEN, RBAC_DENIED, MUTATION_IN_FLIGHT, CONFLICT_409, SERVER_ERROR_500).
-- [ ] 8. Run `pnpm -F @surakkha/web test`, `pnpm -r typecheck`. All green.
-- [ ] 9. Lint-fix + commit + sync sprint-status (mark 4-6 done).
+- [x] 1. Write spec doc (this file). Status: draft → ready-for-dev → in-progress → in-review → done.
+- [x] 2. Create `packages/web/src/incidents/seededTechnicians.ts` with `SEEDED_TECHNICIAN_IDS` constant.
+- [x] 3. Create `packages/web/src/incidents/useAssignMutation.ts` mirroring `useAcknowledgeMutation.ts` (4xx invalidates; 5xx + network throw do not; `AssignMutationError` tagged class; status 0 sentinel).
+- [x] 4. Extend `IncidentDetailActions.tsx` with the Assign inline form (Technician `<select>` + Assign button), gated by `actionSlotsFor` returning the `assign` slot. Existing Acknowledge button logic stays untouched. Step-04 patch re-attached `id="incident-detail-assign-select"` for `<label htmlFor>` a11y pairing.
+- [x] 5. Extend `IncidentDetailActions.spec.tsx` visibility matrix: ACKNOWLEDGED + Operator → both buttons visible; OPEN + Operator → only Acknowledge; ACKNOWLEDGED + Technician → nothing.
+- [x] 6. Extend `IncidentDetailPage.tsx` to mount `useAssignMutation`, define `handleAssign`, thread `isAssign` + `onAssign` props through Dispatch → Body → Actions.
+- [x] 7. Extend `IncidentDetailPage.spec.tsx` with 6 assign-flow tests (HAPPY_PATH, NOT_OPEN, RBAC_DENIED, MUTATION_IN_FLIGHT, CONFLICT_409, SERVER_ERROR_500). Step-04 review added 5 more: NOT_FOUND_404, FORBIDDEN_403, TOKEN_EXPIRED_401, BODY_VALIDATION_400, TOAST_TTL (fake-timer 4s auto-dismiss).
+- [x] 8. Run `pnpm -F @surakkha/web test` (338/338 green), `pnpm -r typecheck` (clean across 4 packages). All green.
+- [x] 9. Lint-fix + commit + sync sprint-status (mark 4-6 done).
 
 **Acceptance Criteria:**
 
@@ -151,4 +151,46 @@ context:
 **Spec**
 
 - Story 4.6 spec — intent, AC matrix, design notes (read first; mirrors 4.5's structure).
-  [`spec-4-6-assign-technician-inspecting-transition.md:16`](spec-4-6-assign-technician-inspecting-transition.md#L16)
+  [`spec-4-6-assign-technician-inspecting-transition.md:17-67`](spec-4-6-assign-technician-inspecting-transition.md#L17-L67)
+- Edge-case matrix (12 scenarios — HAPPY_PATH, NOT_OPEN, RBAC_DENIED, MUTATION_IN_FLIGHT, CONFLICT_409, FORBIDDEN_403, NOT_FOUND_404, SERVER_ERROR_500, SOCKET_EVENT, TOKEN_EXPIRED_401, NO_TECH_SELECTED, BODY_VALIDATION).
+  [`spec-4-6-assign-technician-inspecting-transition.md:51-65`](spec-4-6-assign-technician-inspecting-transition.md#L51-L65)
+- Code map (which file owns what).
+  [`spec-4-6-assign-technician-inspecting-transition.md:69-86`](spec-4-6-assign-technician-inspecting-transition.md#L69-L86)
+- Tasks + acceptance criteria (11 ACs).
+  [`spec-4-6-assign-technician-inspecting-transition.md:88-114`](spec-4-6-assign-technician-inspecting-transition.md#L88-L114)
+- Design notes — why inline form, why hardcoded seed IDs, why mutation hook is not extracted, why 401 is its own bucket, why onError invalidates 4xx but not 5xx.
+  [`spec-4-6-assign-technician-inspecting-transition.md:116-130`](spec-4-6-assign-technician-inspecting-transition.md#L116-L130)
+
+**Implementation (read top-to-bottom in this order)**
+
+1. `seededTechnicians.ts` — 27-line constant. Tiniest file; reads the v1 scope decision in one glance.
+   [`packages/web/src/incidents/seededTechnicians.ts:1-27`](packages/web/src/incidents/seededTechnicians.ts#L1-L27)
+2. `useAssignMutation.ts` — 244-line mutation hook. Header comment mirrors `useAcknowledgeMutation.ts`; the only deltas are URL, body shape, toast copy, and error-classifier strings.
+   [`packages/web/src/incidents/useAssignMutation.ts:1-60`](packages/web/src/incidents/useAssignMutation.ts#L1-L60) (header + classifyAssignError)
+   [`packages/web/src/incidents/useAssignMutation.ts:60-244`](packages/web/src/incidents/useAssignMutation.ts#L60-L244) (mutationFn + invalidate semantics)
+3. `IncidentDetailActions.tsx` — the action region gained an `AssignForm` sub-component. Read the gate-first rule at the top, then jump to `AssignForm`.
+   [`packages/web/src/incidents/IncidentDetailActions.tsx:105-144`](packages/web/src/incidents/IncidentDetailActions.tsx#L105-L144) (slot gate + Acknowledge branch)
+   [`packages/web/src/incidents/IncidentDetailActions.tsx:168-224`](packages/web/src/incidents/IncidentDetailActions.tsx#L168-L224) (AssignForm — label/htmlFor a11y pairing at L186-198)
+4. `IncidentDetailPage.tsx` — page wiring. `handleAssign` at L239-251 mirrors `handleAcknowledge` line-for-line; the `isAssign` + `onAssign` thread through `Dispatch` → `Body` → `<IncidentDetailActions />`.
+   [`packages/web/src/incidents/IncidentDetailPage.tsx:148-251`](packages/web/src/incidents/IncidentDetailPage.tsx#L148-L251) (mutation mount + handlers)
+   [`packages/web/src/incidents/IncidentDetailPage.tsx:411-418`](packages/web/src/incidents/IncidentDetailPage.tsx#L411-L418) (Actions invocation)
+
+**Tests (read in the same implementation order)**
+
+5. `IncidentDetailActions.spec.tsx` — 16 tests, 2 describe blocks (4.5 Acknowledge + 4.6 Assign). The 4-role sweep at L161-194 is the strongest pin for AC #1 + AC #3.
+   [`packages/web/src/incidents/IncidentDetailActions.spec.tsx:60-147`](packages/web/src/incidents/IncidentDetailActions.spec.tsx#L60-L147) (Acknowledge visibility — AC #1, #3, #2, MUTATION_IN_FLIGHT, click forwarding)
+   [`packages/web/src/incidents/IncidentDetailActions.spec.tsx:156-296`](packages/web/src/incidents/IncidentDetailActions.spec.tsx#L156-L296) (Assign visibility — AC #1, #3, NOT_OPEN, INSPECTING-no-slot, NO_TECH_SELECTED, click forwarding, MUTATION_IN_FLIGHT)
+6. `IncidentDetailPage.spec.tsx` — 32 tests. Start with HAPPY_PATH, then CONFLICT_409, then the four 4xx-class buckets (FORBIDDEN_403, NOT_FOUND_404, BODY_VALIDATION_400), then TOKEN_EXPIRED_401 + SERVER_ERROR_500, then the TTL integration test (uses `vi.useFakeTimers()`).
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:1-100`](packages/web/src/incidents/IncidentDetailPage.spec.tsx#L1-L100) (header — test rig + helpers)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:HAPPY_PATH`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (Assign happy path — body assertion)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:CONFLICT_409`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (409 invalidates + reconciles)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:NOT_FOUND_404`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (<NotFound /> re-render)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:FORBIDDEN_403`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (<RbacDenied /> re-render)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:BODY_VALIDATION_400`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (4xx invalidates)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:TOKEN_EXPIRED_401`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (5xx-class — no invalidation)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:SERVER_ERROR_500`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (5xx — no invalidation)
+   [`packages/web/src/incidents/IncidentDetailPage.spec.tsx:TOAST_TTL`](packages/web/src/incidents/IncidentDetailPage.spec.tsx) (fake-timer 4s auto-dismiss)
+
+**Backend — no changes**
+
+- `POST /api/incidents/:id/assign` lives at `packages/api/src/incidents/router.ts:354-358` (existed since Story 4.2). Coverage at `packages/api/src/incidents/router.spec.ts:329-337` (happy) + `:362-365` (400 body validation).
