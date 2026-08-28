@@ -5,6 +5,7 @@ created: "2026-08-27"
 status: "done"
 review_loop_iteration: 1
 baseline_commit: "36995af" # test(4.3): step-04 patches — wire-schema equivalence, silent-drop contract, mount/unmount cleanup
+shipped_commit: "8e8be1d"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md
@@ -138,6 +139,38 @@ context:
 - Refactoring `useKanbanBoardSocket.ts` to consume `cacheMutators.ts` — out of scope for 4.4; the existing 4.3 mutator stays as-is. A future cleanup pass swaps it.
 
 </frozen-after-approval>
+
+## Spec Change Log
+
+### Loop 1 (review_loop_iteration: 0 → 1)
+
+Applied at commit `8e8be1d` on 2026-08-27 during step-04 review triage. Step-04 surfaced ~30 adversarial findings + ~25 edge-case paths + 7 verification gaps; most route to `defer` (forward-compat enum drift, intra-mount id transitions, internationalization, etc.) or `reject` (noise). The patches below are the "caused-or-exposed-by-this-change" fixes the review surfaced.
+
+**KEEP (no spec change required — these are forward-compat / out-of-scope; defer to follow-up):**
+
+- **`cacheMutators.ts` not consumed by `useKanbanBoardSocket.ts`** — explicit deferral per the spec's Out of Scope section. The 4.3 mutator stays as-is; a future cleanup pass swaps it. Refactor candidate.
+- **Forward-compat enum drift on `IncidentEventType`** — the wire schema accepts `invalid_transition_attempt` (single underscore; canonical); a future event type would extend the enum. The page renders all event types via `JSON.stringify(payload)` so unknown types render gracefully. No change needed; project-wide enum-drift pattern.
+- **Internationalization on `<NotFound />` text** — strings are hardcoded English; i18n is project-wide deferred.
+- **Timeline 401-while-row-200 branch** — current behavior: the row renders + a "Failed to load timeline" copy (best-effort); the spec matrix doesn't enumerate this case. Forward-compat; document in a follow-up if users complain.
+- **Intra-mount id transitions** — `useIncidentDetailSocket` re-subscribes when `:id` changes; tested manually but no test pins the unmount-then-resubscribe path. Forward-compat.
+
+**PATCH (spec contract unchanged; code/test edits applied to close review findings):**
+
+- **`IncidentDetailPage.tsx` — collapsed duplicate `IncidentDetailEnvelope` / `IncidentDetailRow` interfaces into one** (`IncidentDetailEnvelope` was the actual envelope, the `Row` alias was unused ceremony). Dropped `[...queryKey]` spread on the row query + invalidate call — `incidentDetailQueryKey` already returns a readonly tuple; the spread was dead work.
+- **`useIncidentDetailSocket.ts` — renamed `KANBAN_SOCKET_URL` → `DEFAULT_SOCKET_URL`**. The constant is the shared dashboard socket URL, not a Kanban-domain concern; the old name leaked the Kanban naming from the detail file.
+- **`NotFound.tsx` — dropped dead `not-found-back` CSS class**. The style is set inline (PRIMARY bg); no stylesheet rule references this class.
+- **`router.ts` — stripped raw UUID from the timeline endpoint's error log**. The 5xx catch-all now logs `id=${row?.id ?? "missing"}` instead of the raw request param. Prevents PII in error logs if the route is ever re-targeted at an externally-supplied id.
+- **`cacheMutators.spec.ts` — parametrized the no-special-case test over all 7 stable states** (was 5). The table now covers every stable state so a future state-added refactor can't silently drop a state.
+- **`NotFound.spec.tsx` — NEW dedicated unit test** (4 cases). Covers the default render (role=status, aria-live=polite, default headline + message + backHref=/incidents + backLabel), the override-prop surface (headline / message / backHref / backLabel), and the back link's `href` target. The first 404 surface in the codebase now has its own contract pin — future per-entity detail pages (4.5 / 4.6 / 4.7 / 4.11) reuse this with confidence.
+- **`IncidentDetailPage.spec.tsx` — renamed the timeline-404 test** from `"renders <NotFound /> when the row succeeds but the timeline returns 404"` to `"renders the row + empty timeline (NOT <NotFound />) when the timeline returns 404"` + added an `expect(screen.queryByTestId("not-found")).toBeNull()` pin. The old name lied about the contract; the actual implementation only renders NotFound on a row-level 404.
+
+**Verification commands at the time of patch:**
+
+- `pnpm -r typecheck` — clean.
+- `pnpm -F @surakkha/api test` — 401 pass / 5 fail. The 5 failures are pre-existing in `alerts/listRouter.spec.ts` (Story 3.5 test-fixture drift; tracked as AI-3.1 in the retrospective, NOT this story's surface). All `incidents/router.spec.ts` (45 tests) including the new timeline endpoint tests pass.
+- `pnpm -F @surakkha/web test` — 297 / 297 pass. Includes the new `cacheMutators` parametrized table (11 tests, was 5) and the new `NotFound.spec.tsx` (4 tests).
+
+---
 
 ## Suggested Review Order
 

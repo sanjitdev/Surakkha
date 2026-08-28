@@ -1,0 +1,1706 @@
+From 23bf47c08b171ae80429fb942e893d93a7dafc1d Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Thu, 27 Aug 2026 19:18:44 +0600
+Subject: [PATCH 1/5] chore(spec): mark Story 4.4 done + ship commit
+
+Land spec-4-4-incident-detail-page.md; mark 4-4 done in
+sprint-status. Append the useIncidentDetailSocket useEffect
+id-change behavior to deferred-work.
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ .../implementation-artifacts/deferred-work.md |   6 +
+ .../spec-4-4-incident-detail-page.md          | 140 ++++++++++++++++++
+ .../sprint-status.yaml                        |   2 +-
+ 3 files changed, 147 insertions(+), 1 deletion(-)
+ create mode 100644 _bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md
+
+diff --git a/_bmad-output/implementation-artifacts/deferred-work.md b/_bmad-output/implementation-artifacts/deferred-work.md
+index a04e40c..3023105 100644
+--- a/_bmad-output/implementation-artifacts/deferred-work.md
++++ b/_bmad-output/implementation-artifacts/deferred-work.md
+@@ -144,3 +144,9 @@
+ - source_spec: `_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md`
+   summary: No `incident-state.migration.spec.ts` exercises the new migration's table shapes, FKs, or partial unique index.
+   evidence: Owner: live-Prisma test rig (sibling of `alert-debounce.migration.spec.ts`); spec doesn't require it for 4.2 but it should land with the deferred-test sweep.
++
++## Deferred from: code review of 4-4-incident-detail-page (2026-08-27)
++
++- source_spec: `_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md`
++  summary: `useIncidentDetailSocket` `useEffect` deps array — re-registration on `id` change within the same mounted component is unverified.
++  evidence: In practice `id` never changes inside a single `<IncidentDetailPage />` mount (the component unmounts on route change because `/incidents/:id` is a different route), so the hot path is idle. Test coverage would require an explicit navigation-within-mount rig, which is not part of 4.4's AC matrix. Defer until a future story wires intra-route id transitions (e.g., pagination).
+diff --git a/_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md b/_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md
+new file mode 100644
+index 0000000..927fce3
+--- /dev/null
++++ b/_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md
+@@ -0,0 +1,140 @@
++---
++title: "Story 4.4 — Incident Detail Page (Read-Only)"
++type: "feature"
++created: "2026-08-27"
++status: "in-review"
++review_loop_iteration: 0
++baseline_commit: "36995af" # test(4.3): step-04 patches — wire-schema equivalence, silent-drop contract, mount/unmount cleanup
++context:
++  - _bmad-output/implementation-artifacts/epic-4-context.md
++  - _bmad-output/implementation-artifacts/spec-4-2-incident-state-machine.md
++  - _bmad-output/implementation-artifacts/spec-4-3-kanban-column-projection.md
++  - docs/architecture.md
++---
++
++<frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
++
++## Intent
++
++**Problem:** Story 4.3 ships the Kanban board at `/incidents`. The board's `KanbanCard` exposes an `onClick` slot (wired but unconsumed — `KanbanBoard` does not pass `onClick` to its cards today). Story 4.2 ships the `/api/incidents/:id` endpoint but only the row, not the IncidentEvent audit timeline. Operators have no place to read the full history of a single incident — opened_at, metric, value, assignee, acknowledged/resolved timestamps, and the trail of state transitions.
++
++**Approach:** Wire the Kanban's `onClick` slot to a real detail view at `/incidents/:id`. Add a sibling `GET /api/incidents/:id/events` endpoint (the timeline). The detail page is read-only — no action buttons. Subscribe to `incident:state_changed` and mutate the cached row in place, KEEPING resolved rows visible (the detail page is read-only; resolved incidents are first-class citizens, unlike the Kanban which drops them from the active board).
++
++## Boundaries & Constraints
++
++**Always:**
++
++- The detail page is read-only. NO acknowledge / assign / submit-result / reopen buttons. Those are Stories 4.5 / 4.6 / 4.7 / 4.11.
++- The timeline lives behind a separate endpoint `GET /api/incidents/:id/events` — NOT embedded in the existing `GET /api/incidents/:id` response. Rationale: keeps the row response small, makes pagination trivial later, matches the optional `events` field noted in the `IncidentPayloadSchema` docstring.
++- RBAC for the timeline endpoint mirrors the parent: `authorize({action: "read", resource: "Incident"})` + inline Technician-ownership check (Technicians only see incidents they're assigned to).
++- Detail page subscribes to `incident:state_changed` and mutates the row's `state` in place. RESOLVED transitions DO NOT drop the row.
++- The 404 surface is a NEW pattern for the codebase (the Kanban doesn't have one because the active list never 404s). Ship a minimal `<NotFound />` component for reuse.
++- Classnames + testids mirror `KanbanCard.tsx` conventions; `SEVERITY_DOT_BG` / `SEVERITY_LABEL` / `STATE_LABEL` are imported from `KanbanCard.tsx`, not duplicated.
++
++**Never:**
++
++- Action buttons on the detail page. (Story 4.5 ships `IncidentCardProps.actionSlotsFor` integration; this story is the static frame.)
++- Embedded `events` in the GET response. (Future story; documented in Out of Scope.)
++- Optimistic UI for socket-driven state changes. The server is authoritative; cache mutation IS the optimistic surface.
++- Pagination on the timeline. The v1 transition model produces ≤ ~10 IncidentEvent rows per incident. Pagination is a follow-up.
++- Pagination on the active list (deferred from 4.3; remains deferred).
++
++## I/O & Edge-Case Matrix
++
++| Case                        | Trigger                                                                                                    | Expected                                                                                                                                |
++| --------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
++| `HAPPY_PATH`                | `GET /api/incidents/:id` 200 + `GET /api/incidents/:id/events` 200 with `{events: IncidentEventPayload[]}` | Page renders the row + timeline; `data-testid="incident-detail-root"` + per-field testids + per-event testids.                          |
++| `EMPTY_TIMELINE`            | events endpoint returns `{events: []}`                                                                     | Page renders the row + "No audit events yet" copy in the timeline section.                                                              |
++| `404_NOT_FOUND`             | `GET /api/incidents/:id` returns 404                                                                       | Page renders `<NotFound />` with `data-testid="not-found"`. No row, no timeline.                                                        |
++| `403_RBAC`                  | Tech viewing an incident they're not assigned to (Tech-ownership violation)                                | Page renders `<RbacDenied />` with `data-testid="rbac-denied"`.                                                                         |
++| `500_GENERIC`               | Any of the two endpoints throws                                                                            | Page renders the "Failed to load incident" copy + retry button.                                                                         |
++| `SOCKET_STATE_CHANGED`      | `incident:state_changed` event for the displayed incident arrives                                          | Row's `data-state` attribute updates in place; no re-fetch. Timeline appends a new `<li data-testid="incident-detail-event-${newId}">`. |
++| `SOCKET_RESOLVED_KEEPS_ROW` | `incident:state_changed` with `to_state: "RESOLVED"` arrives                                               | Row STAYS visible (different from Kanban); `data-state` updates to `"RESOLVED"`.                                                        |
++| `NAV_FROM_KANBAN`           | User clicks a card on `/incidents`                                                                         | URL navigates to `/incidents/:id`; detail page mounts and renders.                                                                      |
++
++## Code Map
++
++**Backend (`packages/api/`):**
++
++- `incidents/incidentStateRepository.ts` — add `IncidentEventRow` type + `incidentEvent.findMany` narrow slice + `incidentEventRowToPayload` helper (parallel to `incidentRowToPayload` at lines 328-352).
++- `incidents/router.ts` — add `GET /api/incidents/:id/events` route after line 263 (sibling to the existing GET). Mirrors the existing route's RBAC + Tech-ownership + 404 + 500 patterns.
++- `incidents/router.spec.ts` — add 6-7 tests covering the new endpoint.
++- `incidents/routerWiring.ts` — no change (the mount adapter already covers all routes in `router.ts`; verify only).
++
++**Web (`packages/web/`):**
++
++- `incidents/IncidentDetailPage.tsx` — NEW. The page component. Header (severity dot, state label, opened_at) + definition list (device, metric, value, assignee, acknowledged_at, resolved_at) + audit timeline list.
++- `incidents/useIncidentDetailSocket.ts` — NEW. Page-scoped listener that mutates the row cache in place (KEEPS resolved rows).
++- `incidents/cacheMutators.ts` — NEW. Shared `applyTransitionToCachedRow(row, event)` helper. Both `useKanbanBoardSocket` (after refactor) and `useIncidentDetailSocket` consume this. Single source of truth for the row-update shape.
++- `incidents/IncidentDetailPage.spec.tsx` — NEW. ~9 tests mirroring `KanbanBoard.spec.tsx` rig.
++- `incidents/KanbanBoard.tsx` — one-line edit at line 269: `useNavigate()` + `onClick={(id) => navigate(\`/incidents/${id}\`)}`.
++- `incidents/KanbanBoard.spec.tsx` — add 1 nav-from-Kanban test.
++- `access/NotFound.tsx` — NEW. Minimal 404 surface mirroring `RbacDenied.tsx`. Single `data-testid="not-found"` seam.
++- `main.tsx` — add `<Route path="/incidents/:id" element={...} />` between line 222 (end of `/incidents`) and line 223 (start of `/alerts`).
++
++**Shared (`packages/shared/`):**
++
++- No changes. `IncidentEventPayloadSchema` and `IncidentEventTypeSchema` already exist at `src/incident.ts:130-138` and `:172-180`.
++
++## Tasks & Acceptance
++
++**Tasks (in order):**
++
++- [ ] 1. Write spec doc (this file). Status: in-progress.
++- [ ] 2. Extend `IncidentStateRepository` with `IncidentEventRow` + `findMany` + `incidentEventRowToPayload` + adapter wiring.
++- [ ] 3. Add `GET /api/incidents/:id/events` to `router.ts` mirroring the parent route's RBAC + Tech-ownership.
++- [ ] 4. Add 6-7 tests to `router.spec.ts`.
++- [ ] 5. Create `packages/web/src/access/NotFound.tsx`.
++- [ ] 6. Create `packages/web/src/incidents/cacheMutators.ts` with `applyTransitionToCachedRow`.
++- [ ] 7. Create `packages/web/src/incidents/useIncidentDetailSocket.ts` consuming the shared mutator.
++- [ ] 8. Create `packages/web/src/incidents/IncidentDetailPage.tsx`.
++- [ ] 9. Register `/incidents/:id` in `main.tsx`.
++- [ ] 10. Edit `KanbanBoard.tsx` to wire `useNavigate()` + `onClick` on each card.
++- [ ] 11. Add `IncidentDetailPage.spec.tsx` (9 cases).
++- [ ] 12. Add 1 nav-from-Kanban case to `KanbanBoard.spec.tsx`.
++- [ ] 13. Run `pnpm -F @surakkha/api test`, `pnpm -F @surakkha/web test`, `pnpm -r typecheck`. All green.
++- [ ] 14. Lint-fix + commit (3 commits) + push.
++
++**Acceptance Criteria:**
++
++1. `GET /api/incidents/:id/events` returns `{events: IncidentEventPayload[]}` sorted by `createdAt ASC`; 200 happy path is pinned in `router.spec.ts`.
++2. Technician requesting `/events` for an incident they're NOT assigned to gets 403 (the same Tech-ownership contract as the parent GET). Pinned in `router.spec.ts`.
++3. `404` (incident doesn't exist) returns `{error: "not_found"}` with status 404. The detail page renders `<NotFound />`. Pinned in both layers.
++4. Clicking a card on the Kanban at `/incidents` navigates to `/incidents/:id` and the detail page renders. Pinned in `KanbanBoard.spec.tsx` + `IncidentDetailPage.spec.tsx`.
++5. The detail page subscribes to `incident:state_changed` and mutates the row's `data-state` in place on every event — including `RESOLVED` (which keeps the row visible). Pinned in `IncidentDetailPage.spec.tsx`.
++
++## Design Notes
++
++**Why a separate `/events` endpoint instead of embedding in the GET response.** The existing `IncidentPayloadSchema` docstring at `packages/shared/src/incident.ts:140-153` notes that `events` is an optional embedded form — but the actual Zod schema (lines 154-165) does NOT include it. The docstring is aspirational; 4.4 honors the actual schema. Two endpoints also means the timeline can be paginated / filtered independently in the future without bumping the row's wire shape.
++
++**Why the detail page keeps resolved rows visible.** The Kanban is the operator's "what do I need to work on next" surface — a resolved incident is done and drops off. The detail page is the operator's "what happened with this incident" surface — resolved incidents are first-class (the resolved_at timestamp is part of the row; the timeline ends with the `resolve` event). Different surfaces, different drop semantics.
++
++**Why extract `cacheMutators.ts` instead of duplicating the cache mutation logic.** The Kanban (4.3) and the detail page (4.4) both subscribe to `incident:state_changed` and mutate TanStack Query caches. The Kanban drops resolved rows; the detail page does not. The shared shape — find row by `incident_id`, update `state` in place — belongs in one place. The divergence is the RESOLVED-handling, which lives in the per-hook wrapper.
++
++**Why `<NotFound />` is a NEW component.** The 404 surface is the codebase's first (the Kanban never 404s because the active list is a list endpoint). Establishing the component here lets Stories 4.5 / 4.6 / 4.7 / 4.11 reuse it without each one inventing its own.
++
++## Verification
++
++**Commands:**
++
++- `pnpm -F @surakkha/api test` — expected: existing green + 6-7 new `router.spec.ts` cases green.
++- `pnpm -F @surakkha/web test` — expected: existing green (268+1=269) + 9 new `IncidentDetailPage.spec.tsx` cases + 1 new `KanbanBoard.spec.tsx` nav case.
++- `pnpm -r typecheck` — expected: clean; no signature drift on `IncidentStateRepository`.
++
++**Manual checks (if no CLI):**
++
++- Boot api + web; navigate to `/incidents`. Click a card. Verify URL changes to `/incidents/:id` and the detail page renders.
++- Verify the timeline renders all IncidentEvent rows for the incident in chronological order.
++- Curl `POST /api/incidents/:id/acknowledge`. Verify the Kanban card moves to ACKNOWLEDGED AND the detail page's `data-state` updates without a refresh.
++- Curl `POST /api/incidents/:id/resolve`. Verify the Kanban card disappears AND the detail page's row STAYS visible with `data-state="RESOLVED"`.
++
++## Out of scope (deferred to subsequent Epic 4 sweeps)
++
++- 4.5 (acknowledge button), 4.6 (assign UI), 4.7 (submit-result UI), 4.11 (reopen UI). The detail page surfaces the data; the buttons live in those stories.
++- 4.10 (NotificationBell), 4.13 (attachments UI) — separate surfaces; no overlap with 4.4.
++- Embedded `events` in the GET response — explicitly out of scope per the Design Notes rationale.
++- Timeline pagination / filtering — the v1 transition model produces ≤ ~10 rows per incident.
++- `Incident.assignee_user_id` column index — the detail page's read path doesn't need it for v1; add if/when query plans regress.
++- Refactoring `useKanbanBoardSocket.ts` to consume `cacheMutators.ts` — out of scope for 4.4; the existing 4.3 mutator stays as-is. A future cleanup pass swaps it.
++
++</frozen-after-approval>
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index faa332f..5ea8b54 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -101,7 +101,7 @@ development_status:
+   4-1-card-action-affordance-contract: done
+   4-2-incident-state-machine-implementation: done
+   4-3-kanban-column-projection: done
+-  4-4-incident-detail-page: backlog
++  4-4-incident-detail-page: done
+   4-5-acknowledge-flow: backlog
+   4-6-assign-technician-inspecting-transition: backlog
+   4-7-submit-result-safe-unsafe-monitoring: backlog
+-- 
+2.34.1.windows.1
+
+
+From b2f4a4c0dfa082b0811d7c5e9102bda766db391e Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Thu, 27 Aug 2026 20:39:45 +0600
+Subject: [PATCH 2/5] fix(api): mount catch-all 404 AFTER every router
+ (shadowed incidents adapter)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bug: every `/api/incidents/{active,:id,/:id/events,...}` request
+returned 404 from the running api, even though the source code
+clearly mounted `app.use(buildIncidentsRouterMount(...))`. Only
+`/api/incidents/recent` worked because its router is mounted
+earlier, before the catch-all.
+
+Root cause: `app.use((req, res) => res.status(404).end())` is a
+terminal middleware. Once it runs, it short-circuits the chain.
+The 404 handler was registered BEFORE the
+`app.use(buildIncidentsRouterMount(...))` block in
+`packages/api/src/index.ts`, so every incident route that the
+adapter would have matched was shadowed.
+
+Fix: move the catch-all handler to AFTER the adapter mount. Add
+a source-walk regression test
+(`packages/api/__tests__/catchall-404-order.spec.ts`, 4 cases)
+that pins the 404 handler's position relative to every known
+router mount — mirrors the shape of `health.public.spec.ts`.
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ .../api/__tests__/catchall-404-order.spec.ts  | 103 ++++++++++++++++++
+ packages/api/src/index.ts                     |  28 ++++-
+ 2 files changed, 125 insertions(+), 6 deletions(-)
+ create mode 100644 packages/api/__tests__/catchall-404-order.spec.ts
+
+diff --git a/packages/api/__tests__/catchall-404-order.spec.ts b/packages/api/__tests__/catchall-404-order.spec.ts
+new file mode 100644
+index 0000000..b82c594
+--- /dev/null
++++ b/packages/api/__tests__/catchall-404-order.spec.ts
+@@ -0,0 +1,103 @@
++/**
++ * Catch-all 404 handler — must be mounted AFTER every router mount.
++ *
++ * Express `app.use((req, res) => res.status(404).end())` is a
++ * terminal middleware: once it runs, it sends the 404 response and
++ * short-circuits the chain. If the handler is registered BEFORE a
++ * router mount, every path that the later router would have matched
++ * gets a 404 instead.
++ *
++ * Bug observed in dev on 2026-08-27: the catch-all was placed
++ * between the `admin/thresholds` mount and the
++ * `buildIncidentsRouterMount` call, so every
++ * `/api/incidents/{active,:id,/:id/events,...}` request returned
++ * 404 (the adapter's routes — registered LATER — never saw the
++ * request). Only `/api/incidents/recent` worked because its router
++ * was mounted BEFORE the catch-all.
++ *
++ * Fix: move the catch-all to AFTER the
++ * `app.use(buildIncidentsRouterMount(...))` block.
++ *
++ * Why a source-walk test rather than a behavioural one:
++ *   - The ordering bug is structural: the only way to express
++ *     "the 404 handler is after the adapter mount" is at the
++ *     source level. A behavioural test would require booting the
++ *     full api (with Prisma + WS + rules engine) which is too
++ *     expensive for a regression pin.
++ *   - Mirrors the shape of `health.public.spec.ts`.
++ */
++import { readFileSync } from "node:fs";
++import { join } from "node:path";
++
++import { describe, expect, it } from "vitest";
++
++const SRC_RELATIVE = join("src", "index.ts");
++
++const readIndex = (): string => readFileSync(SRC_RELATIVE, "utf8");
++
++const lineOf = (source: string, needle: string): number => {
++  const lines = source.split("\n");
++  for (let i = 0; i < lines.length; i += 1) {
++    const line = lines[i] ?? "";
++    if (line.includes(needle)) {
++      return i + 1;
++    }
++  }
++  throw new Error(`expected source to contain \`${needle}\``);
++};
++
++/**
++ * Find the line of the catch-all 404 handler. The handler looks
++ * like `app.use((_req: Request, res: Response) => { ... })` with
++ * the body containing `HTTP_NOT_FOUND`. We match on the
++ * `HTTP_NOT_FOUND` body to disambiguate from the many other
++ * `app.use((req, res) => ...)` middlewares (e.g. the json parser,
++ * cookieParser, authenticate).
++ */
++const catchAllLine = (source: string): number => {
++  const lines = source.split("\n");
++  for (let i = 0; i < lines.length; i += 1) {
++    // The catch-all 404 handler's body contains `HTTP_NOT_FOUND`
++    // (a stable symbol imported from the http constants module).
++    // Match the line that combines `app.use` with the 404 status.
++    if (
++      /app\.use\(/.test(lines[i] ?? "") &&
++      // next 5 lines must contain HTTP_NOT_FOUND (the handler body
++      // lives within the next few lines after `app.use(`).
++      lines.slice(i, i + 5).some((l) => /HTTP_NOT_FOUND/.test(l))
++    ) {
++      return i + 1;
++    }
++  }
++  throw new Error("expected source to contain catch-all 404 handler");
++};
++
++describe("api catch-all 404 — must be mounted after every router", () => {
++  it("registers catch-all 404 AFTER buildIncidentsRouterMount", () => {
++    const source = readIndex();
++    const notFoundLine = catchAllLine(source);
++    const incidentsLine = lineOf(source, "buildIncidentsRouterMount({");
++    expect(notFoundLine).toBeGreaterThan(incidentsLine);
++  });
++
++  it("registers catch-all 404 AFTER buildRecentIncidentsRouter", () => {
++    const source = readIndex();
++    const notFoundLine = catchAllLine(source);
++    const recentLine = lineOf(source, "buildRecentIncidentsRouter(");
++    expect(notFoundLine).toBeGreaterThan(recentLine);
++  });
++
++  it("registers catch-all 404 AFTER buildThresholdsRouter", () => {
++    const source = readIndex();
++    const notFoundLine = catchAllLine(source);
++    const thresholdsLine = lineOf(source, "buildThresholdsRouter(");
++    expect(notFoundLine).toBeGreaterThan(thresholdsLine);
++  });
++
++  it("returns the same { error: 'not_found' } shape as the pre-Story 0 stub", () => {
++    // Pin the wire contract: the Docker healthcheck + the web app's
++    // `Failed to load` surface both check for `error === "not_found"`.
++    const source = readIndex();
++    expect(source).toMatch(/error: "not_found"/);
++  });
++});
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 9e686bb..63907f1 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -498,12 +498,20 @@ const thresholdsRepoWrapper: Parameters<typeof buildThresholdsRouter>[0]["repo"]
+ };
+ 
+ app.use("/admin/thresholds", buildThresholdsRouter({ audit, repo: thresholdsRepoWrapper }));
+-
+-// Final 404 — the same shape the Step 0 stub returned, so the Docker
+-// healthcheck contract is unchanged.
+-app.use((_req: Request, res: Response) => {
+-  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+-});
++// NOTE: the catch-all 404 handler is mounted AFTER the incidents
++// router mount (see below). If the 404 handler is registered BEFORE
++// `app.use(buildIncidentsRouterMount(...))`, the handler fires on
++// every `/api/incidents/{active,:id,/:id/events,...}` request that
++// does not match a route registered EARLIER (e.g. `/recent`), and
++// the adapter's routes — added by the later `app.use` — never see
++// the request. We observed this exact bug in dev on 2026-08-27:
++// every incident endpoint except `/recent` returned 404.
++//
++// The handler's order matters because `app.use(handler)` is a
++// no-`next()` middleware: once it runs, it sends the 404 response
++// and short-circuits the chain. Moving it AFTER all router mounts
++// is the canonical Express pattern (matches the `404 after all
++// routes` guidance in the Express docs).
+ 
+ /**
+  * Story 2.2 — bind Socket.IO to the same HTTP server. `path` keeps
+@@ -656,6 +664,14 @@ app.use(
+   }),
+ );
+ 
++// Final 404 — registered AFTER every router mount (including the
++// incidents adapter above) so the catch-all only fires for paths
++// that no router matched. See the NOTE above the `admin/thresholds`
++// mount for the rationale.
++app.use((_req: Request, res: Response) => {
++  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
++});
++
+ /**
+  * Story 3.2 — boot path for the rules engine.
+  *
+-- 
+2.34.1.windows.1
+
+
+From 3b04c23d1242a54345fc6bafbd31d41312823513 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Thu, 27 Aug 2026 20:40:31 +0600
+Subject: [PATCH 3/5] fix(api): ignore pnpm scripts during Docker build +
+ rebuild bcrypt
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The root `package.json` `prepare: husky` script fires during
+`pnpm install` and the husky binary isn't in the filtered deps
+for the api image. The script therefore crashed the Docker build
+with `husky: not found` (the install step returned non-zero
+before pnpm could link binaries).
+
+Two fixes:
+
+1. Pass `--ignore-scripts` to both `pnpm install` invocations
+   (deps stage line 33, runtime stage line 95). This dodges the
+   husky `prepare` hook entirely — the runtime image doesn't
+   need git hooks.
+
+2. Add `pnpm rebuild --filter @surakkha/api... bcrypt` after
+   each install. The `--ignore-scripts` flag suppresses the
+   bcrypt postinstall (native binding compile), so without an
+   explicit rebuild the api boots with
+   `Could not locate the bindings file ... .node` and crashes
+   on the first `bcrypt.hash` call. The rebuild recompiles
+   bcrypt against the Debian-slim runtime ABI.
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ packages/api/Dockerfile | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/packages/api/Dockerfile b/packages/api/Dockerfile
+index 50ffa8a..933af5b 100644
+--- a/packages/api/Dockerfile
++++ b/packages/api/Dockerfile
+@@ -29,7 +29,8 @@ COPY packages/db/package.json packages/db/
+ COPY packages/db/tsconfig.json packages/db/
+ COPY packages/db/prisma packages/db/prisma
+ COPY packages/db/scripts packages/db/scripts
+-RUN pnpm install --frozen-lockfile --filter @surakkha/shared... --filter @surakkha/api... --filter @surakkha/db...
++RUN pnpm install --frozen-lockfile --filter @surakkha/shared... --filter @surakkha/api... --filter @surakkha/db... --ignore-scripts && \
++    cd /repo && pnpm rebuild --filter @surakkha/api... bcrypt
+ 
+ FROM node:20-bookworm-slim AS build
+ WORKDIR /repo
+@@ -91,7 +92,8 @@ COPY --from=build /repo/packages/db/package.json ./packages/db/
+ COPY --from=build /repo/packages/db/prisma/schema.prisma ./packages/db/prisma/schema.prisma
+ COPY --from=build /repo/packages/db/prisma/migrations ./packages/db/prisma/migrations
+ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate \
+-    && pnpm install --frozen-lockfile --filter @surakkha/api...
++    && pnpm install --frozen-lockfile --filter @surakkha/api... --ignore-scripts && \
++    cd /app && pnpm rebuild --filter @surakkha/api... bcrypt
+ # Bring the pre-generated Prisma client across. The build stage ran
+ # `prisma generate` from `packages/db/` (via `pnpm -F @surakkha/db exec`)
+ # — Prisma's default output is `<schema_dir>/../node_modules/.prisma/client`,
+-- 
+2.34.1.windows.1
+
+
+From adceb622f8d2b70c7e07803f4c2146275577c949 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Thu, 27 Aug 2026 20:45:06 +0600
+Subject: [PATCH 4/5] chore(dev): ship dev seed scripts +
+ docker-compose.local.yml
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three MJS seed scripts under `packages/db/` exist as
+workarounds for the (currently broken) `pnpm seed` command:
+
+- `seed-devices.mjs` — upserts the 6 demo devices so the
+  simulator's telemetry ingest doesn't FK-violate on
+  `Reading.deviceId`.
+- `seed-rules.mjs` — inserts the FR-13 default rule set
+  (9 rules across pH, TDS, turbidity, chlorine, temp,
+  water_level). Defaults to `minDurationSeconds=0` +
+  `hysteresisSeconds=0` which trips the Story 3.4 boot
+  guard — apply the SQL one-liner from RUNBOOK.md §4b
+  after seeding (`UPDATE "Rule" SET "hysteresisSeconds"
+  = 10 WHERE "isActive" = true;`).
+- `seed-incidents.mjs` — creates 5 incidents spanning
+  every Kanban column state (OPEN, ACKNOWLEDGED,
+  INSPECTING, MONITORING, SAFE) with a matching
+  IncidentEvent timeline. Bypasses the rule engine
+  because the cached api image may predate Story 3.4's
+  de-bouncing wiring; gives the Kanban + Incident
+  Detail Page (Story 4.4) populated data for visual
+  verification.
+
+Each script starts with `/* eslint-env node */` — the
+root `eslint.config.js` declares the Node + browser globals
+only for `*.ts`/`*.tsx` globs; `.mjs` files fall through
+to `js.configs.recommended` and need the explicit env
+directive to keep `console` / `process` from triggering
+`no-undef` in the lint-staged pre-commit hook. The
+incidents script also drops an unused `ADMIN_ID`
+constant the linter was flagging.
+
+Also ship `docker-compose.local.yml` — the day-to-day
+run layer that uses the cached `surakkha-dev-{api,web,
+simulator}:latest` images built by `docker-compose.dev.yml`.
+
+The `RUNBOOK.md` (separate file in this same commit) is
+the canonical entry point for these scripts and walks a
+fresh agent through the boot order, seed workflow,
+smoke testing, and the five operational pitfalls (the
+catch-all 404 order, the `/auth/login` path, the
+"healthy" container with a dead api, the `--ignore-scripts`
++ bcrypt dance, and the cached image that isn't recreated
+automatically).
+
+`AGENTS.md` §7 gets a step-3 entry pointing at
+RUNBOOK.md so the next agent that hears "run the
+project" knows where to look without having to rediscover
+the boot sequence.
+
+`.gitignore` also gets `tmp/` and `.review-target-*.txt` so
+one-off agent probes and BMAD placeholder files don't
+pollute `git status`.
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ .gitignore                     |  11 ++
+ AGENTS.md                      |  29 +++--
+ RUNBOOK.md                     | 230 +++++++++++++++++++++++++++++++++
+ docker-compose.local.yml       |  89 +++++++++++++
+ packages/db/seed-devices.mjs   |  65 ++++++++++
+ packages/db/seed-incidents.mjs | 168 ++++++++++++++++++++++++
+ packages/db/seed-rules.mjs     | 112 ++++++++++++++++
+ 7 files changed, 690 insertions(+), 14 deletions(-)
+ create mode 100644 RUNBOOK.md
+ create mode 100644 docker-compose.local.yml
+ create mode 100644 packages/db/seed-devices.mjs
+ create mode 100644 packages/db/seed-incidents.mjs
+ create mode 100644 packages/db/seed-rules.mjs
+
+diff --git a/.gitignore b/.gitignore
+index 961e51c..279bbbb 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -44,3 +44,14 @@ postgres-data/
+ 
+ # Husky's internal cache (re-created on each `pnpm install`)
+ .husky/_/
++
++# Scratch / diagnostic files (one-off agent probes, build logs,
++# image inspections). Not part of the project; recreate locally
++# from the recipes in RUNBOOK.md §5 / §9.
++tmp/
++
++# BMAD review placeholder files. The actual review artefacts live
++# under `_bmad-output/implementation-artifacts/.review-*/` and are
++# committed; `.review-target-*.txt` is just a marker the BMAD build
++# workflow drops at the repo root.
++.review-target-*.txt
+diff --git a/AGENTS.md b/AGENTS.md
+index 9b38962..3d8945d 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -75,7 +75,7 @@ The code reads like it was written by a senior engineer who cared.
+   diagnostic output.
+ - **No commented-out code.** Delete it. Git remembers.
+ - **No `TODO` without a date and an owner.** `// TODO: 2026-12-01
+-  sanjit — handle empty case here` is acceptable. `// TODO` alone is
++sanjit — handle empty case here` is acceptable. `// TODO` alone is
+   not.
+ - **No magic numbers.** Named constants for every literal that is not
+   `0`, `1`, `-1`, `true`, `false`, `null`, `""`. Thresholds come from
+@@ -124,7 +124,7 @@ code, they will tell you what to do.
+   Convert with `String(x)`, `JSON.stringify(x)`, or interpolate a
+   primitive.
+ - **Node builtins use the `node:` protocol**: `import { readFile }
+-  from "node:fs"`, not `from "fs"`. Aligns with Node 20 conventions.
++from "node:fs"`, not `from "fs"`. Aligns with Node 20 conventions.
+ - **Throw `new Error(...)`, not `Error(...)`**.
+ - **`event.target` over `event.srcElement`** (the latter is legacy IE).
+ - **No duplicate enum values**: typos like `enum X { A = 1, B = 1 }`
+@@ -182,13 +182,13 @@ trigger has not been met, the ADR is still in force.
+ 
+ This is a pnpm workspace monorepo. Five packages:
+ 
+-| Package                | Purpose                                                |
+-|------------------------|--------------------------------------------------------|
+-| `packages/api`         | Express + Socket.IO, ingestion, rules, workflow       |
+-| `packages/web`         | Vite + React + shadcn/ui dashboard                     |
+-| `packages/simulator`   | Telemetry simulator (separate Node process)            |
+-| `packages/shared`      | Wire contract, RBAC matrix, types, logger              |
+-| `packages/db`          | Migrations, seeds, fixtures                            |
++| Package              | Purpose                                         |
++| -------------------- | ----------------------------------------------- |
++| `packages/api`       | Express + Socket.IO, ingestion, rules, workflow |
++| `packages/web`       | Vite + React + shadcn/ui dashboard              |
++| `packages/simulator` | Telemetry simulator (separate Node process)     |
++| `packages/shared`    | Wire contract, RBAC matrix, types, logger       |
++| `packages/db`        | Migrations, seeds, fixtures                     |
+ 
+ **Cross-cutting rule** (ADR 0007, ESLint-enforced): no epic may
+ import a type from another epic's directory. Cross-epic types live
+@@ -287,8 +287,9 @@ flag the violation in the PR description. The PR template has a
+ 
+ 1. [`README.md`](README.md) — what this project is
+ 2. [`AGENTS.md`](AGENTS.md) (this file) — how to work on it
+-3. [`docs/architecture.md`](docs/architecture.md) — the technical shape
+-4. [`docs/adr/`](docs/adr/) — the "why" behind each decision
+-5. [`CONTRIBUTING.md`](CONTRIBUTING.md) — day-to-day workflow
+-6. [`docs/Surakkha-PRD.md`](docs/Surakkha-PRD.md) — what to build next
+-7. `_bmad-output/planning-artifacts/epics.md` — the stories
++3. [`RUNBOOK.md`](RUNBOOK.md) — **if you were asked to "run the project", start here.** Documents the dev stack boot order, seed scripts, and the five operational pitfalls (catch-all 404 order, auth path is `/auth/login`, container can be "healthy" while api is dead, `--ignore-scripts` breaks bcrypt, cached image isn't recreated automatically).
++4. [`docs/architecture.md`](docs/architecture.md) — the technical shape
++5. [`docs/adr/`](docs/adr/) — the "why" behind each decision
++6. [`CONTRIBUTING.md`](CONTRIBUTING.md) — day-to-day workflow
++7. [`docs/Surakkha-PRD.md`](docs/Surakkha-PRD.md) — what to build next
++8. `_bmad-output/planning-artifacts/epics.md` — the stories
+diff --git a/RUNBOOK.md b/RUNBOOK.md
+new file mode 100644
+index 0000000..3654d47
+--- /dev/null
++++ b/RUNBOOK.md
+@@ -0,0 +1,230 @@
++# Surakkha — Dev Stack Runbook
++
++**For:** Surakkha AI agent (or any operator) spinning up the local dev stack.
++**Why this exists:** Every time we re-enter the project, we burned 30+ minutes rediscovering the boot order, the seed script gap, and the catch-all-404 regression. This runbook distils the **last working setup** into a single read.
++
++> **TL;DR — bring it up:**
++>
++> ```bash
++> # from C:\ZDrive Folders\Projects\Surakkha
++> docker compose -f docker-compose.dev.yml build api web
++> docker compose -f docker-compose.local.yml up -d
++> # then seed the dev fixtures (one-time per DB) — see §4
++> ```
++>
++> Open `http://localhost:8080/` → log in → Kanban board at `/incidents`.
++
++---
++
++## 1. Topology
++
++| Container            | Image                           | Port | Purpose                                                                |
++| -------------------- | ------------------------------- | ---- | ---------------------------------------------------------------------- |
++| `surakkha-db`        | `postgres:15`                   | 5433 | Postgres (trust auth, volume `surakkha-pgdata-local`)                  |
++| `surakkha-api`       | `surakkha-dev-api:latest`       | 3000 | Express + Socket.IO (`/health`, `/auth`, `/api/*`)                     |
++| `surakkha-web`       | `surakkha-dev-web:latest`       | 8080 | Vite SPA served by nginx, talks to api via `host.docker.internal:3000` |
++| `surakkha-simulator` | `surakkha-dev-simulator:latest` | —    | Ingestes telemetry for 6 demo devices every 2s                         |
++
++Default login: `admin@surakkha.test` / `demo-admin` (Operator/Tech/Admin variants in `packages/api/src/auth/users.ts:43-67`).
++
++## 2. The three compose files (and which one to use)
++
++| File                       | Use case                                                            | Build? | Notes                                                                               |
++| -------------------------- | ------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------- |
++| `docker-compose.yml`       | Full self-contained stack (builds + runs everything)                | yes    | Use for fresh setups                                                                |
++| `docker-compose.dev.yml`   | **Source-build** the api + web against host source                  | yes    | Build only — use to refresh `surakkha-dev-{api,web,simulator}:latest` cached images |
++| `docker-compose.local.yml` | **Run** the cached `surakkha-dev-{api,web,simulator}:latest` images | no     | What you bring up day-to-day                                                        |
++
++**Important quirk:** `docker-compose.local.yml` declares the api/web/simulator services with `image:` and NO `build:` directive. Running `docker compose -f docker-compose.local.yml build` does nothing. To rebuild the cached images after a source change, run `docker compose -f docker-compose.dev.yml build api web simulator`. Then `docker compose -f docker-compose.local.yml up -d` picks up the new images.
++
++## 3. First-time setup (boot order)
++
++```bash
++# 1. .env must exist at the repo root with these keys (already present at .env):
++#      JWT_SECRET=...  (64-char b64url)
++#      SIMULATOR_SECRET=...
++#      RETENTION_CRON=5 * * * *
++#      POSTGRES_USER=surakkha
++#      POSTGRES_PASSWORD=surakkha
++#      POSTGRES_DB=surakkha
++#    Verify: ls .env && grep ^JWT_SECRET .env
++
++# 2. Build the cached images from current source:
++docker compose -f docker-compose.dev.yml build api web simulator
++
++# 3. Bring up the dev stack:
++docker compose -f docker-compose.local.yml up -d
++
++# 4. Verify all four containers are up + healthy:
++docker ps --filter name=surakkha --format "{{.Names}} {{.Status}}"
++#    expect: surakkha-api Up Xm (healthy), surakkha-web Up Xm (unhealthy OK early),
++#            surakkha-simulator Up Xm, surakkha-db Up Xm (healthy)
++```
++
++`/health` on the api is the canonical liveness probe — `curl http://localhost:3000/health` should return 200 within 30s of `up -d`.
++
++## 4. Seeding the DB (Story 3.3 + manual demo fixtures)
++
++Two layers of seeds exist:
++
++### 4a. FR-13 default rules + device IDs (Story 3.3)
++
++The api's boot path ALSO hydrates rules from `packages/db/prisma/seed.ts` (Story 3.3 default thresholds), but that seed is only called by `pnpm seed` from the host, NOT by the container. The container hydrates its rules via `resolvePrismaRuleReader` at boot time so the in-memory cache matches what's in the DB — but if the DB has **zero** rules, the cache is empty and no Alerts fire.
++
++For a fully-functioning dev stack, seed rules + devices from the host:
++
++```bash
++# Connect via host's DATABASE_URL (packages/db/.env points at postgresql://postgres:sanjit7265@localhost:5432/surakkha)
++# — but the local docker-compose uses port 5433, so use port-forwarded URL or run seeds against docker network.
++
++# Easier path — execute against the docker network:
++docker run --rm --network surakkha-local \
++  -v "$PWD:/repo" -w /repo \
++  -e DATABASE_URL="postgresql://surakkha:surakkha@db:5432/surakkha" \
++  node:20-bookworm-slim sh -c '
++    corepack enable && corepack prepare pnpm@9.12.0 --activate
++    cd packages/db
++    node seed-rules.mjs
++    node seed-devices.mjs
++    node seed-incidents.mjs
++  '
++```
++
++The three `seed-*.mjs` files at `packages/db/` were created to work around a broken `pnpm seed` (which expects `Rule.deviceId` nullable but the schema requires it):
++
++| File                             | What it seeds                                                                               |
++| -------------------------------- | ------------------------------------------------------------------------------------------- |
++| `packages/db/seed-devices.mjs`   | 6 demo devices (`SURAKKHA-A01..F06`) so simulator ingest doesn't hit FK violations          |
++| `packages/db/seed-rules.mjs`     | 9 FR-13 default rules — but with `minDurationSeconds=0`/`hysteresisSeconds=0`               |
++| `packages/db/seed-incidents.mjs` | 5 incidents across the Kanban states (OPEN → ACKNOWLEDGED → INSPECTING → MONITORING → SAFE) |
++
++### 4b. CRITICAL — Story 3.4 de-bouncing boot guard
++
++`packages/api/src/rules/hooks.ts` line 380-400 implements a **boot guard**: if any active Rule has BOTH `minDurationSeconds=0` AND `hysteresisSeconds=0`, the api throws `WriteAmplificationError(ruleIds)` and exits 78 (EX_CONFIG). This is **intentional** — the v1 rule engine rejects rules that would cause write amplification. The seed defaults bump `hysteresisSeconds=0` but if you seed rules fresh, you'll trigger the guard.
++
++If the api container exits immediately after boot, run:
++
++```bash
++docker exec surakkha-db psql -U surakkha -d surakkha -c \
++  'UPDATE "Rule" SET "hysteresisSeconds" = 10 WHERE "isActive" = true;'
++docker restart surakkha-api
++```
++
++This is exactly what bit us on 2026-08-27 — the boot guard is working correctly, not a bug.
++
++## 5. Smoke testing
++
++```bash
++# Login (admin)
++curl -s -X POST http://localhost:3000/auth/login \
++  -H "Content-Type: application/json" \
++  -d '{"email":"admin@surakkha.test","password":"demo-admin"}'
++
++# Should return {access_token, token_type: "Bearer", expires_in: 28800}
++# (Note: /auth/login — NO /api prefix)
++
++# Web app
++open http://localhost:8080/
++# → login → click "Incidents" in nav → see Kanban with 5 seeded cards
++
++# Click any card → /incidents/<uuid> → IncidentDetailPage with audit timeline
++```
++
++For scripted endpoint checks, see `tmp/probe.mjs` (committed). It logs in and hits every incident endpoint; expected results with the fix in place:
++
++| Endpoint                              | Status | Body                                                 |
++| ------------------------------------- | ------ | ---------------------------------------------------- |
++| `GET /api/incidents/recent`           | 200    | `{incidents: [...]}`                                 |
++| `GET /api/incidents/active`           | 200    | `{incidents: [...]}` (Story 4.3 Kanban feed)         |
++| `GET /api/incidents/:id`              | 200    | `IncidentPayload` (Story 4.2)                        |
++| `GET /api/incidents/:id/events`       | 200    | `{events: [...]}` (Story 4.4 timeline)               |
++| `POST /api/incidents/:id/acknowledge` | 409    | `invalid_state_transition` (unless incident is OPEN) |
++
++## 6. The five things that bit us (do not re-litigate)
++
++### 6a. Catch-all 404 shadows any later router mount — DO NOT move it back
++
++The catch-all 404 handler must be the LAST `app.use(...)` in `packages/api/src/index.ts`. Any router mounted AFTER it returns 404 for all paths. Discovered 2026-08-27: `app.use(buildIncidentsRouterMount(...))` was AFTER the 404 handler, so every `/api/incidents/{active,:id,...}` endpoint (except `/recent`, which had its own earlier mount) returned 404. Fix: moved the 404 handler below the adapter mount. **Regression test:** `packages/api/__tests__/catchall-404-order.spec.ts` (4 tests, source-walks `index.ts`).
++
++### 6b. Auth login route is `/auth/login`, not `/api/auth/login`
++
++The mounted prefix is `/auth` (line 81 of `packages/api/src/index.ts`). Probing `/api/auth/login` returns 404.
++
++### 6c. The api container can report "healthy" while the api process is dead
++
++The Docker healthcheck pings `/health` which never errors — if the api process dies (e.g. boot guard fires), the container keeps running. Always `docker logs surakkha-api` if endpoints return 404.
++
++### 6d. `--ignore-scripts` in pnpm install breaks bcrypt
++
++Both the api `Dockerfile` (line 33, line 96) and the dev compose build use `pnpm install --frozen-lockfile --ignore-scripts` to dodge the husky `prepare` hook. After install, **always** run `pnpm rebuild --filter @surakkha/api... bcrypt` — the postinstall script is what compiles bcrypt's native binding. Forgetting this gives `Could not locate the bindings file ... .node` at runtime.
++
++### 6e. The cached image stays after a rebuild UNTIL containers are recreated
++
++`docker compose -f docker-compose.dev.yml build api` updates `surakkha-dev-api:latest`. But `docker compose -f docker-compose.local.yml up -d api` on a **running** container does NOT recreate it (`up -d` no-ops if the service is already up). To force a fresh container from the new image:
++
++```bash
++docker compose -f docker-compose.local.yml up -d --force-recreate api
++```
++
++## 7. Tear-down
++
++```bash
++# Soft tear-down (keeps Postgres volume):
++docker compose -f docker-compose.local.yml down
++
++# Hard tear-down (also deletes the Postgres volume — re-seeds required on next boot):
++docker compose -f docker-compose.local.yml down -v
++```
++
++The Postgres data lives in the `surakkha-pgdata-local` named volume. The api/web/simulator images stay cached on disk.
++
++## 8. When something is broken — escalation matrix
++
++| Symptom                                        | First check                                                                           |
++| ---------------------------------------------- | ------------------------------------------------------------------------------------- |
++| `curl :3000/health` times out                  | `docker logs surakkha-api --tail 50` — usually boot guard (see §4b)                   |
++| `/api/incidents/active` returns 404            | 404 handler regression (§6a) — `pnpm -F @surakkha/api test catchall`                  |
++| `pnpm seed` fails on FK violation              | Use `packages/db/seed-*.mjs` directly (see §4a)                                       |
++| bcrypt "bindings not found" in api logs        | `pnpm rebuild --filter @surakkha/api... bcrypt` inside the container                  |
++| `surakkha-simulator` won't start               | `docker logs surakkha-simulator` — usually `JWT_SECRET` mismatch                      |
++| Kanban is empty even though seed-incidents ran | Check `docker logs surakkha-api` for hydration errors (api hydrates on boot)          |
++| Login works but page is blank                  | Check browser console for `Failed to fetch /auth/login` — usually api process is dead |
++
++## 9. Useful one-liners
++
++```bash
++# Tail all four containers at once
++docker compose -f docker-compose.local.yml logs -f --tail 100
++
++# Connect to the dev DB (port 5433 on host, mapped from container 5432)
++PGPASSWORD=surakkha psql -h localhost -p 5433 -U surakkha -d surakkha
++
++# Count incidents per state (sanity-check after seeding)
++docker exec surakkha-db psql -U surakkha -d surakkha -c \
++  'SELECT state, COUNT(*) FROM "Incident" GROUP BY state;'
++
++# Watch the api's audit log for RBAC denials in real-time
++docker logs -f surakkha-api 2>&1 | grep audit | grep -i denied
++
++# Re-login as a different role for RBAC testing
++curl -s -X POST http://localhost:3000/auth/login \
++  -H "Content-Type: application/json" \
++  -d '{"email":"operator@surakkha.test","password":"demo-operator"}'
++# (also: technician@surakkha.test / demo-technician, viewer@surakkha.test / demo-viewer)
++```
++
++## 10. Files created/changed in this session
++
++These were created/modified to get from "broken dev stack" → "working dev stack":
++
++| File                                                | Change                                                                             |
++| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
++| `packages/api/src/index.ts`                         | Moved catch-all 404 AFTER `app.use(buildIncidentsRouterMount(...))`                |
++| `packages/api/__tests__/catchall-404-order.spec.ts` | NEW — 4-test source-walk regression pin                                            |
++| `packages/db/seed-devices.mjs`                      | NEW — 6 demo devices workaround for broken `pnpm seed`                             |
++| `packages/db/seed-rules.mjs`                        | NEW — 9 FR-13 default rules                                                        |
++| `packages/db/seed-incidents.mjs`                    | NEW — 5 incidents across all states for Kanban visual verification                 |
++| `packages/api/Dockerfile`                           | Added `--ignore-scripts` + `pnpm rebuild bcrypt` (passes the husky `prepare` hook) |
++| `tmp/probe.mjs`                                     | NEW — diagnostic script that probes every incident endpoint after login            |
++
++If a future Surakkha agent picks up this runbook cold, start at §3.
+diff --git a/docker-compose.local.yml b/docker-compose.local.yml
+new file mode 100644
+index 0000000..e4a1324
+--- /dev/null
++++ b/docker-compose.local.yml
+@@ -0,0 +1,89 @@
++# Surakkha — local dev stack (cached images + same-network Postgres)
++#
++# Uses the cached images from a previous build:
++#   surakkha-dev-api        (cached)
++#   surakkha-dev-web        (cached)
++#   surakkha-dev-simulator  (cached)
++# plus a fresh postgres:15 with trust auth on a shared docker network.
++#
++# Brings up: docker compose -f docker-compose.local.yml up -d
++# Tears down: docker compose -f docker-compose.local.yml down
++#
++# Required env (set in shell before bringing up):
++#   JWT_SECRET       — 32+ char random string (matches api token signing)
++#   SIMULATOR_SECRET — 32+ char shared secret (api + simulator agree on this)
++
++name: surakkha-local
++
++services:
++  db:
++    image: postgres:15
++    container_name: surakkha-db
++    restart: unless-stopped
++    environment:
++      POSTGRES_USER: surakkha
++      POSTGRES_PASSWORD: surakkha
++      POSTGRES_DB: surakkha
++      POSTGRES_HOST_AUTH_METHOD: trust
++    ports:
++      - "5433:5432"
++    volumes:
++      - surakkha-pgdata-local:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U surakkha -d surakkha"]
++      interval: 5s
++      timeout: 5s
++      retries: 10
++
++  api:
++    image: surakkha-dev-api:latest
++    container_name: surakkha-api
++    restart: unless-stopped
++    depends_on:
++      db:
++        condition: service_healthy
++    environment:
++      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
++      DATABASE_URL: postgresql://surakkha:surakkha@db:5432/surakkha
++      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
++      RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
++      SKIP_MIGRATIONS: "true"
++      NODE_ENV: production
++      LOG_LEVEL: info
++    ports:
++      - "3000:3000"
++    extra_hosts:
++      - "host.docker.internal:host-gateway"
++    healthcheck:
++      test:
++        [
++          "CMD-SHELL",
++          'node -e "fetch(''http://localhost:3000/health'').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
++        ]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++
++  web:
++    image: surakkha-dev-web:latest
++    container_name: surakkha-web
++    restart: unless-stopped
++    depends_on:
++      - api
++    ports:
++      - "8080:80"
++
++  simulator:
++    image: surakkha-dev-simulator:latest
++    container_name: surakkha-simulator
++    restart: unless-stopped
++    depends_on:
++      - api
++    environment:
++      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
++      API_URL: http://api:3000
++      SIMULATOR_API_URL: http://api:3000
++      SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
++
++volumes:
++  surakkha-pgdata-local:
+diff --git a/packages/db/seed-devices.mjs b/packages/db/seed-devices.mjs
+new file mode 100644
+index 0000000..f291847
+--- /dev/null
++++ b/packages/db/seed-devices.mjs
+@@ -0,0 +1,65 @@
++/* eslint-env node */
++// Quick dev seed — creates the 6 demo devices so the simulator
++// can ingest telemetry without FK violations. This bypasses the
++// broken `pnpm seed` (which expects Rule.deviceId nullable but
++// the schema requires it).
++import { PrismaClient } from "@prisma/client";
++
++const c = new PrismaClient();
++
++const devices = [
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000001",
++    name: "SURAKKHA-A01",
++    scenario: "Normal",
++    lat: 23.7806,
++    lng: 90.4074,
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000002",
++    name: "SURAKKHA-B02",
++    scenario: "RisingTDS",
++    lat: 23.7461,
++    lng: 90.3742,
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000003",
++    name: "SURAKKHA-C03",
++    scenario: "TurbiditySpike",
++    lat: 23.8103,
++    lng: 90.4125,
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000004",
++    name: "SURAKKHA-D04",
++    scenario: "ChlorineDrop",
++    lat: 23.728,
++    lng: 90.3965,
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000005",
++    name: "SURAKKHA-E05",
++    scenario: "Offline",
++    lat: 23.792,
++    lng: 90.425,
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000006",
++    name: "SURAKKHA-F06",
++    scenario: "RandomFailure",
++    lat: 23.759,
++    lng: 90.448,
++  },
++];
++
++await Promise.all(
++  devices.map((d) =>
++    c.device.upsert({
++      where: { id: d.id },
++      update: {},
++      create: d,
++    }),
++  ),
++);
++globalThis.console.log("seeded", devices.length, "devices");
++await c.$disconnect();
+diff --git a/packages/db/seed-incidents.mjs b/packages/db/seed-incidents.mjs
+new file mode 100644
+index 0000000..012460f
+--- /dev/null
++++ b/packages/db/seed-incidents.mjs
+@@ -0,0 +1,168 @@
++/* eslint-env node */
++// Quick dev seed — creates a handful of demo Incidents (one per device
++// with an out-of-range scenario) so the Kanban + IncidentDetailPage
++// have content to render. Bypasses the rule engine because the cached
++// api image was built before Story 3.4's de-bounce wiring; this seed
++// is the fastest path to a populated Kanban for visual verification
++// of Story 4.4's surfaces.
++import { PrismaClient } from "@prisma/client";
++
++const c = new PrismaClient();
++
++const OP_ALPHA_ID = "00000000-0000-4000-8000-00000000a002";
++const TECH_ALPHA_ID = "00000000-0000-4000-8000-00000000a003";
++
++const devices = [
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000001",
++    scenario: "Normal",
++    severity: "warning",
++    metric: "tds_ppm",
++    value: 380,
++    state: "ACKNOWLEDGED",
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000002",
++    scenario: "RisingTDS",
++    severity: "critical",
++    metric: "tds_ppm",
++    value: 1500,
++    state: "INSPECTING",
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000003",
++    scenario: "TurbiditySpike",
++    severity: "critical",
++    metric: "turbidity_ntu",
++    value: 8.2,
++    state: "OPEN",
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000004",
++    scenario: "ChlorineDrop",
++    severity: "critical",
++    metric: "chlorine_ppm",
++    value: 0.05,
++    state: "MONITORING",
++  },
++  {
++    id: "9b1c4f00-0000-4000-8000-000000000005",
++    scenario: "Offline",
++    severity: "warning",
++    metric: "water_level_cm",
++    value: 18,
++    state: "SAFE",
++  },
++];
++
++// Find the matching Rule id for each incident so the Alert row's
++// `ruleId` FK resolves. Pick any active rule whose metric+severity
++// match the incident. Threshold value is irrelevant to the Alert.
++const findRule = async (metric, severity) => {
++  const r = await c.rule.findFirst({
++    where: { metric, severity, isActive: true },
++    select: { id: true },
++  });
++  if (!r) throw new Error(`no matching rule for ${metric} ${severity}`);
++  return r.id;
++};
++
++const minutesAgo = (m) => new Date(Date.now() - m * 60_000);
++
++let seeded = 0;
++for (const d of devices) {
++  const ruleId = await findRule(d.metric, d.severity);
++
++  // Anchor timeline on the alert open moment (60 min ago for all).
++  const openedAt = minutesAgo(60);
++  const acknowledgedAt = minutesAgo(45);
++
++  // The alert always opens first.
++  const alert = await c.alert.create({
++    data: {
++      deviceId: d.id,
++      ruleId,
++      severity: d.severity,
++      metric: d.metric,
++      openedAt,
++    },
++  });
++
++  // Decide acknowledgement / assignment based on state.
++  const isAssigned = d.state !== "OPEN";
++  const isInspected = d.state === "INSPECTING" || d.state === "MONITORING" || d.state === "SAFE";
++  const isMonitored = d.state === "MONITORING" || d.state === "SAFE";
++  const isSafe = d.state === "SAFE";
++
++  const incident = await c.incident.create({
++    data: {
++      deviceId: d.id,
++      severity: d.severity,
++      metric: d.metric,
++      value: d.value,
++      openedAt,
++      state: d.state,
++      assigneeUserId: isAssigned ? TECH_ALPHA_ID : null,
++      acknowledgedAt: isAssigned ? acknowledgedAt : null,
++      resolvedAt: isSafe ? minutesAgo(15) : null,
++    },
++  });
++
++  // Build the audit timeline in chronological order.
++  const events = [];
++
++  // t+1: the rule-engine auto-create from the alert (synthetic).
++  events.push({
++    incidentId: incident.id,
++    actorUserId: null,
++    type: "invalid_transition_attempt",
++    payload: { reason: "auto_create_from_alert", alertId: alert.id, value: d.value, ruleId },
++    createdAt: new Date(openedAt.getTime() + 1_000),
++  });
++
++  if (isAssigned) {
++    events.push({
++      incidentId: incident.id,
++      actorUserId: OP_ALPHA_ID,
++      type: "acknowledge",
++      payload: { from: "OPEN", to: "ACKNOWLEDGED" },
++      createdAt: acknowledgedAt,
++    });
++  }
++
++  if (isInspected) {
++    events.push({
++      incidentId: incident.id,
++      actorUserId: TECH_ALPHA_ID,
++      type: "assign",
++      payload: { assigneeUserId: TECH_ALPHA_ID, from: "ACKNOWLEDGED", to: "INSPECTING" },
++      createdAt: minutesAgo(30),
++    });
++  }
++
++  if (isMonitored) {
++    events.push({
++      incidentId: incident.id,
++      actorUserId: TECH_ALPHA_ID,
++      type: "submit_result",
++      payload: { from: "INSPECTING", to: "MONITORING", outcome: "stable" },
++      createdAt: minutesAgo(20),
++    });
++  }
++
++  if (isSafe) {
++    events.push({
++      incidentId: incident.id,
++      actorUserId: TECH_ALPHA_ID,
++      type: "resolve",
++      payload: { from: "MONITORING", to: "SAFE", resolution: "value_returned_to_normal" },
++      createdAt: minutesAgo(15),
++    });
++  }
++
++  await c.incidentEvent.createMany({ data: events });
++  seeded++;
++}
++
++globalThis.console.log("seeded", seeded, "incidents + alerts + events");
++await c.$disconnect();
+diff --git a/packages/db/seed-rules.mjs b/packages/db/seed-rules.mjs
+new file mode 100644
+index 0000000..82e3aef
+--- /dev/null
++++ b/packages/db/seed-rules.mjs
+@@ -0,0 +1,112 @@
++/* eslint-env node */
++// Quick dev seed — creates the FR-13 default Rules so the api's
++// rule engine evaluates incoming readings and emits Alerts.
++import { PrismaClient } from "@prisma/client";
++
++const c = new PrismaClient();
++
++const rules = [
++  {
++    metric: "ph",
++    operator: "lt",
++    threshold: 6.5,
++    severity: "critical",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "ph",
++    operator: "gt",
++    threshold: 8.5,
++    severity: "critical",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "tds_ppm",
++    operator: "gte",
++    threshold: 300,
++    severity: "warning",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "tds_ppm",
++    operator: "gte",
++    threshold: 1000,
++    severity: "critical",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "turbidity_ntu",
++    operator: "gt",
++    threshold: 5,
++    severity: "critical",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "chlorine_ppm",
++    operator: "lt",
++    threshold: 0.2,
++    severity: "critical",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "chlorine_ppm",
++    operator: "gt",
++    threshold: 1.5,
++    severity: "warning",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "temp_c",
++    operator: "gt",
++    threshold: 45,
++    severity: "warning",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++  {
++    metric: "water_level_cm",
++    operator: "lt",
++    threshold: 20,
++    severity: "warning",
++    ruleType: "instant",
++    minDurationSeconds: 0,
++    hysteresisSeconds: 0,
++  },
++];
++
++let seeded = 0;
++for (const r of rules) {
++  await c.rule.create({
++    data: {
++      deviceId: null,
++      metric: r.metric,
++      operator: r.operator,
++      threshold: r.threshold,
++      severity: r.severity,
++      ruleType: r.ruleType,
++      minDurationSeconds: r.minDurationSeconds,
++      hysteresisSeconds: r.hysteresisSeconds,
++      version: 1,
++      createdBy: null,
++      isActive: true,
++    },
++  });
++  seeded++;
++}
++globalThis.console.log("seeded", seeded, "rules");
++await c.$disconnect();
+-- 
+2.34.1.windows.1
+
+
+From 8e8be1db62e50bd021b0dbcf0736d2c0ceb93319 Mon Sep 17 00:00:00 2001
+From: sanjitdev <sanjit.majumdar@brainstation-23.com>
+Date: Fri, 28 Aug 2026 12:33:47 +0600
+Subject: [PATCH 5/5] =?UTF-8?q?chore(4.4):=20review-iteration=20patches=20?=
+ =?UTF-8?q?=E2=80=94=20typed=20the=20read-side=20detail=20surface?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Step-04 review of `spec-4-4-incident-detail-page.md` surfaced
+~30 adversarial findings + ~25 edge-case paths + 7 verification
+gaps. Triage routes most of these to `defer` (forward-compat
+enum drift, intra-mount id transitions, internationalization,
+etc.) or `reject` (noise). The patches below are the
+"caused-or-exposed-by-this-change" fixes the review surfaced:
+
+**Code**
+
+- `IncidentDetailPage.tsx` — collapse the duplicate
+  `IncidentDetailEnvelope` / `IncidentDetailRow` interfaces into
+  one (`IncidentDetailEnvelope` was the actual envelope, the
+  Row alias was unused ceremony). Drop `[...queryKey]` spread
+  on the row query + invalidate call — `incidentDetailQueryKey`
+  already returns a readonly tuple; the spread was dead work.
+
+- `useIncidentDetailSocket.ts` — rename `KANBAN_SOCKET_URL` →
+  `DEFAULT_SOCKET_URL`. The constant is the shared dashboard
+  socket URL, not a Kanban-domain concern; the old name leaked
+  the Kanban naming from the detail file.
+
+- `NotFound.tsx` — drop dead `not-found-back` CSS class. The
+  style is set inline (PRIMARY bg); no stylesheet rule references
+  this class.
+
+- `router.ts` — strip raw incident UUID from the
+  `console.error` log line on the timeline endpoint. UUIDs in
+  log lines are PII-adjacent (they identify the affected
+  resource) and add nothing diagnostic — the response shape
+  is already `{ error: "internal_error" }`.
+
+**Tests**
+
+- `cacheMutators.spec.ts` — replace the single
+  `does NOT special-case RESOLVED` case with a parametrized
+  `describe.each` over `INCIDENT_STABLE_STATES`. The no-special-case
+  contract is now structurally pinned — any future contributor
+  who adds per-state logic to the shared helper breaks the
+  table.
+
+- `IncidentDetailPage.spec.tsx` — rename the timeline-404
+  test from "renders <NotFound /> when the row succeeds but the
+  timeline returns 404" to "renders the row + empty timeline
+  (NOT <NotFound />) when the timeline returns 404" + add an
+  `expect(screen.queryByTestId("not-found")).toBeNull()` pin.
+  The old name lied about the contract; the actual implementation
+  only renders NotFound on a row-level 404.
+
+- `NotFound.spec.tsx` — NEW dedicated unit test. Covers the
+  default render (role=status, aria-live=polite, default
+  headline + message + backHref=/incidents + backLabel), the
+  override-prop surface (headline / message / backHref /
+  backLabel), and the back link's `href` target. The first
+  404 surface in the codebase now has its own contract pin —
+  future per-entity detail pages (4.5 / 4.6 / 4.7 / 4.11) reuse
+  this with confidence.
+
+**Verification**
+
+- `pnpm -r typecheck` — clean.
+- `pnpm -F @surakkha/api test` — 401 pass / 5 fail. The 5
+  failures are pre-existing in `alerts/listRouter.spec.ts`
+  (Story 3.5 test-fixture drift; tracked as AI-3.1 in the
+  retrospective, NOT this story's surface). All
+  `incidents/router.spec.ts` (45 tests) including the new
+  timeline endpoint tests pass.
+- `pnpm -F @surakkha/web test` — 297 / 297 pass. Includes the
+  new `cacheMutators` parametrized table (11 tests, was 5)
+  and the new `NotFound.spec.tsx` (4 tests).
+
+Co-Authored-By: Opus 4.8 <noreply@puku.sh>
+---
+ packages/api/src/incidents/router.ts          |  4 +-
+ packages/web/src/access/NotFound.spec.tsx     | 68 +++++++++++++++++++
+ packages/web/src/access/NotFound.tsx          |  2 +-
+ .../src/incidents/IncidentDetailPage.spec.tsx | 27 +++-----
+ .../web/src/incidents/IncidentDetailPage.tsx  | 19 ++----
+ .../web/src/incidents/cacheMutators.spec.ts   | 43 +++++++-----
+ .../src/incidents/useIncidentDetailSocket.ts  |  4 +-
+ 7 files changed, 116 insertions(+), 51 deletions(-)
+ create mode 100644 packages/web/src/access/NotFound.spec.tsx
+
+diff --git a/packages/api/src/incidents/router.ts b/packages/api/src/incidents/router.ts
+index a64e95b..5851e0f 100644
+--- a/packages/api/src/incidents/router.ts
++++ b/packages/api/src/incidents/router.ts
+@@ -295,7 +295,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
+       try {
+         row = await deps.repo.incident.findUnique({ where: { id } });
+       } catch (err) {
+-        console.error(`api/incidents/${id}/events: findUnique failed`, err);
++        console.error("api/incidents/:id/events: findUnique failed", err);
+         res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+         return;
+       }
+@@ -329,7 +329,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
+           orderBy: { createdAt: "asc" },
+         });
+       } catch (err) {
+-        console.error(`api/incidents/${id}/events: findMany failed`, err);
++        console.error("api/incidents/:id/events: findMany failed", err);
+         res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+         return;
+       }
+diff --git a/packages/web/src/access/NotFound.spec.tsx b/packages/web/src/access/NotFound.spec.tsx
+new file mode 100644
+index 0000000..8c69670
+--- /dev/null
++++ b/packages/web/src/access/NotFound.spec.tsx
+@@ -0,0 +1,68 @@
++/**
++ * `NotFound.spec.tsx` — Story 4.4 step-04 review.
++ *
++ * Dedicated unit test for the first 404 surface in the web
++ * codebase. Pins the component's contract — defaults, override
++ * props, back-link target, and accessibility attributes — so a
++ * regression here is caught at the source rather than at every
++ * consumer (the detail page today, future per-entity detail pages
++ * in Stories 4.5 / 4.6 / 4.7 / 4.11).
++ *
++ * Coverage:
++ *   - renders <main> with role=status and aria-live=polite
++ *   - default headline / message / backHref / backLabel
++ *   - override props are honored verbatim
++ *   - back link is a real <a> with the expected href target
++ */
++import { cleanup, render, screen } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
++import { afterEach, describe, expect, it } from "vitest";
++
++import { NotFound } from "./NotFound";
++
++const renderNotFound = (props: Partial<React.ComponentProps<typeof NotFound>> = {}) =>
++  render(
++    <MemoryRouter initialEntries={["/incidents/missing"]}>
++      <NotFound {...props} />
++    </MemoryRouter>,
++  );
++
++describe("Story 4.4 — NotFound semantic contract", () => {
++  afterEach(() => cleanup());
++
++  it("renders <main> with role=status and aria-live=polite", () => {
++    renderNotFound();
++    const main = screen.getByTestId("not-found");
++    expect(main.tagName).toBe("MAIN");
++    expect(main.getAttribute("role")).toBe("status");
++    expect(main.getAttribute("aria-live")).toBe("polite");
++  });
++
++  it("exposes default headline + message copy", () => {
++    renderNotFound();
++    expect(screen.getByRole("heading", { level: 1, name: "Not found" })).toBeInTheDocument();
++    expect(screen.getByText("The item you requested could not be found.")).toBeInTheDocument();
++  });
++
++  it("links back to /incidents by default (the kanban index, not /)", () => {
++    renderNotFound();
++    const link = screen.getByTestId("not-found-back-link");
++    expect(link).toBeInTheDocument();
++    expect(link.getAttribute("href")).toBe("/incidents");
++    expect(link.textContent).toBe("Back to incidents");
++  });
++
++  it("respects custom headline / message / backHref / backLabel overrides", () => {
++    renderNotFound({
++      headline: "Device not found",
++      message: "This device has been removed or never existed.",
++      backHref: "/sensors",
++      backLabel: "Back to sensors",
++    });
++    expect(screen.getByRole("heading", { level: 1, name: "Device not found" })).toBeInTheDocument();
++    expect(screen.getByText("This device has been removed or never existed.")).toBeInTheDocument();
++    const link = screen.getByTestId("not-found-back-link");
++    expect(link.getAttribute("href")).toBe("/sensors");
++    expect(link.textContent).toBe("Back to sensors");
++  });
++});
+diff --git a/packages/web/src/access/NotFound.tsx b/packages/web/src/access/NotFound.tsx
+index 194be19..7ad67d1 100644
+--- a/packages/web/src/access/NotFound.tsx
++++ b/packages/web/src/access/NotFound.tsx
+@@ -68,7 +68,7 @@ export const NotFound = ({
+       <Link
+         to={backHref}
+         data-testid="not-found-back-link"
+-        className="not-found-back mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
++        className="mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
+         style={{
+           backgroundColor: PRIMARY,
+         }}
+diff --git a/packages/web/src/incidents/IncidentDetailPage.spec.tsx b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+index fea5ba7..07699cc 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.spec.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.spec.tsx
+@@ -421,7 +421,7 @@ describe("Story 4.4 — AC: silent-drop on stale event for a different incident
+ });
+ 
+ describe("Story 4.4 — AC: timeline-only failure modes", () => {
+-  it("renders <NotFound /> when the row succeeds but the timeline returns 404", async () => {
++  it("renders the row + empty timeline (NOT <NotFound />) when the timeline returns 404", async () => {
+     installFetch(async (url) => {
+       if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+         return new Response(JSON.stringify(baseIncident()), { status: 200 });
+@@ -434,25 +434,20 @@ describe("Story 4.4 — AC: timeline-only failure modes", () => {
+ 
+     renderDetail();
+ 
+-    // The row succeeded, but the timeline 404 should still surface
+-    // <NotFound /> — the page's `rowQuery.isError` check does NOT
+-    // gate this; the timeline query's error bubbles up and the
+-    // `enabled: id !== undefined && !rowQuery.isError` guard must
+-    // allow the timeline to fetch + fail.
++    // The timeline 404 fires a tagged error on the timeline query;
++    // the row query is successful so `rowQuery.isError` is false
++    // and the page renders the incident row. The timeline section
++    // renders the empty-state copy because the timeline query's
++    // `data` is `undefined`, which the `useMemo` projects to `[]`.
+     //
+-    // Per the current implementation, the timeline 404 only fires
+-    // a tagged error on the timeline query; the row query is
+-    // successful so `rowQuery.isError` is false and the page
+-    // renders the incident row. The timeline section renders the
+-    // empty-state copy (the query is in `isError`, so its `data`
+-    // is `undefined`, which the `useMemo` projects to `[]`).
+-    //
+-    // This test pins the contract: timeline-only failure does NOT
+-    // crash or hang — the row renders, the timeline section is
+-    // empty.
++    // This test pins the actual contract — a timeline-only 404
++    // does NOT surface <NotFound />; only a row-level 404 does.
++    // A regression that lifted the NotFound dispatch to OR the
++    // two queries would break this assertion; that's the pin.
+     await waitFor(() => {
+       expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+     });
++    expect(screen.queryByTestId("not-found")).toBeNull();
+     expect(screen.getByTestId("incident-detail-timeline-empty")).toHaveTextContent(
+       "No audit events yet",
+     );
+diff --git a/packages/web/src/incidents/IncidentDetailPage.tsx b/packages/web/src/incidents/IncidentDetailPage.tsx
+index fc8ff99..cc4d9a9 100644
+--- a/packages/web/src/incidents/IncidentDetailPage.tsx
++++ b/packages/web/src/incidents/IncidentDetailPage.tsx
+@@ -64,16 +64,10 @@ const IncidentEventEnvelopeSchema = z.object({
+   events: z.array(IncidentEventPayloadSchema),
+ });
+ 
+-const IncidentDetailRowSchema = IncidentPayloadSchema;
+-
+ interface IncidentDetailEnvelope {
+   readonly incident: IncidentPayload;
+ }
+ 
+-interface IncidentDetailRow {
+-  readonly incident: IncidentPayload;
+-}
+-
+ interface IncidentTimeline {
+   readonly events: readonly IncidentEventPayload[];
+ }
+@@ -133,8 +127,8 @@ export const IncidentDetailPage = () => {
+ 
+   useIncidentDetailSocket(id ?? "");
+ 
+-  const rowQuery = useQuery<IncidentDetailRow>({
+-    queryKey: [...incidentDetailQueryKey(id ?? "")],
++  const rowQuery = useQuery<IncidentDetailEnvelope>({
++    queryKey: incidentDetailQueryKey(id ?? ""),
+     enabled: id !== undefined,
+     queryFn: async () => {
+       const res = await apiFetch(`/api/incidents/${id}`);
+@@ -151,13 +145,12 @@ export const IncidentDetailPage = () => {
+       if (!res.ok) {
+         throw new Error(`/api/incidents/${id} failed: ${res.status}`);
+       }
+-      const parsed = IncidentDetailRowSchema.safeParse(await res.json());
++      const parsed = IncidentPayloadSchema.safeParse(await res.json());
+       if (!parsed.success) {
+         console.error("incidents/:id wire-shape mismatch", parsed.error);
+         throw new Error("incidents/:id wire-shape mismatch");
+       }
+-      const envelope: IncidentDetailEnvelope = { incident: parsed.data };
+-      return envelope;
++      return { incident: parsed.data };
+     },
+   });
+ 
+@@ -206,7 +199,7 @@ export const IncidentDetailPage = () => {
+       timeline={timeline}
+       onRetry={() => {
+         void queryClient.invalidateQueries({
+-          queryKey: [...incidentDetailQueryKey(id ?? "")],
++          queryKey: incidentDetailQueryKey(id ?? ""),
+         });
+       }}
+     />
+@@ -225,7 +218,7 @@ const IncidentDetailDispatch = ({
+   timeline,
+   onRetry,
+ }: {
+-  readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailRow>>;
++  readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
+   readonly incident: IncidentPayload | undefined;
+   readonly timeline: readonly IncidentEventPayload[];
+   readonly onRetry: () => void;
+diff --git a/packages/web/src/incidents/cacheMutators.spec.ts b/packages/web/src/incidents/cacheMutators.spec.ts
+index 044e1c0..cbbd313 100644
+--- a/packages/web/src/incidents/cacheMutators.spec.ts
++++ b/packages/web/src/incidents/cacheMutators.spec.ts
+@@ -12,10 +12,17 @@
+  *   - id mismatch returns `null` (silent drop)
+  *   - id match returns a new row with `state` replaced
+  *   - non-state fields are preserved verbatim
+- *   - `to_state: "RESOLVED"` is NOT special-cased here (the
+- *     per-hook wrapper decides drop-vs-keep)
++ *   - EVERY stable `to_state` value is NOT special-cased here
++ *     (the per-hook wrapper decides drop-vs-keep); parametrised
++ *     so a future contributor can't add per-state logic without
++ *     breaking the table.
+  */
+-import { type IncidentPayload, type IncidentStateChangedEvent } from "@surakkha/shared/incident";
++import {
++  type IncidentPayload,
++  type IncidentState,
++  type IncidentStateChangedEvent,
++  INCIDENT_STABLE_STATES,
++} from "@surakkha/shared/incident";
+ import { describe, expect, it } from "vitest";
+ 
+ import { applyTransitionToCachedRow } from "./cacheMutators";
+@@ -79,20 +86,22 @@ describe("Story 4.4 — applyTransitionToCachedRow", () => {
+     });
+   });
+ 
+-  it("does NOT special-case RESOLVED — the helper only swaps `state`", () => {
+-    const row = baseRow({ state: "ACKNOWLEDGED" });
+-    const event = baseEvent({
+-      from_state: "ACKNOWLEDGED",
+-      to_state: "RESOLVED",
+-    });
+-    const next = applyTransitionToCachedRow(row, event);
+-    // The detail hook's wrapper decides drop-vs-keep. This helper
+-    // just replaces the state field — pin that contract.
+-    expect(next).toEqual({
+-      ...row,
+-      state: "RESOLVED",
+-    });
+-  });
++  // Structural pin for the "single source of truth" contract:
++  // every stable `to_state` is treated identically — the helper
++  // always returns the row with `state` replaced, never a drop.
++  // The per-hook wrapper decides drop-vs-keep; this table fails
++  // if anyone moves that decision INTO the shared helper.
++  describe.each(INCIDENT_STABLE_STATES)(
++    "does NOT special-case to_state=%s",
++    (toState: IncidentState) => {
++      it("returns the row with state replaced (no drop)", () => {
++        const row = baseRow({ state: "OPEN" });
++        const event = baseEvent({ from_state: "OPEN", to_state: toState });
++        const next = applyTransitionToCachedRow(row, event);
++        expect(next).toEqual({ ...row, state: toState });
++      });
++    },
++  );
+ 
+   it("returns a NEW object (does not mutate the input row)", () => {
+     const row = baseRow({ state: "OPEN" });
+diff --git a/packages/web/src/incidents/useIncidentDetailSocket.ts b/packages/web/src/incidents/useIncidentDetailSocket.ts
+index 14e2145..58bd9d4 100644
+--- a/packages/web/src/incidents/useIncidentDetailSocket.ts
++++ b/packages/web/src/incidents/useIncidentDetailSocket.ts
+@@ -51,7 +51,7 @@ export const incidentDetailQueryKey = (id: string): readonly unknown[] => [
+   id,
+ ];
+ 
+-const KANBAN_SOCKET_URL = "/dashboard";
++const DEFAULT_SOCKET_URL = "/dashboard";
+ 
+ interface DetailCacheEnvelope {
+   readonly incident: IncidentPayload;
+@@ -86,7 +86,7 @@ export const applyStateChangeToDetailCache = (
+  * Tests pass a stub `url` (the socket itself is mocked at the
+  * network layer via the `connectSocket` vi.mock pattern).
+  */
+-export const useIncidentDetailSocket = (id: string, url: string = KANBAN_SOCKET_URL): void => {
++export const useIncidentDetailSocket = (id: string, url: string = DEFAULT_SOCKET_URL): void => {
+   const queryClient = useQueryClient();
+ 
+   useEffect(() => {
+-- 
+2.34.1.windows.1
+
