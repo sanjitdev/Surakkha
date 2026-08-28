@@ -51,10 +51,20 @@ import { Link } from "react-router-dom";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { useToasts } from "../incidents/toast";
 
+import { NotificationsRbacDeniedError } from "./NotificationsRbacDeniedError";
 import { useMarkAsRead } from "./useMarkAsRead";
 import { useNotificationBell } from "./useNotificationBell";
 
 const VIEWER: Role = "Viewer";
+
+/**
+ * The disabled-bell testid + tooltip. Extracted so the Viewer's
+ * static disabled surface and the GET_403 dynamic disabled surface
+ * render the SAME DOM contract (the spec's `GET_403` row pins
+ * "Bell renders disabled state (same as `VIEWER_DISABLED`)").
+ */
+const DISABLED_BELL_TESTID = "notification-bell-disabled";
+const DISABLED_BELL_TITLE = "Notifications are not available for your role.";
 
 /**
  * Severity row border class. Maps the closed enum to the existing
@@ -286,6 +296,18 @@ const NotificationDropdown = ({
   );
 };
 
+export interface NotificationBellProps {
+  /**
+   * Optional test escape hatch — the bell reads `useToasts()` by
+   * default, but a parent may inject its own `pushToast` (e.g. a
+   * shared toast queue via React context in a future Epic-6 sweep).
+   * Default: `useToasts().pushToast`. The bell does NOT consume
+   * `toasts` from this prop — the toast region is owned by each
+   * page mount, not the bell.
+   */
+  readonly pushToast?: (tone: "success" | "error", message: string) => void;
+}
+
 /**
  * `NotificationBell` — the bell icon + badge + dropdown mount.
  *
@@ -297,7 +319,7 @@ const NotificationDropdown = ({
  * `refetchInterval` so the badge increments without user action
  * (see `useNotificationBell.ts` for the polling rationale).
  */
-export const NotificationBell = () => {
+export const NotificationBell = ({ pushToast }: NotificationBellProps = {}) => {
   const role = useCurrentRole();
   // `useCurrentRole` may be `null` (unauthenticated). Treat that as
   // Viewer (no bell surface; the auth gate handles real
@@ -305,23 +327,40 @@ export const NotificationBell = () => {
   const viewerRole: Role = role ?? VIEWER;
 
   if (viewerRole === VIEWER) {
-    return (
-      <button
-        type="button"
-        data-testid="notification-bell-disabled"
-        aria-disabled="true"
-        title="Notifications are not available for your role."
-        className="inline-flex h-9 w-9 items-center justify-center rounded-input text-neutral-secondary opacity-50"
-      >
-        <span aria-hidden className="text-lg">
-          {"\u2407"}
-        </span>
-      </button>
-    );
+    return <DisabledNotificationBell />;
   }
 
-  return <ActiveNotificationBell viewerRole={viewerRole} />;
+  return <ActiveNotificationBell viewerRole={viewerRole} pushToast={pushToast} />;
 };
+
+/**
+ * `DisabledNotificationBell` — the shared "no surface" variant.
+ *
+ * Two sites render it:
+ *   - `Viewer` role (RBAC matrix: Viewer.read.Notification = N).
+ *   - `GET_403` from `/api/notifications` (the spec's `GET_403`
+ *     matrix row: "Bell renders disabled state (same as
+ *     `VIEWER_DISABLED`)"; the api rejected the read for some
+ *     reason mid-session — defensive, mirrors the KanbanBoard's
+ *     RBAC-denied fallback).
+ *
+ * NO badge, NO click handler, NO query refetch. The user re-
+ * tries by logging out + back in (the apiClient clears tokens
+ * on a refresh-401).
+ */
+const DisabledNotificationBell = () => (
+  <button
+    type="button"
+    data-testid={DISABLED_BELL_TESTID}
+    aria-disabled="true"
+    title={DISABLED_BELL_TITLE}
+    className="inline-flex h-9 w-9 items-center justify-center rounded-input text-neutral-secondary opacity-50"
+  >
+    <span aria-hidden className="text-lg">
+      {"\u2407"}
+    </span>
+  </button>
+);
 
 /**
  * `ActiveNotificationBell` — the Admin / Operator / Technician
@@ -330,12 +369,74 @@ export const NotificationBell = () => {
  * primary gate; isolating the hook call keeps the JSX tree
  * shallow).
  */
-const ActiveNotificationBell = ({ viewerRole }: { readonly viewerRole: Role }) => {
+const ActiveNotificationBell = ({
+  viewerRole,
+  pushToast: pushToastProp,
+}: {
+  readonly viewerRole: Role;
+  readonly pushToast?: (tone: "success" | "error", message: string) => void;
+}) => {
   const { notifications, unreadCount, query } = useNotificationBell(viewerRole);
-  const { pushToast } = useToasts();
+  // Only call `useToasts` if no external `pushToast` was injected —
+  // keeps the hook count stable across the optional-prop boundary
+  // (always either 0 calls or 1 call to `useToasts`, never
+  // conditional). React's hook-order guard requires this.
+  const fallback = useToasts();
+  const pushToast = pushToastProp ?? fallback.pushToast;
   const markAsRead = useMarkAsRead(viewerRole, {
     onError: (message: string) => pushToast("error", message),
   });
+
+  // Spec GET_403 — "Bell renders disabled state (same as
+  // VIEWER_DISABLED)". The api rejected the read mid-session
+  // (token expired, role revoked, etc.). The bell short-circuits
+  // to the shared disabled variant BEFORE mounting the click-
+  // outside effect / dropdown state, so a hook added to this
+  // component below this check would not be called on the
+  // disabled path (tripping React's "rendered fewer hooks"
+  // guard). If you need another hook here, gate it on the same
+  // condition (or wrap this in a sub-component that owns the
+  // disabled branch).
+  //
+  // NO retry affordance — the recovery path is "log out + log
+  // back in".
+  if (query.error instanceof NotificationsRbacDeniedError) {
+    return <DisabledNotificationBell />;
+  }
+
+  return (
+    <OpenNotificationBell
+      viewerRole={viewerRole}
+      notifications={notifications}
+      unreadCount={unreadCount}
+      markAsRead={markAsRead}
+      query={query}
+    />
+  );
+};
+
+/**
+ * `OpenNotificationBell` — the active surface mounted after the
+ * GET_403 gate clears. Extracted so the disabled-bell render
+ * path (which lacks the useState/useRef/useEffect trio below)
+ * does not share a component identity with the open-bell render
+ * path; that would trip React's "rendered fewer hooks" guard on
+ * transitions between enabled/disabled.
+ */
+interface OpenNotificationBellProps {
+  readonly viewerRole: Role;
+  readonly notifications: readonly NotificationPayload[];
+  readonly unreadCount: number;
+  readonly markAsRead: ReturnType<typeof useMarkAsRead>;
+  readonly query: { readonly isError: boolean; readonly refetch: () => Promise<unknown> };
+}
+
+const OpenNotificationBell = ({
+  notifications,
+  unreadCount,
+  markAsRead,
+  query,
+}: OpenNotificationBellProps) => {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 

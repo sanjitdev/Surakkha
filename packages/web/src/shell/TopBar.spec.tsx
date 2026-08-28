@@ -64,22 +64,31 @@ describe("Story 4.10 — NotificationBell slot wiring", () => {
     expect(slot.parentElement?.getAttribute("class") ?? "").toContain("ml-auto");
   });
 
-  it("mounts the active bell as a direct child of notification-bell-slot for Operator", () => {
+  it("mounts the active bell as a DIRECT child of notification-bell-slot for Operator (firstElementChild contract)", () => {
     renderTopBar("Operator");
     const slot = screen.getByTestId("notification-bell-slot");
     // The disabled variant would render the `notification-bell-disabled`
     // testid; the active variant renders `notification-bell-wrapper` (the
     // inner-most wrapper around the bell button + badge + dropdown).
     // The spec pins the active bell's presence here as the direct child.
+    //
+    // Direct-child pin: `slot.firstElementChild === bellWrapper`.
+    // The previous `slot.contains(...)` assertion allowed nested
+    // descendants (a wrapper-of-a-wrapper would still pass); the
+    // direct-child contract pins the spec requirement that the
+    // bell mounts as the slot's sole child so future evolution of
+    // the slot's right-cluster layout (e.g. a StatusBadge sibling)
+    // does not silently nest the bell one level deeper.
     const bellWrapper = screen.getByTestId("notification-bell-wrapper");
-    expect(slot.contains(bellWrapper)).toBe(true);
+    expect(slot.firstElementChild).toBe(bellWrapper);
   });
 
-  it("mounts the disabled bell as a direct child of notification-bell-slot for Viewer", () => {
+  it("mounts the disabled bell as a DIRECT child of notification-bell-slot for Viewer (firstElementChild contract)", () => {
     renderTopBar("Viewer");
     const slot = screen.getByTestId("notification-bell-slot");
     const disabledBell = screen.getByTestId("notification-bell-disabled");
-    expect(slot.contains(disabledBell)).toBe(true);
+    // Direct-child pin (same rationale as the Operator row above).
+    expect(slot.firstElementChild).toBe(disabledBell);
   });
 });
 
