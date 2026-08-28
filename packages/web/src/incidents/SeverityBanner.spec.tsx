@@ -51,6 +51,7 @@ import { AppShell } from "../shell/AppShell";
 
 import { filterUnsafeWithin24h, SEVERITY_BANNER_QUERY_KEY_EXPORT } from "./useSeverityBanner";
 import { applyStateChangeToCache } from "./useKanbanBoardSocket";
+import { KanbanRbacDeniedError } from "./KanbanRbacDeniedError";
 
 const DEVICE_A = "9b1c4f00-0000-4000-8000-000000000001";
 
@@ -188,6 +189,31 @@ describe("Story 4.8 — SeverityBanner pure filter", () => {
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.id).toBe(UNSAFE_ID_1);
   });
+
+  it("filterUnsafeWithin24h: 24h boundary — exactly-now-minus-24h is INCLUDED (>= inclusive)", () => {
+    // Pinned comparator: rows whose opened_at is exactly at the cutoff
+    // (now - 24h) are included. A future refactor that flips >= to >
+    // would change this behavior — this test surfaces the divergence.
+    const now = Date.parse("2026-08-28T12:00:00.000Z");
+    const exactlyAtCutoff = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    const incidents: IncidentPayload[] = [
+      baseIncident({ id: UNSAFE_ID_1, opened_at: exactlyAtCutoff }),
+    ];
+    const filtered = filterUnsafeWithin24h(incidents, now);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.id).toBe(UNSAFE_ID_1);
+  });
+
+  it("filterUnsafeWithin24h: malformed opened_at (NaN) is EXCLUDED", () => {
+    // Defensive branch — `Date.parse` returns NaN for non-ISO strings.
+    // The wire always returns ISO, but the helper's contract is robust.
+    const now = Date.parse("2026-08-28T12:00:00.000Z");
+    const incidents: IncidentPayload[] = [
+      baseIncident({ id: UNSAFE_ID_1, opened_at: "not-a-date" }),
+    ];
+    const filtered = filterUnsafeWithin24h(incidents, now);
+    expect(filtered).toHaveLength(0);
+  });
 });
 
 describe("Story 4.8 — SeverityBanner rendering", () => {
@@ -203,6 +229,10 @@ describe("Story 4.8 — SeverityBanner rendering", () => {
     expect(screen.getByTestId("severity-banner-heading").textContent).toBe("1 unsafe incident");
     expect(screen.getByTestId("severity-banner-body").textContent).toContain("tds_ppm");
     expect(screen.getByTestId("severity-banner-body").textContent).toContain("312");
+    // Body format contract: "Latest: <device> · <metric> · <value>".
+    // Pins the order — a future refactor that reorders or drops the
+    // device_id would surface here.
+    expect(screen.getByTestId("severity-banner-body").textContent).toContain(DEVICE_A);
     const banner = screen.getByTestId("severity-banner");
     expect(banner.className).toContain("border-severity-critical-value");
     expect(banner.className).toContain("bg-severity-critical-bg");
@@ -314,18 +344,20 @@ describe("Story 4.8 — SeverityBanner rendering", () => {
     // Mutate the cache via 4.3's helper — simulates the
     // `incident:state_changed` socket event with to_state ===
     // "RESOLVED" (RESOLVED_DROP semantics).
-    queryClient.setQueryData<{ incidents: readonly IncidentPayload[] }>(
-      [...SEVERITY_BANNER_QUERY_KEY_EXPORT],
-      (prev) =>
-        applyStateChangeToCache(
-          prev === undefined ? { incidents: [] } : { incidents: [...prev.incidents] },
-          {
-            incident_id: UNSAFE_ID_1,
-            to_state: "RESOLVED",
-            at: new Date().toISOString(),
-          },
-        ) ?? { incidents: [] },
-    );
+    act(() => {
+      queryClient.setQueryData<{ incidents: readonly IncidentPayload[] }>(
+        [...SEVERITY_BANNER_QUERY_KEY_EXPORT],
+        (prev) =>
+          applyStateChangeToCache(
+            prev === undefined ? { incidents: [] } : { incidents: [...prev.incidents] },
+            {
+              incident_id: UNSAFE_ID_1,
+              to_state: "RESOLVED",
+              at: new Date().toISOString(),
+            },
+          ) ?? { incidents: [] },
+      );
+    });
     await waitFor(() => {
       expect(screen.queryByTestId("severity-banner")).toBeNull();
     });
@@ -389,26 +421,50 @@ describe("Story 4.8 — SeverityBanner rendering", () => {
     restoreFetch();
   });
 
-  it("403 RBAC denial: cache goes into error state → banner NOT rendered (no DOM)", async () => {
-    // Pre-populate the cache with an envelope that would normally
-    // trigger the banner. Then mutate the cache to error state
-    // directly (simulating the banner's `queryFn` throwing on a
-    // real 403 response) — the banner reads `query.data ?? []`
-    // → zero rows → no DOM.
-    const { restoreFetch, queryClient } = renderBanner({
-      envelope: { incidents: [baseIncident()] },
+  it("403 RBAC denial: banner's queryFn throws on 403 → cache error state → banner NOT rendered", async () => {
+    // End-to-end: leave the cache EMPTY so the banner's own
+    // `bannerQueryFn` fires against the fetch mock, which returns
+    // 403. The queryFn must throw `KanbanRbacDeniedError` (the SAME
+    // class the Kanban throws — load-bearing for `KanbanBoard.tsx`'s
+    // `instanceof` check at the `<RbacDenied />` branch). The banner
+    // reads `query.data ?? []` → zero rows → no DOM.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
-    await waitFor(() => {
-      expect(screen.getByTestId("severity-banner")).toBeInTheDocument();
-    });
-    // Force the cache into error state with the tagged RBAC error.
-    const err = new Error("RBAC denied for /api/incidents/active");
-    err.name = "KanbanRbacDeniedError";
-    queryClient.setQueryData([...SEVERITY_BANNER_QUERY_KEY_EXPORT], err);
-    await waitFor(() => {
+    const ORIGINAL_FETCH = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }),
+      )) as unknown as typeof fetch;
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/dashboard"]}>
+            <CurrentRoleProvider initialRole="Operator">
+              <AppShell>
+                <div>canvas content</div>
+              </AppShell>
+            </CurrentRoleProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      // Wait for the cache to land in error state — the banner's
+      // queryFn threw on 403. The error must be an INSTANCE of
+      // `KanbanRbacDeniedError` so the Kanban's `instanceof` check
+      // preserves cross-module RBAC semantics.
+      await waitFor(() => {
+        const entry = queryClient.getQueryCache().find([...SEVERITY_BANNER_QUERY_KEY_EXPORT]);
+        expect(entry?.state.error).toBeInstanceOf(KanbanRbacDeniedError);
+      });
+      // The banner reads query.data ?? []; with an error state,
+      // data is undefined → filter yields zero rows → no DOM.
       expect(screen.queryByTestId("severity-banner")).toBeNull();
-    });
-    restoreFetch();
+    } finally {
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
   });
 });
 

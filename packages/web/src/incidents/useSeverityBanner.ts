@@ -83,9 +83,12 @@ const WINDOW_24H_HOURS = 24;
 /** Milliseconds in a 24-hour window — UX-DR-5's "24h" constraint. */
 const WINDOW_24H_MS = WINDOW_24H_HOURS * MS_PER_HOUR;
 
-/** HTTP status code sentinel — RBAC denial. Must stay in sync with the
- * identical constant in `KanbanBoard.tsx` so both consumers throw the
- * same `KanbanRbacDeniedError` on the same status code. */
+/** HTTP status code sentinel — RBAC denial. Both this hook's
+ * `bannerQueryFn` and `KanbanBoard`'s `queryFn` throw
+ * `KanbanRbacDeniedError` on 403 so the cache's error type is the
+ * same class — `KanbanBoard.tsx` uses an inline `403` literal, NOT
+ * a named constant, so this constant is the single source of truth
+ * within the banner module only. */
 const HTTP_FORBIDDEN = 403;
 
 interface ActiveIncidentsEnvelope {

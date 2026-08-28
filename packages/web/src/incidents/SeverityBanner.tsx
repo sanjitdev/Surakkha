@@ -15,7 +15,7 @@
  *   - Critical-tinted bar (`border-severity-critical-value` + `bg-severity-critical-bg`
  *     + `text-severity-critical-text`).
  *   - Heading `"1 unsafe incident"` (singular) or `"N unsafe incidents"` (plural).
- *   - Body: when count === 1, a short preview line `"Latest: <metric> · <value>"`.
+ *   - Body: when count === 1, a short preview line `"Latest: <device> · <metric> · <value>"`.
  *     When count > 1, a "View all" `<a href="/incidents">` link.
  *   - `role="alert"` on the wrapper + `aria-live="polite"` on the
  *     body copy. Matches the 2.9 `ConnectionStateBanner` a11y pattern.
@@ -45,7 +45,7 @@ const formatHeading = (count: number): string =>
 
 /** Body line for a single-incident banner — device preview. */
 const formatSingleBody = (incident: IncidentPayload): string =>
-  `Latest: ${incident.metric} \u00b7 ${incident.value}`;
+  `Latest: ${incident.device_id} \u00b7 ${incident.metric} \u00b7 ${incident.value}`;
 
 export const SeverityBanner = () => {
   const { criticalCount } = useSeverityBanner();
