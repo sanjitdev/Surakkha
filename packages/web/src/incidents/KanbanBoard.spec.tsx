@@ -95,12 +95,15 @@ const buildQueryClient = (): QueryClient =>
     },
   });
 
-const renderBoard = (role: "Admin" | "Operator" | "Viewer" = "Operator") => {
+const renderBoard = (
+  role: "Admin" | "Operator" | "Viewer" | "Technician" = "Operator",
+  initialUserId: string | null = null,
+) => {
   const qc = buildQueryClient();
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={["/incidents"]}>
-        <CurrentRoleProvider initialRole={role}>
+        <CurrentRoleProvider initialRole={role} initialUserId={initialUserId}>
           <AppShell>
             <KanbanBoard />
           </AppShell>
@@ -753,5 +756,187 @@ describe("Story 4.3 — useKanbanBoardSocket mount/unmount cleanup", () => {
       }),
     ).not.toThrow();
     second.unmount();
+  });
+});
+
+describe("Story 4.12 — Technician-filtered Kanban (AC: Tech happy path)", () => {
+  // The endpoint has already filtered the envelope by
+  // `assignee_user_id === self`; the Kanban renders whatever it
+  // receives. We assert the client side: 2 cards render, the
+  // board-level Tech empty state does NOT appear (the envelope is
+  // populated), and the per-column grouping works as for other
+  // roles.
+  it("renders Tech A's 2 assigned incidents without the Tech empty state", async () => {
+    const TECH_A = "00000000-0000-4000-8000-00000000a003";
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(
+          JSON.stringify({
+            incidents: [
+              baseIncident({
+                id: "12121212-1212-4121-8121-121212121212",
+                state: "OPEN",
+                severity: "critical",
+                assignee_user_id: TECH_A,
+                opened_at: "2026-08-27T02:00:00.000Z",
+              }),
+              baseIncident({
+                id: "13131313-1313-4131-8131-131313131313",
+                state: "ACKNOWLEDGED",
+                severity: "warning",
+                assignee_user_id: TECH_A,
+                opened_at: "2026-08-27T01:00:00.000Z",
+              }),
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderBoard("Technician", TECH_A);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("kanban-card-12121212-1212-4121-8121-121212121212"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTestId("kanban-card-13131313-1313-4131-8131-131313131313"),
+    ).toBeInTheDocument();
+    // Tech-specific board-level empty state is absent (envelope is
+    // populated for Tech A).
+    expect(screen.queryByTestId("kanban-empty-state-technician")).toBeNull();
+    // Per-column grouping still works for the Tech viewer.
+    expect(screen.getByTestId("kanban-column-OPEN_CRITICAL-list")).toContainElement(
+      screen.getByTestId("kanban-card-12121212-1212-4121-8121-121212121212"),
+    );
+    expect(screen.getByTestId("kanban-column-ACKNOWLEDGED-list")).toContainElement(
+      screen.getByTestId("kanban-card-13131313-1313-4131-8131-131313131313"),
+    );
+  });
+});
+
+describe("Story 4.12 — AC: Tech empty state when the active list is empty", () => {
+  // ZERO_TECHNICIAN — Tech A has no assignments; the envelope is
+  // `{ incidents: [] }`. The Tech-specific empty state renders,
+  // and the per-column "No incidents" fallback is suppressed (the
+  // board-level message replaces the four-column grid for an
+  // empty Tech view).
+  it("renders the Tech empty state and suppresses the per-column 'No incidents' fallback", async () => {
+    const TECH_C = "00000000-0000-4000-8000-00000000a008";
+    installFetch(async (url) => {
+      if (url.endsWith("/api/incidents/active")) {
+        return new Response(JSON.stringify({ incidents: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderBoard("Technician", TECH_C);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("kanban-empty-state-technician")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("kanban-empty-state-technician")).toHaveTextContent(
+      "No incidents assigned to you.",
+    );
+    // Per-column "No incidents" fallback is NOT rendered — the
+    // board-level message replaces the four-column grid for an
+    // empty Tech view.
+    expect(screen.queryByTestId("kanban-column-OPEN_CRITICAL-empty")).toBeNull();
+    expect(screen.queryByTestId("kanban-column-OPEN_WARNING-empty")).toBeNull();
+    expect(screen.queryByTestId("kanban-column-ACKNOWLEDGED-empty")).toBeNull();
+    expect(screen.queryByTestId("kanban-column-RESOLVED-empty")).toBeNull();
+  });
+});
+
+describe("Story 4.12 — AC: socket helper drops rows for other Technicians", () => {
+  // SOCKET_FILTER_DROP / SOCKET_FILTER_KEEP — exercise the
+  // `applyStateChangeToCache` helper directly. The component-level
+  // socket listener is wired in the main board render; this pair
+  // of tests isolates the helper so the assertion pins the
+  // TECH_FILTER_DROP contract.
+  const TECH_A = "00000000-0000-4000-8000-00000000a003";
+  const TECH_B = "00000000-0000-4000-8000-00000000a007";
+
+  it("drops a row whose assignee_user_id does not match currentUserId (SOCKET_FILTER_DROP)", () => {
+    const populatedEnvelope = {
+      incidents: [
+        baseIncident({
+          id: "14141414-1414-4141-8141-141414141414",
+          state: "OPEN",
+          severity: "critical",
+          assignee_user_id: TECH_B,
+        }),
+      ],
+    };
+    const event: IncidentStateChangedEvent = {
+      incident_id: "14141414-1414-4141-8141-141414141414",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: TECH_B,
+    };
+    // Tech A receives an event for Tech B's incident — the helper
+    // MUST drop it (TECH_FILTER_DROP). The shape is the same as
+    // the `idx === -1` branch: `prev` is returned unchanged.
+    const result = applyStateChangeToCache(populatedEnvelope, event, TECH_A);
+    expect(result).toBe(populatedEnvelope);
+  });
+
+  it("keeps a row whose assignee_user_id matches currentUserId (SOCKET_FILTER_KEEP)", () => {
+    const populatedEnvelope = {
+      incidents: [
+        baseIncident({
+          id: "15151515-1515-4151-8151-151515151515",
+          state: "OPEN",
+          severity: "warning",
+          assignee_user_id: TECH_A,
+        }),
+      ],
+    };
+    const event: IncidentStateChangedEvent = {
+      incident_id: "15151515-1515-4151-8151-151515151515",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: TECH_A,
+    };
+    // Tech A receives an event for THEIR OWN incident — the helper
+    // mutates the cached row's state in place.
+    const result = applyStateChangeToCache(populatedEnvelope, event, TECH_A);
+    expect(result).not.toBe(populatedEnvelope);
+    expect(result?.incidents).toHaveLength(1);
+    expect(result?.incidents[0]?.state).toBe("ACKNOWLEDGED");
+  });
+
+  it("does NOT drop the row when currentUserId is undefined (4.3 contract preserved)", () => {
+    // The 4.3 hook signature was `applyStateChangeToCache(prev, event)`
+    // — no Tech filter. Admin / Operator / Viewer still go through
+    // the helper without a `currentUserId`, and the helper MUST
+    // NOT filter them. A regression that always applied the filter
+    // would break Admin's global view (every row could be filtered
+    // out when Admin's userId is undefined).
+    const populatedEnvelope = {
+      incidents: [
+        baseIncident({
+          id: "16161616-1616-4161-8161-161616161616",
+          state: "OPEN",
+          severity: "critical",
+          assignee_user_id: TECH_B,
+        }),
+      ],
+    };
+    const event: IncidentStateChangedEvent = {
+      incident_id: "16161616-1616-4161-8161-161616161616",
+      from_state: "OPEN",
+      to_state: "ACKNOWLEDGED",
+      changed_at: "2026-08-27T01:00:00.000Z",
+      actor_user_id: TECH_B,
+    };
+    const result = applyStateChangeToCache(populatedEnvelope, event);
+    expect(result?.incidents).toHaveLength(1);
+    expect(result?.incidents[0]?.state).toBe("ACKNOWLEDGED");
   });
 });

@@ -75,11 +75,22 @@ export const buildActiveIncidentsRouter = (deps: ActiveIncidentsDeps): Router =>
   router.get(
     "/api/incidents/active",
     authorize({ action: "read", resource: "Incident" }, deps.audit),
-    async (_req: AuthorizedRequest, res: Response) => {
+    async (req: AuthorizedRequest, res: Response) => {
+      // Story 4.12 — Technician viewer filter. The active list
+      // mirrors the 4.4 detail-page ownership rule: a Technician
+      // sees only incidents assigned to them. Admin/Operator/Viewer
+      // get the unfiltered active list. The filter is at the WHERE
+      // clause (server-side, indexed), not at the row projection.
+      // The where-builder pattern uses a conditional spread so the
+      // payload stays identical for non-Tech viewers.
+      const techFilter =
+        req.user?.role === "Technician" && req.user.id !== undefined
+          ? { assigneeUserId: req.user.id }
+          : {};
       let rows: IncidentRow[];
       try {
         rows = await deps.repo.incident.findMany({
-          where: { state: { not: RESOLVED } },
+          where: { state: { not: RESOLVED }, ...techFilter },
           orderBy: { openedAt: "desc" },
         });
       } catch (err) {

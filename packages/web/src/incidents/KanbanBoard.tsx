@@ -59,6 +59,7 @@ import { z } from "zod";
 
 import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
+import { useCurrentRole } from "../auth/CurrentRoleContext";
 
 import { KanbanCard } from "./KanbanCard";
 import { KanbanRbacDeniedError } from "./KanbanRbacDeniedError";
@@ -169,6 +170,28 @@ export interface KanbanBoardProps {
   readonly socketUrl?: string;
 }
 
+const fetchActiveIncidents = async (): Promise<ActiveIncidentsEnvelope> => {
+  const res = await apiFetch("/api/incidents/active");
+  if (res.status === HTTP_FORBIDDEN) {
+    // RBAC denial — surface the existing denied surface (per
+    // the 4.1 pattern). We throw a tagged error so the query's
+    // `isError` branch can distinguish RBAC from generic
+    // failures without a separate `error` type.
+    throw new KanbanRbacDeniedError();
+  }
+  if (!res.ok) {
+    throw new Error(`/api/incidents/active failed: ${res.status}`);
+  }
+  const parsed = ActiveIncidentsEnvelopeSchema.safeParse(await res.json());
+  if (!parsed.success) {
+    console.error("incidents/active wire-shape mismatch", parsed.error);
+    throw new Error("incidents/active wire-shape mismatch");
+  }
+  // The wire schema is structural; the runtime cast keeps the
+  // type narrow at the consumer.
+  return parsed.data as unknown as ActiveIncidentsEnvelope;
+};
+
 export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   const queryClient = useQueryClient();
   // Story 4.4 — clicking a card navigates to the read-only
@@ -176,33 +199,17 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   // 404 / 403 / 500 / loading / success; the Kanban stays focused
   // on the active-list projection.
   const navigate = useNavigate();
+  // Story 4.12 — the role drives the empty-state branch. The
+  // hook returns `null` for unauthenticated; the route gate handles
+  // that case before this component renders.
+  const role = useCurrentRole();
 
   // Mount the realtime subscription (per-page lifecycle).
   useKanbanBoardSocket(socketUrl);
 
   const query = useQuery<ActiveIncidentsEnvelope>({
     queryKey: [...KANBAN_ACTIVE_QUERY_KEY],
-    queryFn: async () => {
-      const res = await apiFetch("/api/incidents/active");
-      if (res.status === HTTP_FORBIDDEN) {
-        // RBAC denial — surface the existing denied surface (per
-        // the 4.1 pattern). We throw a tagged error so the query's
-        // `isError` branch can distinguish RBAC from generic
-        // failures without a separate `error` type.
-        throw new KanbanRbacDeniedError();
-      }
-      if (!res.ok) {
-        throw new Error(`/api/incidents/active failed: ${res.status}`);
-      }
-      const parsed = ActiveIncidentsEnvelopeSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("incidents/active wire-shape mismatch", parsed.error);
-        throw new Error("incidents/active wire-shape mismatch");
-      }
-      // The wire schema is structural; the runtime cast keeps the
-      // type narrow at the consumer.
-      return parsed.data as unknown as ActiveIncidentsEnvelope;
-    },
+    queryFn: fetchActiveIncidents,
   });
 
   // Project incidents into columns. `useMemo` because the
@@ -236,56 +243,88 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
     );
   }
 
+  const incidentCount = query.data?.incidents.length ?? 0;
+  const isTechEmpty = incidentCount === 0 && role === "Technician";
+
   return (
     <div
       data-testid="kanban-board-root"
       className="grid gap-4"
       style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
     >
-      {columns.map(({ column, incidents }) => (
-        <section
-          key={column}
-          data-testid={`kanban-column-${column}`}
-          aria-label={COLUMN_HEADLINE[column]}
-          className={`flex min-h-[40vh] flex-col gap-3 rounded-card border bg-neutral-surface p-3 ${COLUMN_ACCENT[column]}`}
+      {/*
+        Story 4.12 — Tech-specific empty state. UX-DR-14 mandates
+        "No incidents assigned to you." for a Technician whose
+        active list is empty. The branch is positioned above the
+        column loop (instead of inside the per-column empty-state
+        fallback) so the message replaces the four-column grid for
+        a Tech with zero assignments — a Tech should NOT see "No
+        incidents" repeated four times, that implies "the system is
+        empty" rather than "your queue is empty". Admin / Operator
+        / Viewer keep the per-column "No incidents" fallback
+        (4.3's surface).
+      */}
+      {isTechEmpty ? (
+        <p
+          data-testid="kanban-empty-state-technician"
+          className="col-span-4 rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
         >
-          <header className="flex items-center justify-between">
-            <h2 className="text-md font-semibold text-neutral-body">{COLUMN_HEADLINE[column]}</h2>
-            <span
-              data-testid={`kanban-column-${column}-count`}
-              className="text-xs text-neutral-secondary"
-            >
-              {incidents.length}
-            </span>
-          </header>
-          {incidents.length === 0 ? (
-            <p
-              data-testid={`kanban-column-${column}-empty`}
-              className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
-            >
-              No incidents
-            </p>
-          ) : (
-            <ul data-testid={`kanban-column-${column}-list`} className="flex flex-col gap-2">
-              {incidents.map((incident) => (
-                // The React key is the incident id (stable per row),
-                // NOT the column key — when a card flips columns,
-                // the React tree remaps the SAME node into a NEW
-                // `<li>` parent, which preserves component state.
-                <li key={incident.id} className="list-none">
-                  <KanbanCard
-                    incident={incident}
-                    onClick={(clickedId) => navigate(`/incidents/${clickedId}`)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      ))}
+          No incidents assigned to you.
+        </p>
+      ) : (
+        <KanbanColumnGrid columns={columns} onCardClick={(id) => navigate(`/incidents/${id}`)} />
+      )}
     </div>
   );
 };
+
+interface KanbanColumnGridProps {
+  readonly columns: readonly KanbanColumnView[];
+  readonly onCardClick: (id: string) => void;
+}
+
+const KanbanColumnGrid = ({ columns, onCardClick }: KanbanColumnGridProps) => (
+  <>
+    {columns.map(({ column, incidents }) => (
+      <section
+        key={column}
+        data-testid={`kanban-column-${column}`}
+        aria-label={COLUMN_HEADLINE[column]}
+        className={`flex min-h-[40vh] flex-col gap-3 rounded-card border bg-neutral-surface p-3 ${COLUMN_ACCENT[column]}`}
+      >
+        <header className="flex items-center justify-between">
+          <h2 className="text-md font-semibold text-neutral-body">{COLUMN_HEADLINE[column]}</h2>
+          <span
+            data-testid={`kanban-column-${column}-count`}
+            className="text-xs text-neutral-secondary"
+          >
+            {incidents.length}
+          </span>
+        </header>
+        {incidents.length === 0 ? (
+          <p
+            data-testid={`kanban-column-${column}-empty`}
+            className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
+          >
+            No incidents
+          </p>
+        ) : (
+          <ul data-testid={`kanban-column-${column}-list`} className="flex flex-col gap-2">
+            {incidents.map((incident) => (
+              // The React key is the incident id (stable per row),
+              // NOT the column key — when a card flips columns,
+              // the React tree remaps the SAME node into a NEW
+              // `<li>` parent, which preserves component state.
+              <li key={incident.id} className="list-none">
+                <KanbanCard incident={incident} onClick={onCardClick} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    ))}
+  </>
+);
 
 /**
  * Re-export `KanbanRbacDeniedError` from its dedicated module

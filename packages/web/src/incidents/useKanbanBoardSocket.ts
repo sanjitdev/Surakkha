@@ -38,6 +38,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { apiFetch } from "../api/apiClient";
+import { useCurrentUserId } from "../auth/CurrentRoleContext";
 import { connectSocket } from "../realtime/socketClient";
 
 /**
@@ -59,27 +60,49 @@ const KANBAN_SOCKET_URL = "/dashboard";
  * so the test rig can assert the cache transition without spinning
  * up a real socket.
  *
- * Returns:
- *   - `"mutated"` if the row's state was updated in place.
- *   - `"removed"` if the row transitioned to RESOLVED and was
- *     dropped from the cache.
- *   - `"dropped"` if the incident_id is not on the board (no-op).
+ * Returns the updated envelope, or the unchanged `prev` envelope on
+ * any silent-drop path:
+ *   - `prev === undefined` — the active list hasn't loaded yet.
+ *   - `incident_id` not in the cache — the row was already removed
+ *     (RESOLVED, or a duplicate event).
+ *   - `RESOLVED_DROP` — the row transitioned to RESOLVED; we drop
+ *     it (spec edge case).
+ *   - `TECH_FILTER_DROP` (Story 4.12) — for Technician viewers,
+ *     `assignee_user_id !== currentUserId`. The row belongs to
+ *     another Tech, so the cache mutator drops the event silently
+ *     (same shape as the `incident_id not found` branch above).
+ *
+ * `currentUserId` is OPTIONAL: when `undefined`, the helper falls
+ * back to the original 4.3 contract (no Tech filter). The hook reads
+ * `useCurrentUserId()` and threads the value through; unit tests
+ * that don't care about the Tech filter pass `undefined`.
  */
 export const applyStateChangeToCache = (
   prev: ActiveCacheEnvelope | undefined,
   event: IncidentStateChangedEvent,
+  currentUserId?: string,
 ): ActiveCacheEnvelope | undefined => {
   if (prev === undefined) return prev;
   const idx = prev.incidents.findIndex((i) => i.id === event.incident_id);
   if (idx === -1) return prev;
+  // RESOLVED_DROP — row transitions off the active board.
   if (event.to_state === "RESOLVED") {
     return {
       incidents: prev.incidents.filter((_, i) => i !== idx),
     };
   }
-  const nextIncidents = prev.incidents.slice();
-  const current = nextIncidents[idx];
+  // Story 4.12 — TECH_FILTER_DROP. The hook passes `currentUserId`
+  // when the viewer is a Technician; the helper compares the row's
+  // `assignee_user_id` against it and drops the event silently when
+  // they differ. This mirrors the 4.3 `RESOLVED_DROP` shape: the
+  // helper returns `prev` unchanged, the React tree does not
+  // re-derive, and the row stays absent from the cache.
+  const current = prev.incidents[idx];
   if (current === undefined) return prev;
+  if (currentUserId !== undefined && current.assignee_user_id !== currentUserId) {
+    return prev;
+  }
+  const nextIncidents = prev.incidents.slice();
   nextIncidents[idx] = {
     ...current,
     // The wire row's `state` is the only field that changes for an
@@ -100,16 +123,24 @@ export const applyStateChangeToCache = (
  * without call-site configuration. Tests pass a stub `url` (the
  * socket itself is mocked at the network layer via the
  * `connectSocket` vi.mock pattern used in `Dashboard.spec.tsx`).
+ *
+ * Story 4.12 — the hook reads `useCurrentUserId()` and threads it
+ * into every cache mutation, so the helper's TECH_FILTER_DROP
+ * guard can drop events for rows assigned to other Technicians.
+ * The provider is mounted above `<KanbanBoard>` in the AppShell
+ * tree (see `main.tsx`), so the hook's `useContext` call resolves
+ * before the socket emits.
  */
 export const useKanbanBoardSocket = (url: string = KANBAN_SOCKET_URL): void => {
   const queryClient = useQueryClient();
+  const currentUserId = useCurrentUserId();
 
   useEffect(() => {
     const socket = connectSocket({ url }, { onSessionLost: () => undefined });
 
     const handleStateChange = (payload: IncidentStateChangedEvent): void => {
       queryClient.setQueryData<ActiveCacheEnvelope>([...KANBAN_ACTIVE_QUERY_KEY], (prev) =>
-        applyStateChangeToCache(prev, payload),
+        applyStateChangeToCache(prev, payload, currentUserId ?? undefined),
       );
     };
 
@@ -117,7 +148,7 @@ export const useKanbanBoardSocket = (url: string = KANBAN_SOCKET_URL): void => {
     return () => {
       socket.off("incident:state_changed", handleStateChange);
     };
-  }, [queryClient, url]);
+  }, [queryClient, url, currentUserId]);
 };
 
 /**

@@ -90,7 +90,18 @@ export interface IncidentStateRepository {
      * than thread a returned-shape union through this method.
      */
     findMany(args: {
-      readonly where?: { readonly state?: { readonly not: IncidentState } };
+      readonly where?: {
+        readonly state?: { readonly not: IncidentState };
+        /**
+         * Story 4.12 — Technician viewer filter. The active list
+         * endpoint narrows by `assignee_user_id === req.user.id`
+         * for Technician viewers only; Admin/Operator/Viewer
+         * continue to see every non-RESOLVED row. The column is
+         * indexed (4.2's migration), so the predicate adds no
+         * measurable overhead.
+         */
+        readonly assigneeUserId?: string;
+      };
       readonly orderBy?: { readonly openedAt: "desc" };
       readonly take?: number;
       readonly select?: never;
