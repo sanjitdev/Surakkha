@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Alerts</title>
+  <link rel="stylesheet" href="_styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div class="brand-name">Surakkha</div></div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Operations</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>Sensors</a>
+        <a class="nav-item" aria-current="page" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>Alerts<span class="badge">7</span></a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Reports</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg></span>Reports</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Admin</div>
+        <a class="nav-item disabled" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg></span>Audit log</a>
+        <a class="nav-item disabled" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16v16H4z"/><path d="M4 9h16"/></svg></span>Notifications</a>
+        <a class="nav-item disabled" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Simulator</a>
+        <a class="nav-item disabled" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span>Thresholds</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="crumbs"><a href="#">Operations</a><span class="sep">/</span><span class="cur">Alerts</span></div>
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search alerts by device or school…"></div>
+        <div class="bell" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="ct">3</span>
+        </div>
+        <span class="role-pill r-operator"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Operator</span>
+        <div class="user"><div class="avatar">RH</div>Rahim Hossain</div>
+      </header>
+
+      <div class="body">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Alerts</h1>
+            <div class="page-sub">7 open · 3 critical · 18 acknowledged today · 142 cleared today</div>
+          </div>
+          <div class="filters">
+            <button class="btn-ghost">All schools ▾</button>
+            <button class="btn-ghost">All devices ▾</button>
+            <button class="btn-ghost">Last 24h ▾</button>
+            <button class="btn-primary">Acknowledge selected</button>
+          </div>
+        </div>
+
+        <div class="filters mb-16">
+          <span class="filter-chip active">All <span class="ct">142</span></span>
+          <span class="filter-chip"><span class="pill p-critical">Critical</span><span class="ct">3</span></span>
+          <span class="filter-chip"><span class="pill p-warning">Warning</span><span class="ct">4</span></span>
+          <span class="filter-chip"><span class="pill p-healthy">Cleared</span><span class="ct">128</span></span>
+          <span class="filter-chip"><span class="pill p-offline">Offline</span><span class="ct">7</span></span>
+        </div>
+
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:32px;"><input type="checkbox"></th>
+              <th>Severity</th>
+              <th>Alert</th>
+              <th>Device / School</th>
+              <th>Opened</th>
+              <th>Acknowledged</th>
+              <th>Cleared</th>
+              <th>Incident</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row-crit">
+              <td><input type="checkbox" checked></td>
+              <td><span class="pill p-critical"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>Critical</span></td>
+              <td><strong>TDS 312 ppm</strong> &gt; 300 ppm threshold<div class="ts mono">rule #R-014 · instant</div></td>
+              <td><strong>DHAKA-SCHOOL-018</strong><div class="ts mono">dev: a4f8-2c91-…</div></td>
+              <td class="ts">2 min ago</td>
+              <td class="ts">—</td>
+              <td class="ts">—</td>
+              <td><a href="#" class="mono">#INC-042</a></td>
+              <td><button class="btn-ghost">Acknowledge</button></td>
+            </tr>
+            <tr class="row-crit">
+              <td><input type="checkbox" checked></td>
+              <td><span class="pill p-critical"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>Critical</span></td>
+              <td><strong>Chlorine 0.0 ppm</strong> &lt; 0.2 ppm threshold<div class="ts mono">rule #R-021 · instant</div></td>
+              <td><strong>CHATTOGRAM-SCHOOL-007</strong><div class="ts mono">dev: b7e1-4d3a-…</div></td>
+              <td class="ts">18 min ago</td>
+              <td class="ts">14 min ago · Karim</td>
+              <td class="ts">—</td>
+              <td><a href="#" class="mono">#INC-041</a></td>
+              <td><button class="btn-ghost">View</button></td>
+            </tr>
+            <tr class="row-warn">
+              <td><input type="checkbox"></td>
+              <td><span class="pill p-warning"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>Warning</span></td>
+              <td><strong>Turbidity 7.8 NTU</strong> &gt; 5 NTU threshold<div class="ts mono">rule #R-008 · instant</div></td>
+              <td><strong>SYLHET-SCHOOL-003</strong><div class="ts mono">dev: c2a9-1f4b-…</div></td>
+              <td class="ts">41 min ago</td>
+              <td class="ts">—</td>
+              <td class="ts">—</td>
+              <td><a href="#" class="mono">#INC-040</a></td>
+              <td><button class="btn-ghost">Acknowledge</button></td>
+            </tr>
+            <tr class="row-warn">
+              <td><input type="checkbox"></td>
+              <td><span class="pill p-warning"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>Warning</span></td>
+              <td><strong>pH drift 1.8/min</strong> &gt; 1.5/min threshold<div class="ts mono">rule #R-031 · rate</div></td>
+              <td><strong>KHULNA-SCHOOL-011</strong><div class="ts mono">dev: d5c8-7e2f-…</div></td>
+              <td class="ts">1 hr ago</td>
+              <td class="ts">52 min ago · Rahim</td>
+              <td class="ts">—</td>
+              <td><a href="#" class="mono">#INC-039</a></td>
+              <td><button class="btn-ghost">View</button></td>
+            </tr>
+            <tr>
+              <td></td>
+              <td><span class="pill p-offline">Offline</span></td>
+              <td><strong>No reading for 2m 14s</strong><div class="ts mono">rule #R-040 · absence</div></td>
+              <td><strong>RAJSHAHI-SCHOOL-022</strong><div class="ts mono">dev: e9b3-6a1d-…</div></td>
+              <td class="ts">2 hr ago</td>
+              <td class="ts">—</td>
+              <td class="ts">—</td>
+              <td class="ts">—</td>
+              <td><button class="btn-ghost">Investigate</button></td>
+            </tr>
+            <tr>
+              <td></td>
+              <td><span class="pill p-healthy">Cleared</span></td>
+              <td class="muted"><strong>TDS dropped below threshold</strong><div class="ts mono">rule #R-014 · instant</div></td>
+              <td class="muted"><strong>DHAKA-SCHOOL-018</strong><div class="ts mono">dev: a4f8-2c91-…</div></td>
+              <td class="ts muted">3 hr ago</td>
+              <td class="ts muted">2 hr ago · Rahim</td>
+              <td class="ts muted">1 hr ago</td>
+              <td><a href="#" class="mono">#INC-038</a></td>
+              <td><button class="btn-ghost">View</button></td>
+            </tr>
+            <tr class="empty-row"><td colspan="9">3 of 142 alerts shown · scroll or paginate for older history</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div>Showing 1–7 of 142 alerts</div>
+          <div class="pages">
+            <span class="page">‹</span>
+            <span class="page active">1</span>
+            <span class="page">2</span>
+            <span class="page">3</span>
+            <span class="page">…</span>
+            <span class="page">21</span>
+            <span class="page">›</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

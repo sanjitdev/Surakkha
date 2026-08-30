@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Schools</title>
+  <link rel="stylesheet" href="_styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div class="brand-name">Surakkha</div></div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Operations</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>Sensors</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>Alerts<span class="badge">7</span></a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Reports</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg></span>Reports</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Admin</div>
+        <a class="nav-item" aria-current="page" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg></span>Schools</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16v16H4z"/><path d="M4 9h16"/></svg></span>Notifications</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Simulator</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span>Thresholds</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="crumbs"><a href="#">Admin</a><span class="sep">/</span><span class="cur">Schools</span></div>
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search schools by name, code, or district…"></div>
+        <div class="bell" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="ct">3</span>
+        </div>
+        <span class="role-pill r-admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg>Admin</span>
+        <div class="user"><div class="avatar">SA</div>Sabrina Akter</div>
+      </header>
+
+      <div class="body">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Schools</h1>
+            <div class="page-sub">248 enrolled · 6 onboarding · 8 pending review · 5 divisions · median onboarding time 2m 14s</div>
+          </div>
+          <div class="filters">
+            <button class="btn-ghost">All divisions ▾</button>
+            <button class="btn-ghost">All districts ▾</button>
+            <button class="btn-ghost">Any status ▾</button>
+            <button class="btn-primary">Onboard school</button>
+          </div>
+        </div>
+
+        <div class="kpi-band">
+          <div class="kpi"><div class="lbl">Enrolled</div><div class="val num" style="color:var(--sev-healthy)">248</div><div class="delta up">↑ 12 this month</div></div>
+          <div class="kpi"><div class="lbl">Onboarding</div><div class="val num">6</div><div class="delta">sensor install scheduled</div></div>
+          <div class="kpi"><div class="lbl">Pending review</div><div class="val num" style="color:var(--sev-warning)">8</div><div class="delta">awaiting district approval</div></div>
+          <div class="kpi"><div class="lbl">Compliance (7d)</div><div class="val num">97.2%</div><div class="delta up">↑ 1.4 pts</div></div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-h">
+            <div>
+              <div class="card-title">Onboard school — 4-step wizard</div>
+              <div class="card-sub">Target: ≤5 min from invite to first reading · NFR-9</div>
+            </div>
+            <div class="filters">
+              <span class="pill p-info">Step 2 of 4</span>
+              <span class="pill p-neutral">~1m 02s elapsed</span>
+            </div>
+          </div>
+          <!-- 4-step progress -->
+          <div style="display:flex;gap:8px;margin-bottom:16px;">
+            <span class="pill p-healthy">1 · Identity</span>
+            <span class="pill p-info">2 · Location</span>
+            <span class="pill p-neutral">3 · Sensor kit</span>
+            <span class="pill p-neutral">4 · POC</span>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>School code</label>
+              <input value="DHAKA-SCHOOL-019">
+              <span class="hint">auto-generated · unique across all divisions</span>
+            </div>
+            <div class="form-row">
+              <label>School name (Bangla)</label>
+              <input value="ঢাকা উচ্চ বিদ্যালয়">
+            </div>
+            <div class="form-row">
+              <label>Division</label>
+              <select><option>DHAKA</option><option>CHATTOGRAM</option><option>KHULNA</option><option>RAJSHAHI</option><option>SYLHET</option></select>
+            </div>
+            <div class="form-row">
+              <label>District</label>
+              <select><option>Dhaka</option><option>Gazipur</option><option>Narayanganj</option></select>
+            </div>
+            <div class="form-row full">
+              <label>Address</label>
+              <textarea rows="2">House 12, Road 7, Block C, Banani, Dhaka 1213</textarea>
+            </div>
+            <div class="form-row">
+              <label>Latitude</label>
+              <input value="23.7937">
+            </div>
+            <div class="form-row">
+              <label>Longitude</label>
+              <input value="90.4066">
+            </div>
+            <div class="form-row full" style="display:flex;flex-direction:row;gap:8px;align-items:center;">
+              <button class="btn-ghost">‹ Back</button>
+              <button class="btn-primary">Continue ›</button>
+              <span class="hint" style="margin-left:auto">Next: assign sensor kit (2 of 4)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="filters mb-16">
+          <span class="filter-chip active">All <span class="ct">248</span></span>
+          <span class="filter-chip"><span class="pill p-healthy">Enrolled</span><span class="ct">248</span></span>
+          <span class="filter-chip"><span class="pill p-info">Onboarding</span><span class="ct">6</span></span>
+          <span class="filter-chip"><span class="pill p-warning">Pending review</span><span class="ct">8</span></span>
+          <span class="filter-chip"><span class="pill p-offline">Offline</span><span class="ct">2</span></span>
+        </div>
+
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>School</th>
+              <th>Division / District</th>
+              <th>Sensors</th>
+              <th>Last reading</th>
+              <th>Compliance (7d)</th>
+              <th>Status</th>
+              <th>Onboarded</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row-crit">
+              <td><strong>DHAKA-SCHOOL-018</strong><div class="ts">Dhaka High School</div></td>
+              <td>Dhaka<div class="ts">Banani</div></td>
+              <td>3 channels<div class="ts mono">a4f8-2c91-…</div></td>
+              <td><strong class="num">312</strong> ppm<div class="ts mono">14s ago</div></td>
+              <td><span class="num">94.1%</span></td>
+              <td><span class="pill p-critical">1 open alert</span></td>
+              <td class="ts">2026-01-12</td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr class="row-warn">
+              <td><strong>CHATTOGRAM-SCHOOL-007</strong><div class="ts">Chattogram Public School</div></td>
+              <td>Chattogram<div class="ts">Patiya</div></td>
+              <td>1 channel<div class="ts mono">b7e1-4d3a-…</div></td>
+              <td><strong class="num">0.0</strong> ppm<div class="ts mono">18m ago</div></td>
+              <td><span class="num">88.2%</span></td>
+              <td><span class="pill p-critical">1 critical</span></td>
+              <td class="ts">2026-02-04</td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr class="row-warn">
+              <td><strong>SYLHET-SCHOOL-003</strong><div class="ts">Sylhet Girls' High School</div></td>
+              <td>Sylhet<div class="ts">Companiganj</div></td>
+              <td>1 channel<div class="ts mono">c2a9-1f4b-…</div></td>
+              <td><strong class="num">7.8</strong> NTU<div class="ts mono">41m ago</div></td>
+              <td><span class="num">91.4%</span></td>
+              <td><span class="pill p-warning">1 warning</span></td>
+              <td class="ts">2026-03-22</td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>KHULNA-SCHOOL-011</strong><div class="ts">Khulna Zilla School</div></td>
+              <td>Khulna<div class="ts">Sonadanga</div></td>
+              <td>1 channel<div class="ts mono">d5c8-7e2f-…</div></td>
+              <td><strong class="num">6.4</strong> pH<div class="ts mono">52m ago</div></td>
+              <td><span class="num">95.0%</span></td>
+              <td><span class="pill p-warning">1 warning</span></td>
+              <td class="ts">2026-04-18</td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>RAJSHAHI-SCHOOL-022</strong><div class="ts">Rajshahi Collegiate School</div></td>
+              <td>Rajshahi<div class="ts">Boalia</div></td>
+              <td>2 channels<div class="ts mono">e9b3-6a1d-…</div></td>
+              <td class="ts">—<div class="ts mono">last 2h</div></td>
+              <td><span class="num">78.6%</span></td>
+              <td><span class="pill p-offline">Offline</span></td>
+              <td class="ts">2026-05-03</td>
+              <td><button class="btn-ghost">Dispatch</button></td>
+            </tr>
+            <tr>
+              <td><strong>BARISHAL-SCHOOL-004</strong><div class="ts">Barishal Cadet College</div></td>
+              <td>Barishal<div class="ts">Sadar</div></td>
+              <td>—<div class="ts mono">awaiting install</div></td>
+              <td class="ts">—</td>
+              <td><span class="num">—</span></td>
+              <td><span class="pill p-info">Onboarding</span></td>
+              <td class="ts">2026-08-28</td>
+              <td><button class="btn-ghost">Resume</button></td>
+            </tr>
+            <tr>
+              <td><strong>RANGPUR-SCHOOL-008</strong><div class="ts">Rangpur Govt. High School</div></td>
+              <td>Rangpur<div class="ts">Sadar</div></td>
+              <td>—<div class="ts mono">—</div></td>
+              <td class="ts">—</td>
+              <td><span class="num">—</span></td>
+              <td><span class="pill p-warning">Pending review</span></td>
+              <td class="ts">2026-08-29</td>
+              <td><button class="btn-ghost">Review</button></td>
+            </tr>
+            <tr class="empty-row"><td colspan="8">7 of 248 schools shown · use filters above to narrow</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div>Showing 1–7 of 248 schools</div>
+          <div class="pages">
+            <span class="page">‹</span>
+            <span class="page active">1</span>
+            <span class="page">2</span>
+            <span class="page">3</span>
+            <span class="page">…</span>
+            <span class="page">36</span>
+            <span class="page">›</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

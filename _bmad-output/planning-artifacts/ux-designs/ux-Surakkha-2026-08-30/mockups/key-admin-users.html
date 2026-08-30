@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Users</title>
+  <link rel="stylesheet" href="_styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div class="brand-name">Surakkha</div></div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Operations</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>Sensors</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>Alerts<span class="badge">7</span></a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Reports</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg></span>Reports</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Admin</div>
+          <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg></span>Audit log</a>
+          <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16v16H4z"/><path d="M4 9h16"/></svg></span>Notifications</a>
+          <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Simulator</a>
+          <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span>Thresholds</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="crumbs"><a href="#">Admin</a><span class="sep">/</span><span class="cur">Users &amp; roles</span></div>
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search users by name, email, or role…"></div>
+        <div class="bell" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="ct">3</span>
+        </div>
+        <span class="role-pill r-admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg>Admin</span>
+        <div class="user"><div class="avatar">SA</div>Sabrina Akter</div>
+      </header>
+
+      <div class="body">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Users &amp; roles</h1>
+            <div class="page-sub">142 users · 4 admins · 12 operators · 38 technicians · 88 viewers · 7 pending invites</div>
+          </div>
+          <div class="filters">
+            <button class="btn-ghost">All roles ▾</button>
+            <button class="btn-ghost">All divisions ▾</button>
+            <button class="btn-ghost">Any status ▾</button>
+            <button class="btn-primary">Invite user</button>
+          </div>
+        </div>
+
+        <div class="kpi-band">
+          <div class="kpi"><div class="lbl">Active users</div><div class="val num">135</div><div class="delta up">↑ 6 this month</div></div>
+          <div class="kpi"><div class="lbl">Pending invites</div><div class="val num" style="color:var(--sev-warning)">7</div><div class="delta">3 expire in &lt;48h</div></div>
+          <div class="kpi"><div class="lbl">Disabled</div><div class="val num">5</div><div class="delta">offboarded last 30d</div></div>
+          <div class="kpi"><div class="lbl">MFA enrolled</div><div class="val num" style="color:var(--sev-healthy)">128/135</div><div class="delta">94.8%</div></div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-h">
+            <div>
+              <div class="card-title">Karim Rahman — edit user</div>
+              <div class="card-sub">usr_kr_042 · last login 12m ago · 4 active sessions</div>
+            </div>
+            <div class="filters">
+              <span class="pill p-healthy">Active</span>
+              <span class="pill p-info">MFA</span>
+              <button class="btn-ghost">Audit log</button>
+              <button class="btn-danger">Disable</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>Full name</label>
+              <input value="Karim Rahman">
+            </div>
+            <div class="form-row">
+              <label>Email</label>
+              <input value="karim.rahman@surakkha.bd">
+            </div>
+            <div class="form-row">
+              <label>Phone (SMS)</label>
+              <input value="+880 1811 234 567">
+            </div>
+            <div class="form-row">
+              <label>Division</label>
+              <select><option>CHATTOGRAM</option><option>DHAKA</option><option>KHULNA</option><option>RAJSHAHI</option><option>SYLHET</option></select>
+            </div>
+            <div class="form-row full">
+              <label>Roles &amp; scope</label>
+              <div class="card" style="background:var(--page);padding:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                <span class="pill p-warning">Technician</span>
+                <span class="pill p-healthy">Viewer</span>
+                <button class="btn-ghost">+ Add role</button>
+              </div>
+              <div class="hint">Scope: CHATTOGRAM division · 42 schools · assignable incidents: yes</div>
+            </div>
+            <div class="form-row full" style="display:flex;flex-direction:row;gap:8px;align-items:center;">
+              <button class="btn-primary">Save changes</button>
+              <button class="btn-ghost">Cancel</button>
+              <span class="hint" style="margin-left:auto">Changes are audited (audit:user.update)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="filters mb-16">
+          <span class="filter-chip active">All <span class="ct">142</span></span>
+          <span class="filter-chip"><span class="pill p-critical">Admin</span><span class="ct">4</span></span>
+          <span class="filter-chip"><span class="pill p-info">Operator</span><span class="ct">12</span></span>
+          <span class="filter-chip"><span class="pill p-warning">Technician</span><span class="ct">38</span></span>
+          <span class="filter-chip"><span class="pill p-healthy">Viewer</span><span class="ct">88</span></span>
+          <span class="filter-chip"><span class="pill p-neutral">Pending</span><span class="ct">7</span></span>
+        </div>
+
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Roles</th>
+              <th>Division</th>
+              <th>Last login</th>
+              <th>Sessions</th>
+              <th>MFA</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Sabrina Akter</strong><div class="ts mono">usr_sa_001 · sabrina@surakkha.bd</div></td>
+              <td><span class="pill p-critical">Admin</span></td>
+              <td>All</td>
+              <td class="ts">2m ago · 103.59.18.42</td>
+              <td>3 active</td>
+              <td><span class="pill p-healthy">Enrolled</span></td>
+              <td><span class="pill p-healthy">Active</span></td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>Rahim Hossain</strong><div class="ts mono">usr_rh_007 · rahim@surakkha.bd</div></td>
+              <td><span class="pill p-info">Operator</span> <span class="pill p-warning">Technician</span></td>
+              <td>Dhaka</td>
+              <td class="ts">12m ago · 103.59.18.99</td>
+              <td>2 active</td>
+              <td><span class="pill p-healthy">Enrolled</span></td>
+              <td><span class="pill p-healthy">Active</span></td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>Karim Rahman</strong><div class="ts mono">usr_kr_042 · karim@surakkha.bd</div></td>
+              <td><span class="pill p-warning">Technician</span> <span class="pill p-healthy">Viewer</span></td>
+              <td>Chattogram</td>
+              <td class="ts">18m ago · 180.211.4.12</td>
+              <td>4 active</td>
+              <td><span class="pill p-healthy">Enrolled</span></td>
+              <td><span class="pill p-healthy">Active</span></td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>Mahmuda Khan</strong><div class="ts mono">usr_mk_018 · mahmuda@surakkha.bd</div></td>
+              <td><span class="pill p-info">Operator</span></td>
+              <td>Sylhet</td>
+              <td class="ts">1h ago · 180.211.4.31</td>
+              <td>1 active</td>
+              <td><span class="pill p-healthy">Enrolled</span></td>
+              <td><span class="pill p-healthy">Active</span></td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr>
+              <td><strong>Jasim Uddin</strong><div class="ts mono">usr_ju_071 · jasim@surakkha.bd</div></td>
+              <td><span class="pill p-warning">Technician</span></td>
+              <td>Khulna</td>
+              <td class="ts">3h ago · 103.59.18.14</td>
+              <td>1 active</td>
+              <td><span class="pill p-warning">Pending</span></td>
+              <td><span class="pill p-warning">Invite sent</span></td>
+              <td><button class="btn-ghost">Resend</button></td>
+            </tr>
+            <tr>
+              <td><strong>Rina Akter</strong><div class="ts mono">usr_ra_052 · rina@surakkha.bd</div></td>
+              <td><span class="pill p-healthy">Viewer</span></td>
+              <td>Rajshahi</td>
+              <td class="ts">Yesterday</td>
+              <td>0 active</td>
+              <td><span class="pill p-healthy">Enrolled</span></td>
+              <td><span class="pill p-neutral">Disabled</span></td>
+              <td><button class="btn-ghost">Manage</button></td>
+            </tr>
+            <tr class="empty-row"><td colspan="8">6 of 142 users shown · use filters above to narrow</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div>Showing 1–6 of 142 users</div>
+          <div class="pages">
+            <span class="page">‹</span>
+            <span class="page active">1</span>
+            <span class="page">2</span>
+            <span class="page">3</span>
+            <span class="page">…</span>
+            <span class="page">24</span>
+            <span class="page">›</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

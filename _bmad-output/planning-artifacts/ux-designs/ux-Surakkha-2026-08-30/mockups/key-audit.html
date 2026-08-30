@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Surakkha — Audit log</title>
+  <link rel="stylesheet" href="_styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">S</div><div class="brand-name">Surakkha</div></div>
+      <div class="nav-group">
+        <div class="nav-label">Overview</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>Live map</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Operations</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>Sensors</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>Alerts<span class="badge">7</span></a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20"/></svg></span>Incidents</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Reports</div>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg></span>Reports</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-label">Admin</div>
+        <a class="nav-item" aria-current="page" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg></span>Audit log</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M4 4h16v16H4z"/><path d="M4 9h16"/></svg></span>Notifications</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>Simulator</a>
+        <a class="nav-item" href="#"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span>Thresholds</a>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <header class="topbar">
+        <div class="crumbs"><a href="#">Admin</a><span class="sep">/</span><span class="cur">Audit log</span></div>
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search by actor, action, or resource…"></div>
+        <div class="bell" title="Notifications">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="ct">3</span>
+        </div>
+        <span class="role-pill r-admin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M12 2 4 6v6c0 5 4 9 8 10 4-1 8-5 8-10V6l-8-4z"/></svg>Admin</span>
+        <div class="user"><div class="avatar">SA</div>Sabrina Akter</div>
+      </header>
+
+      <div class="body">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Audit log</h1>
+            <div class="page-sub">1,284 events today · 47 actors · 12 action types · append-only · 365-day retention</div>
+          </div>
+          <div class="filters">
+            <button class="btn-ghost">Last 24h ▾</button>
+            <button class="btn-ghost">All actors ▾</button>
+            <button class="btn-ghost">All actions ▾</button>
+            <button class="btn-primary">Export CSV</button>
+          </div>
+        </div>
+
+        <div class="kpi-band">
+          <div class="kpi"><div class="lbl">Events today</div><div class="val num">1,284</div><div class="delta up">↑ 6.2%</div></div>
+          <div class="kpi"><div class="lbl">Unique actors</div><div class="val num">47</div><div class="delta">2 admins · 8 operators · 37 technicians</div></div>
+          <div class="kpi"><div class="lbl">Sensitive actions</div><div class="val num" style="color:var(--sev-warning)">23</div><div class="delta">RBAC changes, role grants, deletes</div></div>
+          <div class="kpi"><div class="lbl">Failed auth</div><div class="val num" style="color:var(--sev-critical)">11</div><div class="delta down">3 IPs auto-banned</div></div>
+        </div>
+
+        <div class="filters mb-16">
+          <span class="filter-chip active">All <span class="ct">1284</span></span>
+          <span class="filter-chip"><span class="pill p-info">Auth</span><span class="ct">412</span></span>
+          <span class="filter-chip"><span class="pill p-warning">RBAC change</span><span class="ct">8</span></span>
+          <span class="filter-chip"><span class="pill p-warning">Config edit</span><span class="ct">15</span></span>
+          <span class="filter-chip"><span class="pill p-critical">Delete</span><span class="ct">3</span></span>
+          <span class="filter-chip"><span class="pill p-neutral">Read</span><span class="ct">846</span></span>
+        </div>
+
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:140px;">Timestamp</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Resource</th>
+              <th>Outcome</th>
+              <th>IP / Location</th>
+              <th>Request ID</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row-warn">
+              <td class="mono">2026-08-30<br>14:22:08 UTC</td>
+              <td><strong>Sabrina Akter</strong><div class="ts mono">usr_sa_001 · admin</div></td>
+              <td><span class="pill p-warning">RBAC change</span><div class="ts">granted role: technician</div></td>
+              <td>usr_kr_042<div class="ts mono">Karim Rahman</div></td>
+              <td><span class="pill p-healthy">Success</span></td>
+              <td class="mono">103.59.18.42<br>Dhaka, BD</td>
+              <td class="mono">req_8f2a1c</td>
+              <td><button class="btn-ghost">Diff</button></td>
+            </tr>
+            <tr class="row-crit">
+              <td class="mono">2026-08-30<br>14:18:55 UTC</td>
+              <td><strong>system</strong><div class="ts mono">internal · scheduler</div></td>
+              <td><span class="pill p-critical">Delete</span><div class="ts">purge: old readings</div></td>
+              <td>Reading<div class="ts mono">12,840 rows · &gt;90d</div></td>
+              <td><span class="pill p-healthy">Success</span></td>
+              <td class="mono">—<br>internal</td>
+              <td class="mono">req_8e9d3b</td>
+              <td><button class="btn-ghost">Details</button></td>
+            </tr>
+            <tr>
+              <td class="mono">2026-08-30<br>14:14:02 UTC</td>
+              <td><strong>Rahim Hossain</strong><div class="ts mono">usr_rh_007 · operator</div></td>
+              <td><span class="pill p-info">Acknowledge</span><div class="ts">alert: TDS spike</div></td>
+              <td>alrt_a4f8-2c91<div class="ts mono">DHAKA-SCHOOL-018</div></td>
+              <td><span class="pill p-healthy">Success</span></td>
+              <td class="mono">103.59.18.99<br>Dhaka, BD</td>
+              <td class="mono">req_8d7a44</td>
+              <td><button class="btn-ghost">Replay</button></td>
+            </tr>
+            <tr>
+              <td class="mono">2026-08-30<br>14:11:31 UTC</td>
+              <td><strong>Karim Rahman</strong><div class="ts mono">usr_kr_042 · technician</div></td>
+              <td><span class="pill p-info">Submit result</span><div class="ts">incident: chlorine 0.0</div></td>
+              <td>inc_INC-041<div class="ts mono">CHATTOGRAM-SCHOOL-007</div></td>
+              <td><span class="pill p-healthy">Success</span></td>
+              <td class="mono">180.211.4.12<br>Chattogram, BD</td>
+              <td class="mono">req_8c6b02</td>
+              <td><button class="btn-ghost">Replay</button></td>
+            </tr>
+            <tr>
+              <td class="mono">2026-08-30<br>14:08:17 UTC</td>
+              <td><strong>unknown</strong><div class="ts mono">—</div></td>
+              <td><span class="pill p-critical">Auth failed</span><div class="ts">invalid token (×3)</div></td>
+              <td>—<div class="ts mono">—</div></td>
+              <td><span class="pill p-critical">Banned</span></td>
+              <td class="mono">45.142.214.18<br>Frankfurt, DE</td>
+              <td class="mono">req_8b5a91</td>
+              <td><button class="btn-ghost">Investigate</button></td>
+            </tr>
+            <tr>
+              <td class="mono">2026-08-30<br>14:05:44 UTC</td>
+              <td><strong>Sabrina Akter</strong><div class="ts mono">usr_sa_001 · admin</div></td>
+              <td><span class="pill p-warning">Config edit</span><div class="ts">threshold: TDS max</div></td>
+              <td>th_R-014<div class="ts mono">300 → 280 ppm</div></td>
+              <td><span class="pill p-healthy">Success</span></td>
+              <td class="mono">103.59.18.42<br>Dhaka, BD</td>
+              <td class="mono">req_8a4c10</td>
+              <td><button class="btn-ghost">Diff</button></td>
+            </tr>
+            <tr class="empty-row"><td colspan="8">6 of 1,284 events shown · use filters above to narrow the window</td></tr>
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div>Showing 1–6 of 1,284 events</div>
+          <div class="pages">
+            <span class="page">‹</span>
+            <span class="page active">1</span>
+            <span class="page">2</span>
+            <span class="page">3</span>
+            <span class="page">…</span>
+            <span class="page">215</span>
+            <span class="page">›</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

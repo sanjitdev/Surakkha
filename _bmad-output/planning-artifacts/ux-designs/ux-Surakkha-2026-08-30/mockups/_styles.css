@@ -1,0 +1,425 @@
+/* Surakkha mockup shared stylesheet — 2026-08-30 sweep
+ *
+ * @governs: DESIGN.md tokens (saturated severity palette, dark sidebar, primary
+ *           gradient), EXPERIENCE.md sections (Component Patterns: KPIStat,
+ *           StatusPill, RolePill, Sidebar nav, Topbar with NotificationBell;
+ *           State Patterns: Live-update pulse, RbacDenied empty state;
+ *           Flow: role-aware nav + hidden-nav-for-denied-items per UX-DR-13).
+ *
+ * This file is the SINGLE source of truth for the 7 mockups in this folder.
+ * Each mockup imports it via <link rel="stylesheet" href="_styles.css">. The
+ * 6 pre-existing mockups (in ux-Surakkha-2026-08-20/mockups/) inline their own
+ * styles — they pre-date this convention. Future mockups should link this file.
+ */
+
+/* ============================================================
+   TOKENS
+   ============================================================ */
+:root {
+  /* Severity (saturated) — UX-DR-1 */
+  --sev-healthy: #1F9D55; --sev-healthy-text: #0F6B3A; --sev-healthy-fill: #16A34A;
+  --sev-healthy-bg: #E8F6EE; --sev-healthy-glow: #1F9D5533;
+  --sev-warning: #D97706; --sev-warning-text: #92400E; --sev-warning-fill: #F59E0B;
+  --sev-warning-bg: #FFF3DA; --sev-warning-glow: #F59E0B33;
+  --sev-critical: #DC2626; --sev-critical-text: #7F1D1D; --sev-critical-fill: #EF4444;
+  --sev-critical-bg: #FEE2E2; --sev-critical-glow: #EF444433;
+
+  /* Neutrals */
+  --surface: #FFFFFF; --page: #F5F7F9;
+  --sidebar: #0F172A; --sidebar-text: #CBD5E1; --sidebar-text-active: #FFFFFF;
+  --border: #E2E8F0;
+  --body: #0F172A; --secondary: #475569;
+  --muted: #64748B;
+
+  /* Primary — UX-DR-4 */
+  --primary: #1E5BB8; --primary-hover: #1E40AF;
+  --primary-gradient: linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%);
+
+  /* Offline state — UX-DR-11 */
+  --offline: #94A3B8; --offline-bg: #F1F5F9;
+}
+
+/* ============================================================
+   RESET + BASE
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--page); color: var(--body);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px; line-height: 22px;
+}
+a { color: var(--primary); }
+button { font-family: inherit; cursor: pointer; }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+/* ============================================================
+   SHELL + SIDEBAR — UX-DR-3 dark sidebar
+   ============================================================ */
+.shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+aside.sidebar {
+  background: var(--sidebar); color: var(--sidebar-text);
+  padding: 20px 0; position: sticky; top: 0; height: 100vh;
+  overflow-y: auto;
+}
+.brand { padding: 0 20px 20px; border-bottom: 1px solid #1E293B; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--primary-gradient); color: #fff;
+  display: grid; place-items: center; font-weight: 700; font-size: 14px;
+}
+.brand-name { font-weight: 600; font-size: 16px; color: #fff; letter-spacing: -0.01em; }
+
+.nav-group { padding: 0 12px; margin-bottom: 12px; }
+.nav-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); padding: 8px 12px 6px; font-weight: 600;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 6px;
+  color: var(--sidebar-text); text-decoration: none; font-size: 14px;
+}
+.nav-item:hover { background: #1E293B; color: var(--sidebar-text-active); }
+.nav-item[aria-current="page"] { background: #1E293B; color: var(--sidebar-text-active); font-weight: 500; }
+.nav-item[aria-current="page"] .ico { color: #38BDF8; }
+.nav-item .ico {
+  width: 18px; height: 18px; display: inline-grid; place-items: center; color: var(--muted);
+}
+.nav-item .badge {
+  margin-left: auto; background: var(--sev-critical); color: #fff;
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px;
+}
+.nav-item.disabled { opacity: 0.4; pointer-events: none; }
+
+/* ============================================================
+   TOPBAR — UX-DR-10 bell, role-aware, search
+   ============================================================ */
+main.canvas { padding: 0; }
+header.topbar {
+  display: flex; align-items: center; gap: 16px;
+  height: 56px; padding: 0 24px; position: sticky; top: 0;
+  background: var(--surface); z-index: 10;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.crumbs { font-size: 13px; color: var(--secondary); }
+.crumbs a { color: var(--secondary); text-decoration: none; }
+.crumbs a:hover { color: var(--body); }
+.crumbs .sep { margin: 0 8px; color: var(--muted); }
+.crumbs .cur { color: var(--body); font-weight: 500; }
+
+.search {
+  flex: 1; max-width: 480px; display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: var(--page);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.search input { flex: 1; border: none; outline: none; background: transparent; font: inherit; color: var(--body); }
+.search input::placeholder { color: var(--secondary); }
+
+/* NotificationBell — UX-DR-10 */
+.bell {
+  position: relative; width: 36px; height: 36px;
+  display: grid; place-items: center; border-radius: 6px;
+  color: var(--secondary); cursor: pointer;
+}
+.bell:hover { background: var(--page); color: var(--body); }
+.bell .dot {
+  position: absolute; top: 6px; right: 6px;
+  width: 8px; height: 8px; background: var(--sev-critical);
+  border: 2px solid var(--surface); border-radius: 999px;
+}
+.bell .ct {
+  position: absolute; top: 2px; right: 2px;
+  background: var(--sev-critical); color: #fff;
+  font-size: 9px; font-weight: 700; padding: 1px 4px;
+  border-radius: 999px; min-width: 14px; text-align: center;
+  border: 1px solid var(--surface);
+}
+
+.role-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.role-pill.r-admin { background: var(--sev-critical-bg); color: var(--sev-critical-text); border: 1px solid var(--sev-critical); }
+.role-pill.r-operator { background: #DBEAFE; color: var(--primary); border: 1px solid var(--primary); }
+.role-pill.r-technician { background: var(--sev-warning-bg); color: var(--sev-warning-text); border: 1px solid var(--sev-warning); }
+.role-pill.r-viewer { background: var(--sev-healthy-bg); color: var(--sev-healthy-text); border: 1px solid var(--sev-healthy); }
+
+.user { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 13px; }
+.user .avatar {
+  width: 32px; height: 32px; border-radius: 999px;
+  background: #DBEAFE; color: var(--primary);
+  display: grid; place-items: center; font-weight: 600; font-size: 12px;
+}
+
+/* ============================================================
+   BODY + PAGE HEADER
+   ============================================================ */
+.body { padding: 24px; }
+.page-header {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  margin-bottom: 20px; gap: 16px; flex-wrap: wrap;
+}
+.page-title { font-size: 22px; font-weight: 600; line-height: 28px; margin: 0; color: var(--body); }
+.page-sub { font-size: 13px; color: var(--secondary); margin-top: 4px; }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; color: var(--body); font-size: 13px;
+}
+.btn-ghost:hover { background: var(--page); }
+.btn-ghost:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.btn-primary {
+  background: var(--primary); border: 1px solid var(--primary); border-radius: 6px;
+  padding: 6px 12px; color: #fff; font-size: 13px; font-weight: 500;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.btn-danger {
+  background: var(--sev-critical); border: 1px solid var(--sev-critical); border-radius: 6px;
+  padding: 6px 12px; color: #fff; font-size: 13px; font-weight: 500;
+}
+.btn-danger:hover { background: #B91C1C; }
+
+/* ============================================================
+   CARDS
+   ============================================================ */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06);
+  padding: 20px;
+}
+.card-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.card-title { font-size: 14px; font-weight: 600; color: var(--body); margin: 0; }
+.card-sub { font-size: 12px; color: var(--secondary); }
+
+/* ============================================================
+   PILLS — severity + state
+   ============================================================ */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+}
+.pill svg { width: 12px; height: 12px; }
+.pill.p-critical { background: var(--sev-critical-bg); color: var(--sev-critical); border: 1px solid var(--sev-critical); }
+.pill.p-warning { background: var(--sev-warning-bg); color: var(--sev-warning); border: 1px solid var(--sev-warning); }
+.pill.p-healthy { background: var(--sev-healthy-bg); color: var(--sev-healthy); border: 1px solid var(--sev-healthy); }
+.pill.p-offline { background: var(--offline-bg); color: var(--offline); border: 1px solid var(--offline); }
+.pill.p-neutral { background: #F1F5F9; color: var(--secondary); border: 1px solid var(--border); }
+.pill.p-info { background: #DBEAFE; color: var(--primary); border: 1px solid var(--primary); }
+
+/* ============================================================
+   FILTERS
+   ============================================================ */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 12px; font-weight: 500; color: var(--body);
+}
+.filter-chip:hover { background: var(--page); cursor: pointer; }
+.filter-chip.active {
+  background: var(--primary); color: #fff; border-color: var(--primary);
+}
+.filter-chip.active .ct { color: rgba(255,255,255,0.85); }
+.filter-chip .ct { color: var(--secondary); font-size: 11px; }
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+.tbl {
+  width: 100%; border-collapse: separate; border-spacing: 0;
+  background: var(--surface); border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--border);
+}
+.tbl thead th {
+  text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--secondary);
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--page); font-weight: 600;
+}
+.tbl tbody td {
+  padding: 14px 16px; font-size: 13px; color: var(--body);
+  border-bottom: 1px solid var(--border); vertical-align: middle;
+}
+.tbl tbody tr:last-child td { border-bottom: none; }
+.tbl tbody tr:hover td { background: var(--page); }
+.tbl tbody tr.row-crit td:first-child { box-shadow: inset 4px 0 0 var(--sev-critical); }
+.tbl tbody tr.row-warn td:first-child { box-shadow: inset 2px 0 0 var(--sev-warning); }
+.tbl .id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--secondary); font-weight: 600; }
+.tbl .ts { font-size: 12px; color: var(--secondary); }
+.tbl .muted { color: var(--secondary); }
+.tbl .empty-row td {
+  text-align: center; color: var(--secondary); padding: 32px 16px; font-size: 13px;
+}
+
+/* ============================================================
+   RBAC DENIED — UX-DR-13
+   ============================================================ */
+.rbac-denied {
+  display: grid; place-items: center; min-height: 60vh;
+  text-align: center; padding: 48px 24px;
+}
+.rbac-denied .icon {
+  width: 64px; height: 64px; border-radius: 999px;
+  background: var(--sev-warning-bg); color: var(--sev-warning);
+  display: grid; place-items: center; margin-bottom: 16px;
+}
+.rbac-denied h2 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+.rbac-denied p { font-size: 14px; color: var(--secondary); margin: 0 0 20px; max-width: 420px; }
+
+/* ============================================================
+   EMPTY + LOADING STATES
+   ============================================================ */
+.empty-state {
+  display: grid; place-items: center; padding: 64px 24px;
+  text-align: center; color: var(--secondary);
+}
+.empty-state .icon {
+  width: 48px; height: 48px; border-radius: 999px;
+  background: var(--page); color: var(--muted);
+  display: grid; place-items: center; margin-bottom: 12px;
+}
+.empty-state h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; color: var(--body); }
+.empty-state p { font-size: 13px; margin: 0; max-width: 360px; }
+
+.skeleton {
+  background: linear-gradient(90deg, #F1F5F9 0%, #E2E8F0 50%, #F1F5F9 100%);
+  background-size: 200% 100%; animation: skeleton 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+@keyframes skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ============================================================
+   PAGINATION
+   ============================================================ */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; font-size: 12px; color: var(--secondary);
+}
+.pager .pages { display: flex; gap: 4px; }
+.pager .page {
+  width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500;
+}
+.pager .page:hover { background: var(--page); }
+.pager .page.active { background: var(--primary); color: #fff; }
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+.form-row { display: flex; flex-direction: column; gap: 4px; }
+.form-row.full { grid-column: 1 / -1; }
+.form-row label {
+  font-size: 12px; font-weight: 600; color: var(--secondary);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.form-row input, .form-row select, .form-row textarea {
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); font: inherit; color: var(--body);
+}
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+  outline: 2px solid var(--primary); outline-offset: 1px; border-color: var(--primary);
+}
+.form-row .hint { font-size: 11px; color: var(--muted); }
+.form-row .err { font-size: 11px; color: var(--sev-critical); }
+
+/* ============================================================
+   OFFLINE BANNER — UX-DR-11
+   ============================================================ */
+.offline-banner {
+  background: var(--offline-bg); border-bottom: 1px solid var(--border);
+  padding: 8px 24px; font-size: 13px; color: var(--secondary);
+  display: flex; align-items: center; gap: 8px;
+}
+.offline-banner .pulse {
+  width: 8px; height: 8px; background: var(--offline); border-radius: 999px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ============================================================
+   KPI BAND (for /reports)
+   ============================================================ */
+.kpi-band {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 16px; margin-bottom: 20px;
+}
+.kpi {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 20px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.kpi .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--secondary); font-weight: 600; }
+.kpi .val { font-size: 28px; font-weight: 700; line-height: 36px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .delta { font-size: 12px; margin-top: 4px; }
+.kpi .delta.up { color: var(--sev-healthy); }
+.kpi .delta.down { color: var(--sev-critical); }
+
+/* ============================================================
+   TABS
+   ============================================================ */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tab {
+  padding: 10px 16px; font-size: 13px; font-weight: 500;
+  color: var(--secondary); cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--body); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab .ct {
+  background: var(--page); color: var(--secondary);
+  font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  margin-left: 6px;
+}
+
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.gap-4 { gap: 4px; } .gap-8 { gap: 8px; } .gap-12 { gap: 12px; } .gap-16 { gap: 16px; } .gap-24 { gap: 24px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.text-muted { color: var(--secondary); }
+.text-xs { font-size: 12px; }
+.text-sm { font-size: 13px; }
+.font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.mt-8 { margin-top: 8px; } .mt-16 { margin-top: 16px; } .mt-24 { margin-top: 24px; }
+.mb-8 { margin-bottom: 8px; } .mb-16 { margin-bottom: 16px; } .mb-24 { margin-bottom: 24px; }
+
+/* ============================================================
+   RESPONSIVE — UX-DR-18
+   ============================================================ */
+@media (max-width: 1023px) {
+  .shell { grid-template-columns: 1fr; }
+  aside.sidebar { display: none; }
+  .kpi-band { grid-template-columns: repeat(2, 1fr); }
+  .form-grid { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   REDUCED MOTION — UX-DR-7
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton, .offline-banner .pulse { animation: none !important; }
+  * { transition: none !important; }
+}
