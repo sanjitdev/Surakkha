@@ -566,10 +566,10 @@ stories:
     epic: "4"
     commit: "ea37f43"
     shipped: "2026-08-30"
-    covers: []
+    covers: ["PRD-F-16", "FR-20", "FR-21", "AR-7", "I-8", "UX-DR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-11-reopen-path.md"
-      review: "_bmad-output/implementation-artifacts/4-11-diff.patch"
+      review: "_bmad-output/implementation-artifacts/review-4-11-verification-gap.md"
 
   - id: "4.12"
     title: "Technician-Filtered Kanban"
@@ -577,10 +577,10 @@ stories:
     epic: "4"
     commit: "a5d04f7"
     shipped: "2026-08-30"
-    covers: []
+    covers: ["FR-20", "FR-21", "UX-DR-7", "UX-DR-11", "UX-DR-14", "AR-11"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md"
-      review: "_bmad-output/implementation-artifacts/4-12-diff.patch"
+      review: "_bmad-output/implementation-artifacts/review-4-12-verification-gap.md"
 
   - id: "4.13"
     title: "Attachments"
