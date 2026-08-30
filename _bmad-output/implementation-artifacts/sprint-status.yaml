@@ -478,7 +478,7 @@ stories:
     epic: "4"
     commit: "12f1fb4"
     shipped: "2026-08-27"
-    covers: []
+    covers: ["PRD-F-12", "PRD-F-16", "UX-DR-2", "UX-DR-7", "UX-DR-11", "AR-11"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-3-kanban-column-projection.md"
       review: null
@@ -489,7 +489,7 @@ stories:
     epic: "4"
     commit: "8e8be1d"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["PRD-F-16", "FR-20", "FR-21", "AR-7", "I-8", "UX-DR-2", "UX-DR-7", "UX-DR-13"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md"
       review: null
@@ -500,7 +500,7 @@ stories:
     epic: "4"
     commit: "e1a74c6"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["PRD-F-16", "FR-20", "FR-21", "AR-7", "I-8", "UX-DR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-5-acknowledge-flow.md"
       review: null
@@ -511,7 +511,7 @@ stories:
     epic: "4"
     commit: "c0fd7b9"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["PRD-F-16", "FR-20", "FR-21", "AR-7", "I-8", "UX-DR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-6-assign-technician-inspecting-transition.md"
       review: null
@@ -522,7 +522,7 @@ stories:
     epic: "4"
     commit: "9132a08"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["PRD-F-16", "FR-20", "FR-21", "AR-7", "I-8", "UX-DR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-7-submit-result-safe-unsafe-monitoring.md"
       review: "_bmad-output/implementation-artifacts/review-4-7-verification-gap.md"
@@ -533,7 +533,7 @@ stories:
     epic: "4"
     commit: "e811983"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["UX-DR-5", "UX-DR-6", "UX-DR-7", "UX-DR-11", "AR-11"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-8-sticky-severity-banner-rbac.md"
       review: "_bmad-output/implementation-artifacts/review-4-8-verification-gap.md"
@@ -555,7 +555,7 @@ stories:
     epic: "4"
     commit: "79d428c"
     shipped: "2026-08-28"
-    covers: []
+    covers: ["PRD-F-16", "FR-21", "AR-7", "UX-DR-6", "UX-DR-13"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-10-notificationbell-dropdown.md"
       review: "_bmad-output/implementation-artifacts/review-4-10-verification-gap.md"
