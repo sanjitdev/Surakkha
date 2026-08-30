@@ -39,7 +39,14 @@
  * surfaces no `AuditLog` row. Spec Design Notes "Why
  * mark-as-read is a separate endpoint" captures the rationale.
  */
-import { type NotificationRecipientRole } from "@surakkha/shared/notification";
+import {
+  type AdminNotificationListEnvelope,
+  AdminNotificationListEnvelopeSchema,
+  type AdminNotificationPayload,
+  type NotificationRecipientRole,
+  type NotificationSeverity,
+  NotificationSeveritySchema,
+} from "@surakkha/shared/notification";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
@@ -47,6 +54,8 @@ import { type AuditLogger } from "../audit.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
+  type AdminNotificationFilters,
+  adminNotificationRowToPayload,
   type NotificationRepository,
   type NotificationRow,
   notificationRowToPayload,
@@ -279,6 +288,209 @@ const renderAckResponse = (args: {
 };
 
 /**
+ * Story 5.1 — maximum number of rows the admin list returns. The
+ * spec pins `take: 100` (Acceptance Criteria "ordered by createdAt
+ * DESC, bounded by take: 100"). No pagination in v1.
+ */
+const ADMIN_NOTIFICATION_TAKE_LIMIT = 100;
+
+/**
+ * Story 5.1 — the admin query schema. The severity field is
+ * `string | string[] | undefined` (Express + Zod parse of
+ * `req.query.severity` as a repeated query param). The chip row
+ * supports 1–3 selections; the schema accepts ALL of them and
+ * the helper de-duplicates below.
+ *
+ * `since` / `until` are ISO 8601 strings (admin-facing wire
+ * shape — admins paste a date into the date-range picker).
+ *
+ * The `severity` field deliberately uses
+ * `z.string().array().nonempty()` as a schema-level guard so a
+ * `?severity=` (empty string) becomes `[""]` — the helper then
+ * filters the empties out and `safeParse` does NOT throw on a
+ * request with no chips selected (chip toggle off is a valid
+ * state — it just means "all severities").
+ */
+const adminQuerySchema = z.object({
+  severity: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((raw) => {
+      if (raw === undefined) return undefined;
+      const arr = Array.isArray(raw) ? raw : [raw];
+      // De-duplicate + drop empties — the chip row toggles
+      // independently so a user can produce `critical`, then
+      // un-toggle then re-toggle `critical` (still 1 selection
+      // at the data layer; the URL just re-uses the param).
+      const dedup = new Set(arr.filter((s) => s.length > 0));
+      return Array.from(dedup);
+    }),
+  since: z.string().datetime({ offset: true }).optional(),
+  until: z.string().datetime({ offset: true }).optional(),
+});
+
+/**
+ * Story 5.1 — coerced notification severity array. Drop values
+ * that aren't in the enum (defensive — `?severity=foo` should
+ * 400, not silently drop the filter).
+ */
+const coerceSeverityArray = (
+  raw: readonly string[] | undefined,
+): { ok: true; value: readonly NotificationSeverity[] } | { ok: false; invalid: string } => {
+  if (raw === undefined || raw.length === 0) {
+    return { ok: true, value: [] };
+  }
+  const coerced: NotificationSeverity[] = [];
+  for (const candidate of raw) {
+    const parsed = NotificationSeveritySchema.safeParse(candidate);
+    if (!parsed.success) {
+      return { ok: false, invalid: candidate };
+    }
+    if (!coerced.includes(parsed.data)) {
+      coerced.push(parsed.data);
+    }
+  }
+  return { ok: true, value: coerced };
+};
+
+/**
+ * Story 5.1 — parse the admin query params. Loops the severity
+ * values through `NotificationSeveritySchema.safeParse`; bad
+ * values surface 400. Returns either `{ kind: "ok", filters }`
+ * with the prepared `AdminNotificationFilters` ready for the
+ * repository, or `{ kind: "error" }` (response already sent).
+ *
+ * Extracted from the route handler to keep the GET closure under
+ * `complexity: 10`.
+ */
+const parseAdminQueryParams = (
+  res: Response,
+  query: unknown,
+):
+  | { readonly kind: "ok"; readonly filters: AdminNotificationFilters }
+  | { readonly kind: "error" } => {
+  const parsed = adminQuerySchema.safeParse(query);
+  if (!parsed.success) {
+    res.status(HTTP_BAD_REQUEST).json({
+      error: "validation_error",
+      issues: parsed.error.issues,
+    });
+    return { kind: "error" };
+  }
+  const { severity, since, until } = parsed.data;
+  const coercedSeverity = coerceSeverityArray(severity);
+  if (!coercedSeverity.ok) {
+    res.status(HTTP_BAD_REQUEST).json({
+      error: "validation_error",
+      issues: [
+        {
+          code: "invalid_enum_value",
+          path: ["severity"],
+          message: `unknown severity value: ${coercedSeverity.invalid}`,
+        },
+      ],
+    });
+    return { kind: "error" };
+  }
+  const filters: AdminNotificationFilters = {};
+  if (coercedSeverity.value.length > 0) {
+    (filters as { severity?: { in: readonly NotificationSeverity[] } }).severity = {
+      in: coercedSeverity.value,
+    };
+  }
+  if (since !== undefined) {
+    (filters as { since?: Date }).since = new Date(since);
+  }
+  if (until !== undefined) {
+    (filters as { until?: Date }).until = new Date(until);
+  }
+  // Loop 1 review finding E2: validate the date range. The
+  // Prisma `gte` + `lt` pair yields an empty result silently
+  // when `since > until`; admins see zero rows with no signal
+  // why. Surface 400 with `invalid_range` so the page (or
+  // a future custom-date picker) can correct the input.
+  if (since !== undefined && until !== undefined) {
+    if (new Date(since).getTime() >= new Date(until).getTime()) {
+      res.status(HTTP_BAD_REQUEST).json({
+        error: "invalid_range",
+        message: "`since` must be strictly less than `until`",
+      });
+      return { kind: "error" };
+    }
+  }
+  return { kind: "ok", filters };
+};
+
+/**
+ * Story 5.1 — fetch the admin-list rows from the repository.
+ * Returns `{ kind: "ok", rows }` on success or `{ kind: "error" }`
+ * if Prisma threw (response already sent with 500).
+ *
+ * Extracted from the route handler to keep the GET closure under
+ * `complexity: 10`.
+ */
+const fetchAdminRows = async (args: {
+  readonly repo: NotificationRepository;
+  readonly filters: AdminNotificationFilters;
+  readonly res: Response;
+}): Promise<
+  { readonly kind: "ok"; readonly rows: NotificationRow[] } | { readonly kind: "error" }
+> => {
+  const { repo, filters, res } = args;
+  try {
+    const rows = await repo.notification.findManyAdmin({
+      where: filters,
+      orderBy: { createdAt: "desc" },
+      take: ADMIN_NOTIFICATION_TAKE_LIMIT,
+    });
+    return { kind: "ok", rows };
+  } catch (err) {
+    console.error("api/notifications/admin/list: prisma error", err);
+    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    return { kind: "error" };
+  }
+};
+
+/**
+ * Story 5.1 — envelope validator. Parses the rendered payload
+ * through `AdminNotificationListEnvelopeSchema` so a future
+ * adapter drift that strips `acknowledgedByUserId` (the audit
+ * detail the admin surface MUST leak) surfaces 500 with a
+ * meaningful log instead of silently leaking an operator-only
+ * wire shape. Returns the validated envelope on success;
+ * surfaces 500 on validation failure (the response route is
+ * internal — the schema mismatch is a structural bug).
+ */
+const buildAdminEnvelope = (
+  rows: readonly NotificationRow[],
+  res: Response,
+):
+  | { readonly kind: "ok"; readonly envelope: AdminNotificationListEnvelope }
+  | { readonly kind: "error" } => {
+  const notifications: AdminNotificationPayload[] = rows.map((row) =>
+    adminNotificationRowToPayload(row),
+  );
+  const envelope: AdminNotificationListEnvelope = { notifications };
+  // Strict shape check — pin the wire contract so adapter drift
+  // (e.g. `acknowledgedByUserId` accidentally omitted from the
+  // payload) surfaces 500 with a meaningful log instead of
+  // silently leaking an operator-only wire shape. The Zod schema
+  // is the canonical wire shape (see
+  // `@surakkha/shared/notification.ts:144-149`); the previous
+  // `z.array(z.unknown())` match accepted any shape and missed
+  // the drift (loop 1 review finding E5).
+  const parsed = AdminNotificationListEnvelopeSchema.safeParse(envelope);
+  if (!parsed.success) {
+    // Structural drift between `adminNotificationRowToPayload`
+    // and the `AdminNotificationPayloadSchema`. Log + 500.
+    console.error("api/notifications/admin/list: envelope failed shape validation", parsed.error);
+    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    return { kind: "error" };
+  }
+  return { kind: "ok", envelope };
+};
+
+/**
  * The router's dependency surface. Mirrors the alerts router
  * factory shape: every dep is a typed reference the test rig
  * can stub without spinning up Prisma.
@@ -435,6 +647,51 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
       if (finalRow === null) return;
 
       renderAckResponse({ res, id, actor, row: finalRow, updateCount });
+    },
+  );
+
+  /**
+   * Story 5.1 — GET /api/notifications/admin/list. Admin audit
+   * surface: returns the most-recent 100 rows across all
+   * `recipientRole`s, all `acknowledgedAt` states, with optional
+   * severity / date-range filters.
+   *
+   * Order of operations:
+   *   1. `authenticate()` (mounted upstream) → sets `req.user`.
+   *   2. `authorize({ action: "read_all", resource: "Notification" }, audit)`
+   *      — Operator / Technician / Viewer → 403 + `rbac_denied`
+   *      audit. Admin → continue.
+   *   3. `parseAdminQueryParams(req, res)` — Zod parse the query;
+   *      a malformed `?severity=foo` or `?since=not-a-date`
+   *      surfaces 400. The severity array is de-duplicated; a
+   *      non-empty array becomes `where.severity = { in: [...] }`.
+   *   4. `fetchAdminRows({ repo, filters, res })` — Prisma
+   *      exception surfaces 500.
+   *   5. `buildAdminEnvelope(rows, res)` — map through
+   *      `adminNotificationRowToPayload` so the wire leaks
+   *      `acknowledgedByUserId`. The envelope is parse-checked
+   *      to catch adapter↔schema drift early.
+   *   6. 200 with the envelope.
+   *
+   * The complexity ceiling stays low (≤10) by extracting the
+   * three helpers above (`parseAdminQueryParams`,
+   * `fetchAdminRows`, `buildAdminEnvelope`).
+   */
+  router.get(
+    "/api/notifications/admin/list",
+    authorize({ action: "read_all", resource: "Notification" }, deps.audit),
+    async (req: AuthorizedRequest, res: Response) => {
+      const parsed = parseAdminQueryParams(res, req.query);
+      if (parsed.kind !== "ok") return;
+      const { filters } = parsed;
+
+      const fetched = await fetchAdminRows({ repo: deps.repo, filters, res });
+      if (fetched.kind !== "ok") return;
+      const { rows } = fetched;
+
+      const built = buildAdminEnvelope(rows, res);
+      if (built.kind !== "ok") return;
+      res.status(HTTP_OK).json(built.envelope);
     },
   );
 

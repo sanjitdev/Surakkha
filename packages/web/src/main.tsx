@@ -32,6 +32,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-route
 import { RbacRoute } from "./access/RbacRoute";
 import { SimulatorPage } from "./admin/simulator/SimulatorPage";
 import { ThresholdsPage } from "./admin/thresholds/ThresholdsPage";
+import { AdminNotificationsPage } from "./admin-notifications/AdminNotificationsPage";
 import { apiLogin, configureApiClient } from "./api/apiClient";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
@@ -289,8 +290,16 @@ createRoot(root).render(
             element={
               <CurrentRoleProvider>
                 <AppShell>
+                  {/* Story 5.1 — admin-only audit-lens read view.
+                      Renders the 100 most recent Notification rows
+                      across all roles with severity multi-select
+                      chips + date-range selector + expandable row
+                      panel. Mirrors the `/admin/users` route's
+                      `<RbacRoute>` wrapping so a non-Admin direct
+                      URL hit renders `<RbacDenied />` instead of
+                      the page. */}
                   <RbacRoute>
-                    <PageStub name="Notifications" />
+                    <AdminNotificationsPage />
                   </RbacRoute>
                 </AppShell>
               </CurrentRoleProvider>

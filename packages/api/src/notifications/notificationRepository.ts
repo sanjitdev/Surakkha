@@ -62,6 +62,37 @@ export interface NotificationRow {
 }
 
 /**
+ * Story 5.1 — the filter shape the admin list endpoint accepts.
+ *
+ * The admin endpoint DROPS two filters the operator-facing read
+ * applies (4.10):
+ *
+ *   - `recipientRole` — the admin is the audit lens; the writer's
+ *     role pin is irrelevant. The handler omits the field entirely
+ *     so the repository call passes `where: { ... }` without a
+ *     recipient filter.
+ *   - `acknowledgedAt: null` — the admin sees the FULL audit trail
+ *     including already-acknowledged rows.
+ *
+ * `severity` uses Prisma's `in: [...]` IN-list shape. Loop 1 fix:
+ * the wire carries the multi-select as repeated `?severity` query
+ * params (the chip row supports 1, 2, or 3 selections). The router
+ * de-duplicates into an array and the repository forwards it as
+ * `in: [...]`. Passing `severity: singleValue` (the pre-Loop 1
+ * shape) silently dropped the filter when 2–3 chips were active.
+ *
+ * `since` / `until` are inclusive lower / exclusive upper bounds
+ * (Prisma's `gte` / `lt`); nullish → unbounded.
+ */
+export interface AdminNotificationFilters {
+  readonly severity?: {
+    readonly in: readonly NotificationSeverity[];
+  };
+  readonly since?: Date;
+  readonly until?: Date;
+}
+
+/**
  * Narrow slice of `@prisma/client.notification` that the
  * notification router consumes.
  *
@@ -86,6 +117,25 @@ export interface NotificationRepository {
         readonly recipientRole: NotificationRecipientRole;
         readonly acknowledgedAt: null;
       };
+      readonly orderBy: { readonly createdAt: "desc" };
+      readonly take: number;
+    }): Promise<NotificationRow[]>;
+    /**
+     * Story 5.1 — admin-list read path for
+     * `GET /api/notifications/admin/list`. Drops both filters the
+     * operator-facing read applies (no `recipientRole`, no
+     * `acknowledgedAt: null`). Ordered by `createdAt DESC` so the
+     * table lists newest first; bounded by `take: 100` to keep
+     * the page payload small (no pagination in v1).
+     *
+     * The severity filter uses Prisma's `in: [...]` IN-list — the
+     * Router feeds a deduplicated array (1, 2, or 3 entries).
+     * Pre-Loop 1, this method accepted a single-valued severity
+     * which silently dropped the filter when 2–3 chips were
+     * active; see `notificationRouter.ts:parseAdminQueryParams`.
+     */
+    findManyAdmin(args: {
+      readonly where: AdminNotificationFilters;
       readonly orderBy: { readonly createdAt: "desc" };
       readonly take: number;
     }): Promise<NotificationRow[]>;
@@ -124,13 +174,33 @@ export interface NotificationRepository {
  * `packages/api/src/incidents/incidentStateRepository.ts:172-191`.
  * The `as any` cast is contained to this file so future Prisma
  * type drifts do not ripple into the router.
+ *
+ * Loop 1 hardening (review finding H2/E10): `findManyAdmin` is a
+ * NEW extension method added in Story 5.1. If a future Prisma
+ * regeneration drops the extension (or a test stub doesn't define
+ * it), we MUST fail loud — silently falling back to `findMany`
+ * would apply the operator-facing filters (`recipientRole`,
+ * `acknowledgedAt: null`) that the admin endpoint explicitly
+ * DROPS. The bug would be invisible: the response is 200 with
+ * rows, but the rows are operator-scoped, not admin-scoped.
+ *
+ * The router's test rig provides an explicit `findManyAdmin`
+ * stub for every admin-list test; the lazy throw fires only when
+ * production code is wired against a stale client.
  */
 export const resolveNotificationRepository = (prisma: unknown): NotificationRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;
+  if (client.notification.findManyAdmin === undefined) {
+    throw new Error(
+      "Prisma client missing `notification.findManyAdmin` extension; run `prisma generate` against the Story 5.1 schema.",
+    );
+  }
   return {
     notification: {
       findMany: (args) => client.notification.findMany(args) as Promise<NotificationRow[]>,
+      findManyAdmin: (args) =>
+        client.notification.findManyAdmin(args) as Promise<NotificationRow[]>,
       findUnique: (args) => client.notification.findUnique(args) as Promise<NotificationRow | null>,
       updateMany: (args) =>
         client.notification.updateMany(args) as Promise<{ readonly count: number }>,
@@ -143,4 +213,7 @@ export const resolveNotificationRepository = (prisma: unknown): NotificationRepo
 // a single import surface for consumers that want both the data
 // slice and the wire adapter (mirrors how `incidentStateRepository.ts`
 // houses `incidentRowToPayload`).
-export { notificationRowToPayload } from "./notificationRowToPayload.js";
+export {
+  adminNotificationRowToPayload,
+  notificationRowToPayload,
+} from "./notificationRowToPayload.js";

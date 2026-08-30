@@ -89,3 +89,91 @@ export const NotificationListEnvelopeSchema = z.object({
   notifications: z.array(NotificationPayloadSchema),
 });
 export type NotificationListEnvelope = z.infer<typeof NotificationListEnvelopeSchema>;
+
+/**
+ * Story 5.1 — the admin-facing wire row for a `Notification`.
+ * Surfaces `acknowledgedByUserId` (the actor who acknowledged the
+ * row) which the operator-facing `NotificationPayloadSchema`
+ * intentionally OMITS. The admin surface is the audit lens —
+ * the actor IS the audit trail the operator-facing bell cannot
+ * see (the operator IS the actor for their own row).
+ *
+ * Why a SIBLING schema (vs extending the existing one):
+ *
+ *   - The operator-facing wire omits `acknowledgedByUserId`
+ *     because the operator is the actor and shouldn't see "who
+ *     else acknowledged this." Sharing the schema with an
+ *     optional field would either leak it to the operator (the
+ *     shared schema is the runtime check) or require runtime
+ *     filtering (defensive — explicitly anti-pattern per the
+ *     PR review checklist's "no defensive props" rule).
+ *
+ *   - A sibling schema keeps each surface's contract honest.
+ *     The api-side `notificationRowToPayload` strips
+ *     `acknowledgedByUserId` (operator wire); the admin adapter
+ *     `adminNotificationRowToPayload` keeps it.
+ *
+ * The hook on the web side parses the wire response with
+ * `AdminNotificationPayloadSchema` so a manually-tampered
+ * response that lacks the field fails `safeParse` and surfaces
+ * a useful error rather than letting `undefined` propagate.
+ */
+export const AdminNotificationPayloadSchema = z.object({
+  id: z.string().uuid(),
+  severity: NotificationSeveritySchema,
+  incidentId: z.string().uuid().nullable(),
+  alertId: z.string().uuid().nullable(),
+  recipientRole: NotificationRecipientRoleSchema,
+  createdAt: ISO8601,
+  acknowledgedAt: ISO8601.nullable(),
+  /**
+   * Admin-only — the user id (UUID) who acknowledged the row, or
+   * `null` when the row is unacknowledged. `acknowledgedByUserId`
+   * is the load-bearing audit detail for Story 5.1; the operator
+   * bell skips it.
+   */
+  acknowledgedByUserId: z.string().uuid().nullable(),
+});
+export type AdminNotificationPayload = z.infer<typeof AdminNotificationPayloadSchema>;
+
+/**
+ * Story 5.1 — the list envelope returned by
+ * `GET /api/notifications/admin/list`. Mirrors the operator
+ * envelope's `notifications` key with the admin row shape.
+ */
+export const AdminNotificationListEnvelopeSchema = z.object({
+  notifications: z.array(AdminNotificationPayloadSchema),
+});
+export type AdminNotificationListEnvelope = z.infer<typeof AdminNotificationListEnvelopeSchema>;
+
+/**
+ * Story 5.1 — the wire shape of the admin list's filter query
+ * params. Both web and api import this type so the URL → query
+ * object contract has a single source of truth (loop 1 review
+ * finding H1: previously the web and api each defined their own
+ * filter type with subtly different field names; drift would have
+ * been undetectable).
+ *
+ * `severity` is the multi-select chip array (1, 2, or 3 entries);
+ * the api repeats the param as `?severity=critical&severity=warning`
+ * and the router de-duplicates + coerces into a Prisma `in: [...]`
+ * shape. `since` / `until` are ISO 8601 datetimes (inclusive /
+ * exclusive respectively); the api parses them to `Date` before
+ * the Prisma call.
+ */
+export interface AdminNotificationFilters {
+  readonly severity?: readonly NotificationSeverity[];
+  readonly since?: string;
+  readonly until?: string;
+  /**
+   * Loop 2 hardening: a fixed-window length (ms) used to re-derive
+   * `since` on every fetch. When the web hook sees this field, it
+   * ignores the `since` field above and recomputes
+   * `since = new Date(Date.now() - sincePresetMs).toISOString()`
+   * inside `queryFn`. This makes the lower bound slide forward
+   * during 30s polling; otherwise the page's `useMemo` freezes it
+   * at first paint and new rows created after the window slid
+   * forward are missed.
+   */
+  readonly sincePresetMs?: number;
+}

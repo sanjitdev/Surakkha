@@ -59,6 +59,10 @@ export const mountNotificationRouter = (args: {
         const repo = await ensureRepo();
         return repo.notification.findMany(findManyArgs);
       },
+      findManyAdmin: async (findManyAdminArgs) => {
+        const repo = await ensureRepo();
+        return repo.notification.findManyAdmin(findManyAdminArgs);
+      },
       findUnique: async (findUniqueArgs) => {
         const repo = await ensureRepo();
         return repo.notification.findUnique(findUniqueArgs);

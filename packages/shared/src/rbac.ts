@@ -29,9 +29,14 @@ export type Role = z.infer<typeof RoleSchema>;
  * Action vocabulary mirrors the rows of `docs/architecture-appendix-rbac.md`.
  * The verb `manage` covers CRUD on User + School; `drive` is the simulator
  * control verb; `acknowledge_banner` is the SeverityBanner dismiss verb.
+ * `read_all` (Story 5.1) is the cross-role audit-lens read — granted only
+ * to Admin so the surface leaks `acknowledgedByUserId` (audit detail) to
+ * the role that needs it. Inline role checks would drift; the matrix
+ * entry is structural.
  */
 export const ActionSchema = z.enum([
   "read",
+  "read_all",
   "create",
   "update",
   "delete",
@@ -117,6 +122,13 @@ export const RBAC_MATRIX = {
       // (read-only access via the detail page's attachments section).
       Attachment: Y,
     },
+    // Story 5.1 — admin-only audit-lens read across all roles for
+    // the Notification table. The admin surface leaks
+    // `acknowledgedByUserId` which the operator-facing `read`
+    // wire omits. Granted to Admin only.
+    read_all: {
+      Notification: Y,
+    },
     create: {
       Device: Y,
       Reading: N,
@@ -183,6 +195,10 @@ export const RBAC_MATRIX = {
       Simulator: N,
       // Story 4.13 — Operator can read attachments.
       Attachment: Y,
+    },
+    // Story 5.1 — Operator cannot audit-lens across all rows.
+    read_all: {
+      Notification: N,
     },
     create: {
       Device: N,
@@ -254,6 +270,10 @@ export const RBAC_MATRIX = {
       // the per-incident ownership check in the handler).
       Attachment: Y,
     },
+    // Story 5.1 — Technician cannot audit-lens across all rows.
+    read_all: {
+      Notification: N,
+    },
     create: {
       Device: N,
       Reading: N,
@@ -320,6 +340,10 @@ export const RBAC_MATRIX = {
       Simulator: N,
       // Story 4.13 — Viewer can read attachments (read-only).
       Attachment: Y,
+    },
+    // Story 5.1 — Viewer cannot audit-lens across all rows.
+    read_all: {
+      Notification: N,
     },
     create: {
       Device: N,

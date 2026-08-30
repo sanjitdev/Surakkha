@@ -27,7 +27,10 @@
  * handler's pass-through can be asserted without spinning up
  * Prisma.
  */
-import { type NotificationPayload } from "@surakkha/shared/notification";
+import {
+  type AdminNotificationPayload,
+  type NotificationPayload,
+} from "@surakkha/shared/notification";
 import express, { type Express } from "express";
 import { type AddressInfo, createServer, type Server } from "node:http";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -45,9 +48,11 @@ const OPERATOR_ID = "00000000-0000-4000-8000-00000000a002";
 const ADMIN_ID = "00000000-0000-4000-8000-00000000a001";
 const TECHNICIAN_ID = "00000000-0000-4000-8000-00000000a003";
 const VIEWER_ID = "00000000-0000-4000-8000-00000000a004";
+const ACKNOWLEDGER_ID = "00000000-0000-4000-8000-00000000c001";
 const INCIDENT_ID_1 = "11111111-1111-4111-8111-111111111111";
 const INCIDENT_ID_2 = "22222222-2222-4222-8222-222222222222";
 const INCIDENT_ID_3 = "33333333-3333-4333-8333-333333333333";
+const INCIDENT_ID_4 = "44444444-4444-4444-8444-444444444444";
 const NOTIF_ID_1 = "a1111111-1111-4111-8111-111111111111";
 const NOTIF_ID_2 = "a2222222-2222-4222-8222-222222222222";
 const NOTIF_ID_3 = "a3333333-3333-4333-8333-333333333333";
@@ -91,6 +96,7 @@ interface StartArgs {
   readonly findMany: NotificationRepository["notification"]["findMany"];
   readonly findUnique: NotificationRepository["notification"]["findUnique"];
   readonly updateMany: NotificationRepository["notification"]["updateMany"];
+  readonly findManyAdmin?: NotificationRepository["notification"]["findManyAdmin"];
 }
 
 const startApp = async (args: StartArgs): Promise<{ url: string; close: () => Promise<void> }> => {
@@ -103,6 +109,7 @@ const startApp = async (args: StartArgs): Promise<{ url: string; close: () => Pr
       repo: {
         notification: {
           findMany: args.findMany,
+          findManyAdmin: args.findManyAdmin ?? (async () => []),
           findUnique: args.findUnique,
           updateMany: args.updateMany,
         },
@@ -439,6 +446,500 @@ describe("Story 4.10 — PATCH /api/notifications/:id/acknowledge", () => {
       headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
     });
     expect(res.status).toBe(403);
+    await close();
+  });
+});
+
+/**
+ * Story 5.1 — `GET /api/notifications/admin/list`. Coverage for
+ * the I/O matrix and the Loop 1 severity multi-select wire fix:
+ *
+ *   - HAPPY_PATH_ADMIN: Admin lists 100 rows; envelope surfaces
+ *     `acknowledgedByUserId`.
+ *   - HAPPY_PATH_FILTERED: single severity chip → `in: ["critical"]`.
+ *   - SEVERITY_MULTI_SELECT (Loop 1 fix): 2-chip and 3-chip
+ *     selections pass the full array to Prisma `{ in: [...] }`.
+ *   - HAPPY_PATH_EMPTY: filter that matches no rows → empty array.
+ *   - HAPPY_PATH_DATE_RANGE: `?since=...&until=...` narrows by
+ *     `createdAt`.
+ *   - RBAC_OPERATOR / RBAC_TECHNICIAN / RBAC_VIEWER: 403 + audit.
+ *   - AUTH: 401 when no bearer token.
+ *   - 500: Prisma throw surfaces 500.
+ *   - EXPAND_HAS_INCIDENT: row has incidentId → wire carries it
+ *     for the panel's "view incident" link.
+ *   - EXPAND_NO_INCIDENT: row has incidentId: null.
+ *   - VALIDATION: malformed severity / date → 400.
+ */
+describe("Story 5.1 — GET /api/notifications/admin/list", () => {
+  it("HAPPY_PATH: Admin sees 3 rows with full audit detail (acknowledgedByUserId leaked)", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [
+          baseRow({
+            id: NOTIF_ID_1,
+            severity: "critical",
+            incidentId: INCIDENT_ID_1,
+            recipientRole: "Operator",
+            createdAt: new Date("2026-08-28T11:00:00.000Z"),
+            acknowledgedAt: new Date("2026-08-28T11:30:00.000Z"),
+            acknowledgedByUserId: ACKNOWLEDGER_ID,
+          }),
+          baseRow({
+            id: NOTIF_ID_2,
+            severity: "warning",
+            incidentId: null,
+            recipientRole: "Technician",
+            createdAt: new Date("2026-08-28T10:30:00.000Z"),
+          }),
+          baseRow({
+            id: NOTIF_ID_3,
+            severity: "info",
+            incidentId: INCIDENT_ID_3,
+            recipientRole: "Admin",
+            createdAt: new Date("2026-08-28T10:00:00.000Z"),
+          }),
+        ];
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { notifications: AdminNotificationPayload[] };
+    expect(body.notifications).toHaveLength(3);
+    // Audit detail is leaked on the admin surface.
+    expect(body.notifications[0]?.acknowledgedByUserId).toBe(ACKNOWLEDGER_ID);
+    expect(body.notifications[0]?.acknowledgedAt).toBe("2026-08-28T11:30:00.000Z");
+    expect(body.notifications[1]?.acknowledgedByUserId).toBeNull();
+    expect(body.notifications[1]?.incidentId).toBeNull();
+    // All recipient roles surface (admin audit lens).
+    expect(body.notifications.map((n) => n.recipientRole)).toEqual([
+      "Operator",
+      "Technician",
+      "Admin",
+    ]);
+    await close();
+  });
+
+  it("FILTERED: ?severity=critical narrows to { in: [critical] }", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list?severity=critical`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    const call = findManyAdminCalls[0] as {
+      where: { severity?: { in: readonly string[] } };
+      orderBy: unknown;
+      take: number;
+    };
+    expect(call?.where.severity).toEqual({ in: ["critical"] });
+    expect(call?.orderBy).toEqual({ createdAt: "desc" });
+    expect(call?.take).toBe(100);
+    await close();
+  });
+
+  it("SEVERITY_MULTI_SELECT_2: ?severity=critical&severity=warning passes the full array (Loop 1 fix)", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?severity=critical&severity=warning`,
+      {
+        headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+      },
+    );
+    expect(res.status).toBe(200);
+    const call = findManyAdminCalls[0] as {
+      where: { severity?: { in: readonly string[] } };
+    };
+    expect(call?.where.severity).toEqual({ in: ["critical", "warning"] });
+    await close();
+  });
+
+  it("SEVERITY_MULTI_SELECT_3: ?severity=critical&severity=warning&severity=info passes the full array (Loop 1 fix)", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?severity=critical&severity=warning&severity=info`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(200);
+    const call = findManyAdminCalls[0] as {
+      where: { severity?: { in: readonly string[] } };
+    };
+    expect(call?.where.severity).toEqual({ in: ["critical", "warning", "info"] });
+    await close();
+  });
+
+  it("SEVERITY_DEDUP: repeated severity param is de-duplicated", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?severity=critical&severity=critical&severity=warning`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(200);
+    const call = findManyAdminCalls[0] as {
+      where: { severity?: { in: readonly string[] } };
+    };
+    expect(call?.where.severity).toEqual({ in: ["critical", "warning"] });
+    await close();
+  });
+
+  it("EMPTY: filter that matches no rows → { notifications: [] }", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => [],
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?severity=critical&severity=warning`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ notifications: [] });
+    await close();
+  });
+
+  it("DATE_RANGE: ?since=...&until=... narrows by createdAt", async () => {
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?since=2026-08-29T00:00:00Z&until=2026-08-30T00:00:00Z`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(200);
+    const call = findManyAdminCalls[0] as {
+      where: { since?: Date; until?: Date };
+    };
+    expect(call?.where.since?.toISOString()).toBe("2026-08-29T00:00:00.000Z");
+    expect(call?.where.until?.toISOString()).toBe("2026-08-30T00:00:00.000Z");
+    await close();
+  });
+
+  it("DATE_RANGE_INVALID: ?since >= ?until → 400 with invalid_range body", async () => {
+    // Loop 1 review finding E2: silently returning an empty
+    // result for `since > until` is a confusing UX. Surface 400
+    // with `invalid_range` so the page (or a future custom date
+    // picker) can correct the input.
+    const findManyAdminCalls: readonly unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      // until === since — Prisma `gte` AND `lt` yields 0 rows.
+      `${url}/api/notifications/admin/list?since=2026-08-30T00:00:00Z&until=2026-08-30T00:00:00Z`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_range");
+    // The data layer MUST NOT receive the bad range — the
+    // repository call is short-circuited at the router.
+    expect(findManyAdminCalls).toHaveLength(0);
+    await close();
+  });
+
+  it("DATE_RANGE_INVALID_STRICT: ?since > ?until → 400 (boundary beyond equal)", async () => {
+    // Loop 2 review hardening: the previous test covered the equal
+    // case (`since === until`). The strict-greater case is the
+    // stronger boundary — a future regression that flips `>=` to
+    // `>` would silently let the inverted range reach the data
+    // layer and return 0 rows with no signal to the admin.
+    const findManyAdminCalls: unknown[] = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(
+      `${url}/api/notifications/admin/list?since=2026-08-30T12:00:00Z&until=2026-08-30T00:00:00Z`,
+      { headers: { Authorization: `Bearer ${tokenForRole("Admin")}` } },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("invalid_range");
+    expect(findManyAdminCalls).toHaveLength(0);
+    await close();
+  });
+
+  it("FIND_MANY_ADMIN_MISSING: resolveNotificationRepository throws when findManyAdmin extension is absent", async () => {
+    // Loop 2 review hardening: the resolveNotificationRepository
+    // throw (H2/E10 patch) has no positive test. This pins the
+    // contract — a future refactor that re-introduces a silent
+    // fallback (so admin endpoints accidentally use the
+    // operator-shaped findMany) trips this assertion. Production
+    // only; the startApp test rig provides a stub.
+    const { resolveNotificationRepository } = await import("./notificationRepository");
+    expect(() =>
+      resolveNotificationRepository({
+        notification: {
+          findMany: async () => [],
+          findUnique: async () => null,
+          updateMany: async () => ({ count: 0 }),
+          // findManyAdmin deliberately missing
+        },
+      } as never),
+    ).toThrow(/findManyAdmin/);
+  });
+
+  it("TAKE_CLAMP: api passes take: 100 to findManyAdmin (paginated ceiling)", async () => {
+    // Loop 2 review hardening: pin the v1 page-size ceiling so a
+    // future regression that flips the cap trips the test.
+    const findManyAdminCalls: Array<{ take?: number }> = [];
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async (args) => {
+        findManyAdminCalls.push(args);
+        return [];
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    expect(findManyAdminCalls).toHaveLength(1);
+    expect(findManyAdminCalls[0]?.take).toBe(100);
+    await close();
+    void res;
+  });
+
+  it("RBAC_OPERATOR: Operator cannot read the admin list → 403 + rbac_denied audit", async () => {
+    const auditCalls: unknown[] = [];
+    const { url, close } = await startApp({
+      audit: {
+        emit: (event) => {
+          auditCalls.push(event);
+        },
+      },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Operator")}` },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("forbidden");
+    const denialAudit = auditCalls.find(
+      (c): c is { auditAction: string } =>
+        typeof c === "object" &&
+        c !== null &&
+        (c as { auditAction?: string }).auditAction === "rbac_denied",
+    );
+    expect(denialAudit).toBeDefined();
+    await close();
+  });
+
+  it("RBAC_TECHNICIAN: Technician cannot read the admin list → 403", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Technician")}` },
+    });
+    expect(res.status).toBe(403);
+    await close();
+  });
+
+  it("RBAC_VIEWER: Viewer cannot read the admin list → 403", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
+    });
+    expect(res.status).toBe(403);
+    await close();
+  });
+
+  it("AUTH: 401 when no bearer token is presented", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => [],
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`);
+    expect(res.status).toBe(401);
+    await close();
+  });
+
+  it("500: Prisma throw surfaces 500", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("prisma unreachable");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(500);
+    await close();
+  });
+
+  it("EXPAND_HAS_INCIDENT: row with incidentId is preserved on the wire", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => [
+        baseRow({
+          id: NOTIF_ID_1,
+          incidentId: INCIDENT_ID_4,
+          recipientRole: "Operator",
+        }),
+      ],
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { notifications: AdminNotificationPayload[] };
+    expect(body.notifications[0]?.incidentId).toBe(INCIDENT_ID_4);
+    await close();
+  });
+
+  it("EXPAND_NO_INCIDENT: row with incidentId: null is preserved as null", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => [
+        baseRow({ id: NOTIF_ID_1, incidentId: null, recipientRole: "Viewer" }),
+      ],
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { notifications: AdminNotificationPayload[] };
+    expect(body.notifications[0]?.incidentId).toBeNull();
+    await close();
+  });
+
+  it("VALIDATION: malformed severity value → 400", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list?severity=foo`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(400);
+    await close();
+  });
+
+  it("VALIDATION: malformed since date → 400", async () => {
+    const { url, close } = await startApp({
+      audit: { emit: () => undefined },
+      findMany: async () => [],
+      findUnique: async () => null,
+      updateMany: async () => ({ count: 0 }),
+      findManyAdmin: async () => {
+        throw new Error("should not be called");
+      },
+    });
+    const res = await fetch(`${url}/api/notifications/admin/list?since=not-a-date`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Admin")}` },
+    });
+    expect(res.status).toBe(400);
     await close();
   });
 });

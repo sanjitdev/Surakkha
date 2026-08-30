@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-30T20:35:00.000Z
+# last_updated: 2026-08-30T22:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-30T19:30:00.000Z
+last_updated: 2026-08-30T22:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -119,7 +119,7 @@ development_status:
   # failures surfaced in the Epic 3 retro. Lands BEFORE Story 5.1 so the
   # rbac_allowed emit is wired before any new audit-row consumers land.
   5-0-ai-3-1-fix-sweep: done
-  5-1-admin-notifications-read-view: backlog
+  5-1-admin-notifications-read-view: done
   5-2-csv-export-of-30-days-of-readings: backlog
   5-3-audit-log-surface-at-audit: backlog
   5-4-readingaggregate-table: backlog
