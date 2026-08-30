@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-30T03:00:00.000Z
+# last_updated: 2026-08-30T05:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-30T03:00:00.000Z
+last_updated: 2026-08-30T05:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -109,7 +109,7 @@ development_status:
   4-9-notification-writer: done
   4-10-notificationbell-dropdown: done
   4-11-reopen-path: done
-  4-12-technician-filtered-kanban: backlog
+  4-12-technician-filtered-kanban: done
   4-13-attachments: backlog
 
   # ===== Epic 5 — Reporting & Audit =====
@@ -572,14 +572,14 @@ stories:
 
   - id: "4.12"
     title: "Technician-Filtered Kanban"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
+    commit: "a5d04f7"
+    shipped: "2026-08-30"
     covers: []
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md"
+      review: "_bmad-output/implementation-artifacts/4-12-diff.patch"
 
   - id: "4.13"
     title: "Attachments"

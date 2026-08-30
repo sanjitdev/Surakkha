@@ -2,8 +2,9 @@
 title: "Story 4.12 — Technician-Filtered Kanban"
 type: "feature"
 created: "2026-08-28"
-status: "draft"
-review_loop_iteration: 0
+status: "done"
+review_loop_iteration: 1
+baseline_commit: "59c3621"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/planning-artifacts/epics.md
@@ -21,14 +22,16 @@ context:
 
 **Approach:** Modify `GET /api/incidents/active` to filter rows by `assignee_user_id` for Technician viewers ONLY — Admin, Operator, and Viewer continue to see every row. The filter is the responsibility of the active-list endpoint (not the Kanban client), so the Kanban component is unchanged: it just renders the filtered envelope. For Technician viewers, the empty state reads `"No incidents assigned to you."` (per UX-DR-14). The socket subscription continues to drive real-time updates; `incident:state_changed` events that don't match the Tech's `assignee_user_id` are filtered out at the cache-projection layer (the helper that mutates the active list applies the same filter). The detail page's existing 403 path (4.4) is unchanged — a Technician navigating directly to `/incidents/:id` for someone else's incident still gets `<RbacDenied />`.
 
+**Loop 1 amendment (Step-04 review):** The cache-write-time filter in the socket helper (`applyStateChangeToCache` dropping rows whose `assignee_user_id !== self`) was found to be unsafe because `useSeverityBanner` (Story 4.8) reads the SAME shared cache key (`["incidents", "active"]`) and the banner is a GLOBAL safety surface that MUST NOT be Tech-filtered. The fix moves the client-side Tech filter to **render time** in `KanbanBoard` (`renderedIncidents = useMemo` filters by `assignee_user_id === currentUserId` for Technicians). The cache stays unfiltered; only the rendered slice is filtered. The server-side WHERE filter remains (defense-in-depth; the security boundary). See Spec Change Log Loop 1.
+
 ## Boundaries & Constraints
 
 **Always:**
 
 - The filter is `incident.assignee_user_id === req.user.id` for `req.user.role === "Technician"`. Admin, Operator, Viewer get the unfiltered active list.
-- The filter is at the **list endpoint** (`GET /api/incidents/active`), NOT at the Kanban component. The Kanban renders whatever envelope the endpoint returns. This matches the 4.8 precedent of `SeverityBanner` reading from the same endpoint without client-side filtering.
+- The server-side filter is at the **list endpoint** (`GET /api/incidents/active`) — the security boundary (defense-in-depth). The Kanban component ALSO filters at render time (a render-time `useMemo` slice on `assignee_user_id === currentUserId` for Technicians), but the filter lives in TWO layers: server (security) + client render (UX + shared-cache safety). This 4.12 amendment replaced the original "filter only at the server" stance — the step-04 review found that without a client render-time filter, the socket helper's cache-write-time filter would silently drop other-Tech rows from `SeverityBanner`'s read of the shared cache.
 - The empty state for Technician viewers reads `"No incidents assigned to you."` — a `<p data-testid="kanban-empty-state-technician" />` element rendered when the envelope is `{ incidents: [] }` AND the viewer is a Technician. Admin/Operator/Viewer get the existing "No incidents" empty state (4.3's surface).
-- The socket subscription's `applyStateChangeToCache` helper (4.3's pure function) filters out rows whose `assignee_user_id !== currentUserId` for Technician viewers. Pinned at the helper boundary: when the helper mutates the cache, the row is dropped if it doesn't match the filter.
+- The socket subscription's `applyStateChangeToCache` helper (4.3's pure function) does NOT filter by `assignee_user_id`. The cache stays authoritative for ALL consumers; the Tech-only filter lives at RENDER TIME in `KanbanBoard` (4.12 amendment — see Spec Change Log Loop 1).
 - The detail page's existing 403 path is unchanged. A Technician who navigates to `/incidents/:id` for someone else's incident still hits the 4.4 `<RbacDenied />` surface (no new branch needed).
 - The filter does NOT apply to the `SeverityBanner` (4.8) — the banner is a global safety surface; a UNSAFE row assigned to another Technician should still be visible to all roles. The banner's endpoint (`GET /api/incidents/active` filtered for severity banner's own query) does NOT get the Tech filter. Documented as deferral: when the bell (4.10) or banner (4.8) needs Tech-filtered variants, add a query-param like `?assignee=self`.
 - The active list's row projection (`projectKanbanColumn`) is unchanged. The filter is at the WHERE clause, not the column derivation.
@@ -76,23 +79,33 @@ context:
 
 **Backend (`packages/api/`):**
 
-- `src/incidents/activeRouter.ts` — MODIFY. Add a single line to the `findMany` `where` clause: when `req.user.role === "Technician"`, append `assigneeUserId: req.user.id`. Reuse the existing `authenticate` + `authorize({ action: "read", resource: "Incident" })` pattern. No other handler logic changes.
-- `src/incidents/activeRouter.spec.ts` — MODIFY. Add ~5 tests: HAPPY_PATH_TECHNICIAN (2 rows for Tech A, 1 for Tech B → only A's 2 returned), ZERO_TECHNICIAN, HAPPY_PATH_OPERATOR (full list, filter not applied), SOCKET_FILTER_DROP (replay a socket event with `assignee_user_id` mismatch → row dropped at the helper boundary), REASSIGN_VISIBILITY.
-- `src/incidents/incidentStateRepository.ts` — NO CHANGE. The repository's `incident.findMany` accepts a `where: { assigneeUserId }` predicate already.
+- `src/incidents/activeRouter.ts` — MODIFY. Line 75-95 handler. Replace `_req` parameter with `req` (line 78). At line 82, the `findMany` `where` clause gains a conditional `assigneeUserId: req.user.id` spread when `req.user.role === "Technician"`. No other handler logic changes.
+- `src/incidents/incidentStateRepository.ts` — MODIFY. Line 92-97 `findMany` interface widens the `where` type from `state?: { not: IncidentState }` to `state?: { not: IncidentState }; assigneeUserId?: string` so the conditional spread is type-safe. No runtime change.
+- `src/incidents/activeRouter.spec.ts` — MODIFY. Widen `tokenForRole` (line 47-52) from `"Admin" | "Operator"` to `"Admin" | "Operator" | "Technician"`; add `TECH_ID` constant. Add ~5 tests: HAPPY_PATH_TECHNICIAN (2 rows for Tech A, 1 for Tech B → only A's 2 returned), ZERO_TECHNICIAN, HAPPY_PATH_OPERATOR (full list, filter not applied — covers Operator + Admin + Viewer passes), SOCKET_FILTER_DROP (the WHERE clause is observable in the captured `findMany.args`), REASSIGN_VISIBILITY (Tech A → Tech B reassign → Tech A sees empty).
 
 **Shared (`packages/shared/`):**
 
-- `src/incident.ts` — NO CHANGE. `IncidentPayloadSchema` already exposes `assignee_user_id` at line 158.
-- `src/rbac.ts` — NO CHANGE. Matrix grants `read.Incident = Y` for all four roles.
+- `src/incident.ts` — NO CHANGE. `IncidentPayloadSchema` already exposes `assignee_user_id` at line 162.
+- `src/rbac.ts` — NO CHANGE. Matrix grants `read.Incident = Y` for all four roles at lines 106 (Admin) / 165 (Operator) / 227 (Technician) / 286 (Viewer).
 
 **Web (`packages/web/`):**
 
-- `src/incidents/KanbanBoard.tsx` — NO CHANGE. The Kanban renders the envelope verbatim.
-- `src/incidents/KanbanBoard.spec.tsx` — MODIFY. Add ~3 tests: HAPPY_PATH_TECHNICIAN (envelope has 2 rows for Tech A → Kanban renders 2 cards + no empty state), ZERO_TECHNICIAN (envelope empty → empty state shows `"No incidents assigned to you."`), REASSIGN_VISIBILITY (cache mutation with `assignee_user_id` change → row drops).
-- `src/incidents/useKanbanBoardSocket.ts` — MODIFY. Extend `applyStateChangeToCache` (the pure helper) to drop rows whose `assignee_user_id !== currentUserId` for Technician viewers. The filter predicate is the same as the backend's; the helper is a client-side mirror for real-time consistency. Read `currentUserId` from the `CurrentRoleContext` (which exposes both `role` + `userId` per 4.10's investigation).
+- `src/auth/CurrentRoleContext.tsx` — MODIFY. Line 34-36 widens `CurrentRoleContextValue` from `{ role: Role | null }` to `{ role: Role | null; userId: string | null }`. The provider (line 56-77) decodes `userId` alongside `role` via `decodeAccessToken` (which already returns `userId` at `jwtDecode.ts:26`). New `useCurrentUserId()` hook exported alongside `useCurrentRole`. Test-only `initialUserId` prop on `CurrentRoleProvider` mirrors `initialRole`.
+- `src/incidents/useKanbanBoardSocket.ts` — MODIFY. Line 68-93 helper signature widens from `(prev, event)` to `(prev, event, currentUserId?)`. New `TECH_FILTER_DROP` guard mirrors the existing `RESOLVED_DROP` shape (line 75-79): when `currentUserId !== undefined` AND the row's `assignee_user_id !== currentUserId`, the helper returns `prev` unchanged (silent drop, same shape as `idx === -1` at line 73). The hook (line 99-121) reads `useCurrentUserId()` and threads the value through. JSDoc at lines 62-66 fixed (aspirational "mutated" | "removed" | "dropped" return type replaced with the actual `ActiveCacheEnvelope | undefined` shape).
+- `src/incidents/KanbanBoard.tsx` — MODIFY. Line 257-269. Add a Tech-specific empty-state branch ABOVE the column loop (around line 244-245): `{incidents.length === 0 && role === "Technician" ? <p data-testid="kanban-empty-state-technician">No incidents assigned to you.</p> : null}`. The per-column `kanban-column-${column}-empty` testid is retained for the global empty state (Admin/Operator/Viewer).
+- `src/incidents/KanbanBoard.spec.tsx` — MODIFY. Widen `renderBoard` (line 98) from `"Admin" | "Operator" | "Viewer"` to `"Admin" | "Operator" | "Viewer" | "Technician"`. Add `initialUserId` prop threading. Add ~3 tests: HAPPY_PATH_TECHNICIAN (envelope has 2 rows for Tech A → Kanban renders 2 cards + NO board-level empty state), ZERO_TECHNICIAN (envelope empty → empty state shows "No incidents assigned to you."), SOCKET_FILTER_DROP (Tech viewer; another Tech's incident transitions → row dropped via helper), SOCKET_FILTER_KEEP (Tech viewer; their own incident transitions → row stays).
 - `src/incidents/SeverityBanner.tsx` (4.8) — NO CHANGE. Banner reads the unfiltered active list; Tech-filtered banner is deferred.
 - `src/notifications/NotificationBell.tsx` (4.10) — NO CHANGE. Bell reads the notifications endpoint, not active list.
 - `src/incidents/IncidentDetailPage.tsx` (4.4) — NO CHANGE. Detail page's 403 path is the existing 4.4 surface.
+
+**Deviations from spec (investigation 2026-08-30):**
+
+1. **`CurrentRoleContext`** does NOT currently expose `userId` (spec assumed it did per 4.10's investigation). **Fix:** extend `CurrentRoleContextValue` to include `userId`. `decodeAccessToken` already returns `userId` from the JWT subject claim (`jwtDecode.ts:26, 72`). New `useCurrentUserId()` hook + `initialUserId` test prop.
+2. **`incident.findMany` `where` type** does NOT include `assigneeUserId`. **Fix:** widen the narrow type at `incidentStateRepository.ts:92-97`. Type-safe at compile time.
+3. **`tokenForRole`** typed `"Admin" | "Operator"` only. **Fix:** add `"Technician"` to the union.
+4. **`renderBoard`** typed `"Admin" | "Operator" | "Viewer"` only. **Fix:** add `"Technician"`.
+5. **`applyStateChangeToCache` JSDoc** claims `"mutated" | "removed" | "dropped"` return type but actual return is `ActiveCacheEnvelope | undefined`. **Fix:** align JSDoc with behavior.
+6. **Spec line ranges** for rbac.ts (109/167/228) are off by 1-3 from actual (106/165/227); detail-endpoint Tech check (245-259 vs actual 246-265). **Cosmetic.**
 
 ## Tasks & Acceptance
 
@@ -155,16 +168,76 @@ context:
 
 ## Spec Change Log
 
-Append-only. Populated by step-04 during review loops. Empty until the first bad_spec loopback.
+Append-only. Populated by step-04 during review loops.
+
+### Loop 0 (2026-08-30) — pre-implementation investigation
+
+The step-02 investigation surfaced six mechanical deviations from the original draft spec; all are addressed in the Code Map above:
+
+1. **`CurrentRoleContext` did not expose `userId`** — `CurrentRoleContextValue` was `{ role }` only. Spec assumed `userId` was already there (citing 4.10's investigation). **Fix:** extend `CurrentRoleContextValue` to include `userId: string | null`; add `useCurrentUserId()` hook + `initialUserId` test prop on `CurrentRoleProvider`. `decodeAccessToken` already returns `userId` from the JWT `sub` claim at `jwtDecode.ts:26, 72`.
+
+2. **`incident.findMany` `where` type did not include `assigneeUserId`** — the narrow type at `incidentStateRepository.ts:92-97` was `state?: { not: IncidentState }`. **Fix:** widen to `state?: { not: IncidentState }; assigneeUserId?: string`. Type-safe; no runtime change.
+
+3. **`tokenForRole` typed `"Admin" | "Operator"` only** at `activeRouter.spec.ts:47-52`. **Fix:** widen to `"Admin" | "Operator" | "Technician"`; add `TECH_ID` constant.
+
+4. **`renderBoard` typed `"Admin" | "Operator" | "Viewer"` only** at `KanbanBoard.spec.tsx:98`. **Fix:** widen to `"Admin" | "Operator" | "Viewer" | "Technician"`.
+
+5. **`applyStateChangeToCache` JSDoc aspirational** — claimed `"mutated" | "removed" | "dropped"` return type at `useKanbanBoardSocket.ts:62-66`; actual return is `ActiveCacheEnvelope | undefined`. **Fix:** align JSDoc with behavior; rename JSDoc tags to match the silent-drop contract.
+
+6. **Spec line ranges for rbac.ts (109/167/228)** were off by 1-3 from actual (106/165/227); detail-endpoint Tech check (245-259 vs actual 246-265). **Cosmetic**; line numbers in Code Map updated.
+
+No ACs amended — all deviations are mechanical type widenings + a new seam (CurrentRoleContext.userId) that the spec assumed existed but didn't.
+
+### Loop 1 (2026-08-30) — step-04 review
+
+The step-04 review (3 parallel reviewers: blind-hunter, edge-case-hunter, verification-gap) surfaced **1 HIGH-severity bug** + 7 medium/low findings. All addressed in the follow-up commit.
+
+**Bad spec (HIGH severity) — Socket helper drops other-Tech rows from SeverityBanner's cache.**
+
+The original implementation put the Tech filter at THREE places:
+
+- Server `WHERE assigneeUserId = req.user.id` (the security boundary — kept).
+- Socket helper `applyStateChangeToCache` `TECH_FILTER_DROP` (dropped rows whose `assignee_user_id !== currentUserId`).
+- Implied client render-time filter (none — the original design relied on the server filter alone).
+
+The verification-gap reviewer caught that **`useSeverityBanner` (Story 4.8) reads the SAME shared cache key `["incidents", "active"]`**. Story 4.8's `SEVERITY_BANNER_QUERY_KEY = KANBAN_ACTIVE_QUERY_KEY` (the spec mandates a global safety surface — every UNSAFE row must be visible to every role, not just the row's assignee). If the socket helper drops other-Tech rows at cache-write time, the banner would silently lose those rows on every state transition. **AC9 violation**: "SeverityBanner is NOT Tech-filtered — global safety surface."
+
+**Fix (Loop 1 patches):**
+
+1. **Remove `TECH_FILTER_DROP` from `applyStateChangeToCache`** at `packages/web/src/incidents/useKanbanBoardSocket.ts:100-104`. The helper reverts to 4.3's contract: drop on `RESOLVED`, mutate-in-place otherwise. No `currentUserId` parameter.
+2. **Remove `useCurrentUserId` from `useKanbanBoardSocket`** — the hook no longer reads the user id.
+3. **Add render-time filter in `KanbanBoard`** at `packages/web/src/incidents/KanbanBoard.tsx`:
+   ```ts
+   const renderedIncidents = useMemo<readonly IncidentPayload[]>(() => {
+     const all = query.data?.incidents ?? [];
+     if (role !== "Technician" || currentUserId === null) return all;
+     return all.filter((i) => i.assignee_user_id === currentUserId);
+   }, [query.data?.incidents, role, currentUserId]);
+   ```
+   The columns derive from `renderedIncidents`; the cache stays unfiltered; the banner sees the global view; the Kanban sees the Tech-only view.
+4. **`isTechEmpty` counts `renderedIncidents.length` (not raw envelope)** — a Tech whose server envelope has rows but none are theirs sees the Tech empty state.
+5. **Add `!query.isLoading && !query.isFetching` guard** on `isTechEmpty` — prevents a one-frame flash of "No incidents assigned to you." during the initial fetch.
+
+**Other Loop 1 patches:**
+
+- **P2** — Added Viewer test assertion in `activeRouter.spec.ts` (widened `tokenForRole` to include "Viewer"; pinned `assigneeUserId === undefined` for the Viewer path).
+- **P4** — Clarified JSDoc on `incidentStateRepository.ts` `findMany` `take` — caller-owned.
+- **P6** — JSDoc warning on the widened `where.assigneeUserId` field — share-scope caution.
+- **P8** — Defensive `req.user` check in `activeRouter.ts` — when a Technician request lacks `req.user.id`, return 500 rather than silently leak the unfiltered list.
+
+**Spec amendments:** Updated the "Always" boundary for the socket helper (no longer filters) and the "Always" boundary for the filter location (now dual: server security + client render UX).
+
+No new deferred work beyond the 4 entries appended to `deferred-work.md` (index/optimization notes; the dual-filter redundancy is intentional defense-in-depth).
 
 ## Suggested Review Order
 
 A reviewer should walk the change in this order to catch the load-bearing seams first:
 
-1. **Backend filter** — `packages/api/src/incidents/activeRouter.ts`. The single-line WHERE clause: `assigneeUserId: req.user.id` when `req.user.role === "Technician"`.
+1. **Backend filter** — `packages/api/src/incidents/activeRouter.ts`. The single-line WHERE clause: `assigneeUserId: req.user.id` when `req.user.role === "Technician"`. This is the security boundary.
 2. **Backend tests** — `packages/api/src/incidents/activeRouter.spec.ts`. Pin the filter for Tech + non-applied for Admin/Operator/Viewer.
-3. **Socket helper filter** — `packages/web/src/incidents/useKanbanBoardSocket.ts`. `applyStateChangeToCache` extended to drop rows with mismatched `assignee_user_id` for Technician viewers.
-4. **Empty state** — `packages/web/src/incidents/KanbanBoard.tsx`. The Tech-specific `<p data-testid="kanban-empty-state-technician" />` render branch.
-5. **Kanban tests** — `packages/web/src/incidents/KanbanBoard.spec.tsx`. Pin Tech happy/zero paths + SOCKET_FILTER_DROP + SOCKET_FILTER_KEEP.
-6. **No-touch surfaces** — `SeverityBanner.tsx` (4.8), `NotificationBell.tsx` (4.10), `IncidentDetailPage.tsx` (4.4). Pinned by absence: none of these files change.
-7. **Spec doc + ACs** — this file. Each AC bullet maps to a specific test file.
+3. **Socket helper** — `packages/web/src/incidents/useKanbanBoardSocket.ts`. `applyStateChangeToCache` does NOT filter (Loop 1 amendment) — the helper reverts to 4.3's contract.
+4. **Render-time filter** — `packages/web/src/incidents/KanbanBoard.tsx`. The `renderedIncidents` `useMemo` filters by `assignee_user_id === currentUserId` for Technicians; cache stays global.
+5. **Empty state** — `packages/web/src/incidents/KanbanBoard.tsx`. The Tech-specific `<p data-testid="kanban-empty-state-technician" />` render branch + the `!query.isLoading && !query.isFetching` guard.
+6. **Kanban tests** — `packages/web/src/incidents/KanbanBoard.spec.tsx`. Pin Tech happy/zero paths + the `currentUserId` filter contract.
+7. **Shared-cache invariant** — `SeverityBanner.tsx` (4.8). Pinned by absence: the banner reads the unfiltered cache and shows every Tech's UNSAFE row.
+8. **Spec doc + ACs** — this file. Each AC bullet maps to a specific test file.

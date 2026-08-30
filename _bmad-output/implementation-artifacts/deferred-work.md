@@ -176,3 +176,21 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-11-reopen-path.md`
   summary: `ReopenForm` textarea `maxLength={2000}` enforces the cap client-side via `maxLength` HTML attribute, but the server-side `reopenBodySchema` cap (`REOPEN_REASON_MAX_LENGTH = 2000`) is the canonical source of truth — client-side only enforcement means paste-bypass is possible.
   evidence: `packages/web/src/incidents/IncidentDetailActions.tsx` `<textarea maxLength={2000} ... />`. Browser `maxLength` is a soft cap — a paste can exceed it (Chrome behaviour depends on length, browser version). The server still validates and 400s on over-length. **Acceptable for v1** — the server-side validation is the security boundary; the client `maxLength` is operator-UX, not security. Defer to a hardening pass that adds explicit JS-side length check inside `onSubmit` if operator reports show paste-bypass issues.
+
+## Deferred from: code review of 4-12-technician-filtered-kanban (2026-08-30)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md`
+  summary: Server-side `assigneeUserId` filter is a `String` equality predicate on `Incident.assignee_user_id` — does NOT leverage the existing partial index `Incident_assignee_user_id_idx` from Story 4.2's migration.
+  evidence: `packages/api/src/incidents/activeRouter.ts:88` spreads `assigneeUserId: req.user.id` into the WHERE clause. The Prisma adapter is `incident.findMany({ where: { state: { not: RESOLVED }, assigneeUserId: ... } })`. The query plan will use the index for the equality lookup, but the predicate combination (`state !== RESOLVED` AND `assigneeUserId = ?`) may not pick the most selective index first. **Defer to a query-plan sweep** — Tech viewer volumes are small (≤ ~10 incidents per Tech), so the seq-scan fallback is fine. Add `@@index([assigneeUserId, state])` if query plans regress under real Tech load.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md`
+  summary: `KanbanBoard` render-time filter (`role === "Technician" && currentUserId !== null`) does NOT check the `assignee_user_id` column for stale `null` rows that may have been assigned to the Tech but the assignment was cleared (e.g., a 4.6 reassign to another Tech + back to unassigned).
+  evidence: `packages/web/src/incidents/KanbanBoard.tsx:renderedIncidents` filters by `i.assignee_user_id === currentUserId`. If `assignee_user_id === null`, the row is excluded — that's correct (an unassigned row is not Tech A's). **No bug, just documenting** the contract.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md`
+  summary: `useCurrentUserId()` returns `null` for an unauthenticated viewer — but the route gate renders `<RbacDenied />` before this hook runs, so the `null` branch is unreachable in practice. The render-time filter's `currentUserId === null` short-circuit is defensive but never fires.
+  evidence: `packages/web/src/auth/CurrentRoleContext.tsx:112` returns `null` for unauthenticated. The route gate in `main.tsx` redirects unauthenticated viewers to `/login` before mounting `<KanbanBoard />`. **Acceptable as defensive code** — the explicit short-circuit documents the invariant. No follow-up needed unless the route gate is bypassed (it isn't).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md`
+  summary: Server filter and client render-time filter are redundant (defense-in-depth). The server already filters Tech viewers at the WHERE clause; the client re-filters the rendered slice. The server filter is the security boundary; the client filter handles the case where the cache is shared with SeverityBanner.
+  evidence: Two layers, both correct. **Documenting for future readers** — a maintainer who sees the client filter may think it's the only filter and remove the server one (security regression). The dual-filter is intentional; do not collapse.
