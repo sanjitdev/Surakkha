@@ -18,6 +18,16 @@
  * Fix: move the catch-all to AFTER the
  * `app.use(buildIncidentsRouterMount(...))` block.
  *
+ * After the 2026-08-30 distillation:
+ *   - `/admin/thresholds` is mounted via `mountThresholdsRouter({...})`
+ *     (extracted to `src/admin/thresholdsWiring.ts`). The test pins
+ *     `mountThresholdsRouter(` appearing BEFORE the catch-all —
+ *     same ordering contract, different surface.
+ *   - `/api/incidents/recent` is still mounted via
+ *     `buildRecentIncidentsRouter(` (no change).
+ *   - `/api/incidents/...` transition is still mounted via
+ *     `buildIncidentsRouterMount({...})` (no change).
+ *
  * Why a source-walk test rather than a behavioural one:
  *   - The ordering bug is structural: the only way to express
  *     "the 404 handler is after the adapter mount" is at the
@@ -87,10 +97,15 @@ describe("api catch-all 404 — must be mounted after every router", () => {
     expect(notFoundLine).toBeGreaterThan(recentLine);
   });
 
-  it("registers catch-all 404 AFTER buildThresholdsRouter", () => {
+  it("registers catch-all 404 AFTER mountThresholdsRouter", () => {
+    // After the 2026-08-30 distillation, the thresholds router is
+    // mounted via `mountThresholdsRouter({...})` in
+    // `src/admin/thresholdsWiring.ts`. The mount helper call lives
+    // in `index.ts`; the catch-all 404 must come AFTER it so
+    // `/admin/thresholds/...` requests are routed correctly.
     const source = readIndex();
     const notFoundLine = catchAllLine(source);
-    const thresholdsLine = lineOf(source, "buildThresholdsRouter(");
+    const thresholdsLine = lineOf(source, "mountThresholdsRouter(");
     expect(notFoundLine).toBeGreaterThan(thresholdsLine);
   });
 
