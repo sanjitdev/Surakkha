@@ -515,5 +515,11 @@ export const AuditActionSchema = z.enum([
   "reading_rate_limited",
   "seq_drop_detected",
   "seq_reorder_detected",
+  // Story 5.0 / AI-3.1 — every successful authorization writes an
+  // `rbac_allowed` audit row (paired with `rbac_denied` on the
+  // failure branch). Operational dashboards key off these pairs to
+  // count permitted vs denied attempts; the wire shape mirrors
+  // `rbac_denied` with `outcome: "allow"` instead of `"failure"`.
+  "rbac_allowed",
 ]);
 export type AuditAction = z.infer<typeof AuditActionSchema>;

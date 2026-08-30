@@ -406,14 +406,6 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
       }
       const { firstAck, acknowledgedAt, deviceId, actorUserId } = resolution;
 
-      if (firstAck) {
-        emitAckIfFirst(deps.broadcast, deviceId, {
-          alert_id: alertId,
-          acknowledged_at: acknowledgedAt.toISOString(),
-          actor_user_id: actorUserId,
-        });
-      }
-
       // AC1c pin: the same `acknowledgedAt` Date instance is rendered
       // to the wire here AND was written to the DB above. `.safeParse`
       // (vs `.parse`) is the guard rail against future drift throwing
@@ -423,6 +415,20 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
         console.error(`[alerts] acknowledge: response schema drift alertId=${alertId}`);
         res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
         return;
+      }
+
+      // Emit `alert:acknowledged` AFTER the response-schema safeParse
+      // check. Contract: a schema-drift 500 must NOT fire an emit,
+      // otherwise downstream WebSocket consumers would see a phantom
+      // event claiming the row changed when the wire response says
+      // it didn't. Pinned by ACK_RESPONSE_SCHEMA_DRIFT
+      // (acknowledgeRouter.spec.ts:812).
+      if (firstAck) {
+        emitAckIfFirst(deps.broadcast, deviceId, {
+          alert_id: alertId,
+          acknowledged_at: acknowledgedAt.toISOString(),
+          actor_user_id: actorUserId,
+        });
       }
 
       // Operator-triage log. Fires on EVERY successful acknowledge

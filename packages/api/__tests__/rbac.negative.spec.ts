@@ -142,8 +142,13 @@ describe("Story 1.8 — Negative RBAC register (FR-21)", () => {
           expect(denial?.context).toMatchObject({ reason: "not_assignee" });
         }
       } else {
-        // Allow-case (matrix-level pass). No audit row, no 403.
-        expect(events).toEqual([]);
+        // Allow-case (matrix-level pass). The `authorize()`
+        // middleware now writes a `rbac_allowed` audit row on every
+        // successful allow (see authorize.ts:206-215); the loopback
+        // assertion below pins that row exactly once. No 403.
+        expect(events.length).toBe(1);
+        expect(events[0]?.auditAction).toBe("rbac_allowed");
+        expect(events[0]?.outcome).toBe("allow");
       }
 
       await close();
@@ -181,7 +186,12 @@ describe("Story 1.8 — Negative RBAC register (FR-21)", () => {
       headers: { Authorization: `Bearer ${tokenFor("Admin")}` },
     });
     expect(res.status).toBe(200);
-    expect(events).toEqual([]);
+    // Successful matrix + ownership pass: `authorize()` writes a
+    // single `rbac_allowed` audit row (see authorize.ts:206-215);
+    // `requireOwner()` is a no-op (Admin bypasses ownership).
+    expect(events.length).toBe(1);
+    expect(events[0]?.auditAction).toBe("rbac_allowed");
+    expect(events[0]?.outcome).toBe("allow");
     await close();
   });
 });

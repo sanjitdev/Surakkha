@@ -35,7 +35,7 @@ const setSecret = (v: string | undefined) => {
 interface AuditEvent {
   readonly auditAction: AuditAction;
   readonly userId?: string;
-  readonly outcome: "success" | "failure";
+  readonly outcome: "success" | "failure" | "allow";
   readonly context?: Record<string, unknown>;
 }
 
@@ -61,8 +61,7 @@ const OPERATOR_UUID = "00000000-0000-4000-8000-00000000a002";
 const TECHNICIAN_UUID = "00000000-0000-4000-8000-00000000a003";
 const VIEWER_UUID = "00000000-0000-4000-8000-00000000a004";
 
-const tokenFor = (userId: string): string =>
-  issueAccessToken({ userId }).token;
+const tokenFor = (userId: string): string => issueAccessToken({ userId }).token;
 
 describe("Story 1.5 — authenticate()", () => {
   beforeEach(() => {
@@ -73,13 +72,9 @@ describe("Story 1.5 — authenticate()", () => {
 
   const mountEcho = (audit: AuditLogger) => (app: express.Express) => {
     app.use(authenticate);
-    app.get(
-      "/echo",
-      authorize({ action: "read", resource: "Device" }, audit),
-      (req, res) => {
-        res.status(200).json({ user: req.user });
-      },
-    );
+    app.get("/echo", authorize({ action: "read", resource: "Device" }, audit), (req, res) => {
+      res.status(200).json({ user: req.user });
+    });
   };
 
   it("returns 401 when no Authorization header is presented", async () => {
@@ -100,7 +95,7 @@ describe("Story 1.5 — authenticate()", () => {
     const { url, close } = await startApp(audit, mountEcho(audit));
 
     const real = tokenFor(ADMIN_UUID);
-    const tampered = `${real.slice(0, -3)  }AAA`;
+    const tampered = `${real.slice(0, -3)}AAA`;
     const res = await fetch(`${url}/echo`, {
       headers: { Authorization: `Bearer ${tampered}` },
     });
@@ -153,13 +148,9 @@ describe("Story 1.5 — authorize()", () => {
 
   const mountDevices = (audit: AuditLogger) => (app: express.Express) => {
     app.use(authenticate);
-    app.get(
-      "/devices",
-      authorize({ action: "read", resource: "Device" }, audit),
-      (_req, res) => {
-        res.status(200).json({ ok: true });
-      },
-    );
+    app.get("/devices", authorize({ action: "read", resource: "Device" }, audit), (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
   };
 
   it("returns 200 + passes the handler when the matrix grants", async () => {
@@ -171,7 +162,22 @@ describe("Story 1.5 — authorize()", () => {
       headers: { Authorization: `Bearer ${tokenFor(ADMIN_UUID)}` },
     });
     expect(res.status).toBe(200);
-    expect(events).toEqual([]);
+    // The middleware now writes a `rbac_allowed` audit row on every
+    // successful authorization (see authorize.ts:206-215). The
+    // allow-row carries `outcome: "allow"`; denials still write
+    // `rbac_denied` with `outcome: "failure"`. Operational dashboards
+    // key off the allow-row to count permitted vs denied attempts.
+    expect(events).toEqual([
+      expect.objectContaining({
+        auditAction: "rbac_allowed",
+        outcome: "allow",
+        context: expect.objectContaining({
+          subject: "Admin",
+          action: "read",
+          resource: "Device",
+        }),
+      }),
+    ]);
     await close();
   });
 });
@@ -188,36 +194,30 @@ describe("Story 1.5 — RBAC negative paths from RBAC_NEGATIVE_CASES", () => {
    * pair implied by its appendix row. The (subject, expected) pair
    * from `RBAC_NEGATIVE_CASES` drives the assertion.
    */
-  const mountForTriple = (
-    audit: AuditLogger,
-    action: "read" | "manage" | "drive" | "submit_result" | "update",
-    resource:
-      | "AuditLog"
-      | "User"
-      | "Simulator"
-      | "Incident"
-      | "Reading"
-      | "SeverityBanner"
-      | "Rule",
-  ) =>
+  const mountForTriple =
+    (
+      audit: AuditLogger,
+      action: "read" | "manage" | "drive" | "submit_result" | "update",
+      resource:
+        | "AuditLog"
+        | "User"
+        | "Simulator"
+        | "Incident"
+        | "Reading"
+        | "SeverityBanner"
+        | "Rule",
+    ) =>
     (app: express.Express) => {
       app.use(authenticate);
-      app.get(
-        "/probe",
-        authorize({ action, resource }, audit),
-        (_req, res) => {
-          res.status(200).json({ ok: true });
-        },
-      );
+      app.get("/probe", authorize({ action, resource }, audit), (_req, res) => {
+        res.status(200).json({ ok: true });
+      });
     };
 
   it("denies Operator → read → AuditLog (403 + audit)", async () => {
     const events: AuditEvent[] = [];
     const audit: AuditLogger = { emit: (e) => events.push(e) };
-    const { url, close } = await startApp(
-      audit,
-      mountForTriple(audit, "read", "AuditLog"),
-    );
+    const { url, close } = await startApp(audit, mountForTriple(audit, "read", "AuditLog"));
 
     const res = await fetch(`${url}/probe`, {
       headers: { Authorization: `Bearer ${tokenFor(OPERATOR_UUID)}` },
@@ -242,10 +242,7 @@ describe("Story 1.5 — RBAC negative paths from RBAC_NEGATIVE_CASES", () => {
   it("denies Operator → manage → User (403 + audit)", async () => {
     const events: AuditEvent[] = [];
     const audit: AuditLogger = { emit: (e) => events.push(e) };
-    const { url, close } = await startApp(
-      audit,
-      mountForTriple(audit, "manage", "User"),
-    );
+    const { url, close } = await startApp(audit, mountForTriple(audit, "manage", "User"));
 
     const res = await fetch(`${url}/probe`, {
       headers: { Authorization: `Bearer ${tokenFor(OPERATOR_UUID)}` },
@@ -258,10 +255,7 @@ describe("Story 1.5 — RBAC negative paths from RBAC_NEGATIVE_CASES", () => {
   it("denies Operator → drive → Simulator (403 + audit)", async () => {
     const events: AuditEvent[] = [];
     const audit: AuditLogger = { emit: (e) => events.push(e) };
-    const { url, close } = await startApp(
-      audit,
-      mountForTriple(audit, "drive", "Simulator"),
-    );
+    const { url, close } = await startApp(audit, mountForTriple(audit, "drive", "Simulator"));
 
     const res = await fetch(`${url}/probe`, {
       headers: { Authorization: `Bearer ${tokenFor(OPERATOR_UUID)}` },
@@ -290,10 +284,7 @@ describe("Story 1.5 — RBAC negative paths from RBAC_NEGATIVE_CASES", () => {
   it("denies Viewer → update → Rule (403 + audit)", async () => {
     const events: AuditEvent[] = [];
     const audit: AuditLogger = { emit: (e) => events.push(e) };
-    const { url, close } = await startApp(
-      audit,
-      mountForTriple(audit, "update", "Rule"),
-    );
+    const { url, close } = await startApp(audit, mountForTriple(audit, "update", "Rule"));
 
     const res = await fetch(`${url}/probe`, {
       headers: { Authorization: `Bearer ${tokenFor(VIEWER_UUID)}` },
@@ -315,7 +306,23 @@ describe("Story 1.5 — RBAC negative paths from RBAC_NEGATIVE_CASES", () => {
       headers: { Authorization: `Bearer ${tokenFor(TECHNICIAN_UUID)}` },
     });
     expect(res.status).toBe(200);
-    expect(events).toEqual([]);
+    // Successful matrix-level pass writes a `rbac_allowed` row (see
+    // `rbac_allowed` emit pin in `authorize.ts:206-215`). The
+    // `requireOwner()` middleware downstream may write a SECOND row
+    // only on the deny branch; on the admit branch no further audit
+    // is emitted. So the events array carries exactly one
+    // `rbac_allowed` row.
+    expect(events).toEqual([
+      expect.objectContaining({
+        auditAction: "rbac_allowed",
+        outcome: "allow",
+        context: expect.objectContaining({
+          subject: "Technician",
+          action: "submit_result",
+          resource: "Incident",
+        }),
+      }),
+    ]);
     await close();
   });
 });
@@ -346,7 +353,21 @@ describe("Story 1.5 — requireOwner()", () => {
       headers: { Authorization: `Bearer ${tokenFor(TECHNICIAN_UUID)}` },
     });
     expect(res.status).toBe(200);
-    expect(events).toEqual([]);
+    // Assignee Technician: `authorize()` writes a `rbac_allowed` row
+    // (matrix grants Technician → read Incident) and `requireOwner()`
+    // is a no-op (assignee matches). Exactly one row in the events
+    // array — the allow-row.
+    expect(events).toEqual([
+      expect.objectContaining({
+        auditAction: "rbac_allowed",
+        outcome: "allow",
+        context: expect.objectContaining({
+          subject: "Technician",
+          action: "read",
+          resource: "Incident",
+        }),
+      }),
+    ]);
     await close();
   });
 

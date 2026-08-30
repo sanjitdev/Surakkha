@@ -46,23 +46,13 @@
  *     surfaced via `markPublic(handler)` so a reader of the source can
  *     see it without scanning for the comment.
  */
-import {
-  type Action,
-  isAllowed,
-  type Resource,
-  type Role,
-} from "@surakkha/shared/rbac";
+import { type Action, isAllowed, type Resource, type Role } from "@surakkha/shared/rbac";
 
 import { type AuditLogger } from "../audit";
 import { verifyAccessToken } from "../auth/jwt";
 import { findUserById } from "../auth/users";
 
-import type {
-  NextFunction,
-  Request,
-  RequestHandler,
-  Response,
-} from "express";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -157,16 +147,22 @@ export const markPublic = <H extends RequestHandler>(handler: H): RequestHandler
 /**
  * "Smallest role that can perform `action` on `resource`." Used as
  * the `required_role` field in the 403 body so the SPA can render a
- * targeted message. We rank roles left → right: Admin < Operator <
- * Technician < Viewer — i.e. earlier entries are MORE privileged and
- * therefore the LOWEST-rank that satisfies a grant.
+ * targeted message ("you need at least Operator to do this"). The
+ * semantic is "the LEAST privileged role that the matrix grants the
+ * action × resource" — i.e., the lowest tier of role that could fix
+ * the denial by signing in as a different (more-privileged) account.
+ *
+ * `ROLE_ORDER` is therefore ordered LEAST-privileged-first
+ * (Viewer, Technician, Operator, Admin) so the left-to-right walk
+ * returns the smallest granting role on first match. The previous
+ * most-privileged-first ordering returned `"Admin"` for any
+ * multi-grantor action (e.g. `Alert.acknowledge`), making the SPA's
+ * "you need at least X" copy incorrectly demand Admin when Operator
+ * would suffice.
  */
-const ROLE_ORDER: readonly Role[] = ["Admin", "Operator", "Technician", "Viewer"];
+const ROLE_ORDER: readonly Role[] = ["Viewer", "Technician", "Operator", "Admin"];
 
-const smallestGrantingRole = (
-  action: Action,
-  resource: Resource,
-): Role | null => {
+const smallestGrantingRole = (action: Action, resource: Resource): Role | null => {
   for (const role of ROLE_ORDER) {
     if (isAllowed({ subject: role, action, resource })) return role;
   }
@@ -181,15 +177,25 @@ export interface AuthorizeOptions {
 /**
  * `authorize({ action, resource }, audit)` — Story 1.5 factory.
  * Returns an Express middleware that enforces the (subject, action,
- * resource) triple and writes a `rbac_denied` audit on every denied
- * attempt. The triple is static per handler; for dynamic cases
- * (e.g. read on a device-id parsed from the URL), the caller invokes
- * `isAllowed` directly.
+ * resource) triple and writes an audit row on EVERY authorization
+ * decision (allow OR deny). The triple is static per handler; for
+ * dynamic cases (e.g. read on a device-id parsed from the URL), the
+ * caller invokes `isAllowed` directly.
+ *
+ * Audit semantics:
+ *   - On allow: writes `auditAction: "rbac_allowed"`, `outcome: "allow"`.
+ *     Operational dashboards key off this row to count permitted vs
+ *     denied attempts; without it dashboards cannot answer "how many
+ *     Viewer reads of /api/alerts succeeded today?".
+ *   - On deny: writes `auditAction: "rbac_denied"`, `outcome: "failure"`,
+ *     plus a `required_role` context field naming the least-privileged
+ *     role that WOULD satisfy the request.
+ *
+ * The allow-row is written BEFORE `next()` (synchronously, before any
+ * downstream middleware can mutate the audit log) so a handler that
+ * throws still leaves a faithful audit trail.
  */
-export const authorize = (
-  opts: AuthorizeOptions,
-  audit: AuditLogger,
-): RequestHandler => {
+export const authorize = (opts: AuthorizeOptions, audit: AuditLogger): RequestHandler => {
   const { action, resource } = opts;
   return (req: Request, res: Response, next: NextFunction): void => {
     const areq = asAuthorized(req);
@@ -204,6 +210,16 @@ export const authorize = (
       resource,
     });
     if (allowed) {
+      audit.emit({
+        auditAction: "rbac_allowed",
+        userId: areq.user.id,
+        outcome: "allow",
+        context: {
+          subject: areq.user.role,
+          action,
+          resource,
+        },
+      });
       next();
       return;
     }
@@ -220,9 +236,7 @@ export const authorize = (
         required_role: required,
       },
     });
-    res
-      .status(HTTP_FORBIDDEN)
-      .json({ error: "forbidden", required_role: required });
+    res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: required });
   };
 };
 
@@ -234,10 +248,9 @@ export const authorize = (
  * ownership-restricted cell today: Technician read Incident, but only
  * when they are the assignee).
  */
-export const requireOwner = (
-  ownerId: string | undefined,
-  audit: AuditLogger,
-): RequestHandler => (req: Request, res: Response, next: NextFunction): void => {
+export const requireOwner =
+  (ownerId: string | undefined, audit: AuditLogger): RequestHandler =>
+  (req: Request, res: Response, next: NextFunction): void => {
     const areq = asAuthorized(req);
     if (areq.user === undefined || areq.user === null) {
       res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
@@ -263,7 +276,5 @@ export const requireOwner = (
         reason: "not_assignee",
       },
     });
-    res
-      .status(HTTP_FORBIDDEN)
-      .json({ error: "forbidden", required_role: "Technician" });
-};
+    res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+  };

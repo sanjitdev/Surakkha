@@ -161,24 +161,35 @@ const buildPrismaStub = (params: {
   } = {
     alert: {
       findMany: (args) => {
-        // Distinguish the two query shapes: the page query has
-        // `select` with the wide column set; the predecessor query
-        // has `OR` in the where clause.
-        const a = args as { where?: { OR?: unknown }; select?: unknown };
-        if (a.where?.OR !== undefined) {
+        // Distinguish the two query shapes by the `select` projection:
+        // the page query selects `ruleId` + `acknowledgedAt` +
+        // `acknowledgedByUserId` (the wide AlertSummary columns);
+        // the predecessor query selects only id/openedAt/clearedAt/
+        // deviceId/metric/severity. We can't branch on `where.OR`
+        // because the page query ALSO sets `where.OR` when a cursor
+        // is present (LIST_PAGINATION_NEXT pin) — using `OR` would
+        // mis-classify a cursor-paginated page call as a predecessor.
+        const a = args as {
+          where?: Record<string, unknown>;
+          select?: Record<string, unknown>;
+          orderBy?: unknown;
+          take?: number;
+        };
+        const isPredecessor = a.select !== undefined && !("ruleId" in a.select);
+        if (isPredecessor) {
           predCalls.push({
-            where: a.where as Record<string, unknown>,
-            orderBy: (args as { orderBy?: unknown }).orderBy,
-            take: (args as { take?: number }).take,
+            where: a.where ?? {},
+            orderBy: a.orderBy,
+            take: a.take,
             select: a.select,
           });
           return Promise.resolve(params.predecessors ?? []);
         }
         pageCalls.push({
-          where: (args as { where?: Record<string, unknown> }).where ?? {},
-          orderBy: (args as { orderBy?: unknown }).orderBy,
-          take: (args as { take?: number }).take,
-          select: (args as { select?: unknown }).select,
+          where: a.where ?? {},
+          orderBy: a.orderBy,
+          take: a.take,
+          select: a.select,
         });
         if (params.throws === true) {
           return Promise.reject(new Error("prisma unreachable"));
