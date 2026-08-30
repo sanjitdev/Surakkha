@@ -272,6 +272,22 @@ export const applyTransition = async (
 
   return repo.$transaction(async (tx) => {
     // Step 1: optimistic-concurrency update.
+    //
+    // Story 4.11 — for `reopen` (RESOLVED → OPEN), FORCE
+    // `severity: "critical"` on the reopened row regardless of the
+    // prior value. The forced-critical contract is the design-
+    // intent match for "Admin reopened because it was wrong" —
+    // reopening should immediately surface in the
+    // "Open · Critical" Kanban column (UX-DR-9). Other verbs
+    // preserve `severity` (the row's column projection stays
+    // stable for acknowledge / assign / submit-result / resolve).
+    //
+    // The conditional spread (`...(reopenForcesCritical ? { severity: ... } : {})`)
+    // is the type-safe alternative to `severity: undefined` —
+    // Prisma's `updateMany` data builder rejects an explicit
+    // `undefined` for required scalar fields, and the conditional
+    // form keeps the writer's shape explicit per-verb.
+    const reopenForcesCritical = result.event_type === "reopen";
     const update = await tx.incident.updateMany({
       where: { id: currentRow.id, updatedAt: currentRow.updatedAt },
       data: {
@@ -279,6 +295,7 @@ export const applyTransition = async (
         assigneeUserId: newAssignee,
         acknowledgedAt: ackedAt,
         resolvedAt,
+        ...(reopenForcesCritical ? { severity: "critical" as const } : {}),
       },
     });
     if (update.count === 0) {

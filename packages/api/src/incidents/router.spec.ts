@@ -606,8 +606,13 @@ describe("Story 4.2 — POST /api/incidents/:id/resolve", () => {
   });
 });
 
-describe("Story 4.2 — POST /api/incidents/:id/reopen", () => {
-  it("Admin can reopen a RESOLVED incident (200)", async () => {
+describe("Story 4.11 — POST /api/incidents/:id/reopen", () => {
+  // Helper: build a reopen payload with a valid reason. The reason
+  // must be ≥ 10 chars after trim (matches the server-side Zod
+  // schema at `transitionHelpers.ts:115-128`).
+  const reopenBody = (reason: string) => JSON.stringify({ reason });
+
+  it("Admin can reopen a RESOLVED incident with reason ≥ 10 chars (200)", async () => {
     const { url, close } = await startApp({
       row: baseRow({
         state: "RESOLVED",
@@ -616,8 +621,9 @@ describe("Story 4.2 — POST /api/incidents/:id/reopen", () => {
       }),
       nextRow: baseRow({
         state: "OPEN",
+        severity: "critical", // forced by 4.11's reopen contract
         acknowledgedAt: new Date("2026-08-27T01:00:00.000Z"),
-        resolvedAt: new Date("2026-08-27T02:00:00.000Z"),
+        resolvedAt: null, // cleared on reopen per Decision 6B
       }),
     });
     const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
@@ -626,15 +632,56 @@ describe("Story 4.2 — POST /api/incidents/:id/reopen", () => {
         Authorization: `Bearer ${tokenForRole("Admin")}`,
         "content-type": "application/json",
       },
-      body: "{}",
+      body: reopenBody("Misclassified — device still failing"),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { state: string };
+    const body = (await res.json()) as { state: string; severity: string };
     expect(body.state).toBe("OPEN");
+    expect(body.severity).toBe("critical");
     await close();
   });
 
-  it("Operator CANNOT reopen (403)", async () => {
+  it("Admin reopen writes IncidentEvent with type='reopen' and reason in payload", async () => {
+    let capturedEvent:
+      | {
+          readonly data: {
+            readonly type: string;
+            readonly payload: Record<string, unknown>;
+          };
+        }
+      | undefined;
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+      eventCreate: async (args) => {
+        capturedEvent = args as typeof capturedEvent;
+        return {
+          id: "event-aaaa-bbbb-cccc-dddddddddddd",
+          incidentId: args.data.incidentId,
+          actorUserId: args.data.actorUserId,
+          type: args.data.type,
+          payload: args.data.payload,
+          createdAt: new Date("2026-08-27T01:00:00.000Z"),
+        };
+      },
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Reopening: SAFE submit was incorrect"),
+    });
+    expect(res.status).toBe(200);
+    expect(capturedEvent).toBeDefined();
+    if (capturedEvent === undefined) return;
+    expect(capturedEvent.data.type).toBe("reopen");
+    expect(capturedEvent.data.payload["reason"]).toBe("Reopening: SAFE submit was incorrect");
+    expect(capturedEvent.data.payload["actorUserId"]).toBe(ADMIN_ID);
+    await close();
+  });
+
+  it("Operator CANNOT reopen (403 with required_role=Admin)", async () => {
     const { url, close } = await startApp({
       row: baseRow({
         state: "RESOLVED",
@@ -647,14 +694,69 @@ describe("Story 4.2 — POST /api/incidents/:id/reopen", () => {
         Authorization: `Bearer ${tokenForRole("Operator")}`,
         "content-type": "application/json",
       },
-      body: "{}",
+      body: reopenBody("Operator attempting reopen"),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; required_role?: string };
+    expect(body.error).toBe("forbidden");
+    expect(body.required_role).toBe("Admin");
+    await close();
+  });
+
+  it("Technician CANNOT reopen (403)", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Technician")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Technician attempting reopen"),
     });
     expect(res.status).toBe(403);
     await close();
   });
 
-  it("OPEN + reopen → 409", async () => {
-    const { url, close } = await startApp({ row: baseRow({ state: "OPEN" }) });
+  it("Reason < 10 chars → 400 validation_error", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("wrong"),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("validation_error");
+    await close();
+  });
+
+  it("Whitespace-only reason → 400 (after trim)", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("          "),
+    });
+    expect(res.status).toBe(400);
+    await close();
+  });
+
+  it("Missing reason field → 400 validation_error", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+    });
     const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
       method: "POST",
       headers: {
@@ -663,7 +765,84 @@ describe("Story 4.2 — POST /api/incidents/:id/reopen", () => {
       },
       body: "{}",
     });
+    expect(res.status).toBe(400);
+    await close();
+  });
+
+  it("OPEN + reopen → 409 invalid_state_transition", async () => {
+    const { url, close } = await startApp({ row: baseRow({ state: "OPEN" }) });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Reopen attempt on OPEN row"),
+    });
     expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string; from: string; attempted: string };
+    expect(body.error).toBe("invalid_state_transition");
+    expect(body.from).toBe("OPEN");
+    expect(body.attempted).toBe("reopen");
+    await close();
+  });
+
+  it("INSPECTING + reopen → 409", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "INSPECTING", assigneeUserId: TECH_ID }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Reopen attempt on INSPECTING row"),
+    });
+    expect(res.status).toBe(409);
+    await close();
+  });
+
+  it("UNSAFE + reopen → 409", async () => {
+    const { url, close } = await startApp({ row: baseRow({ state: "UNSAFE" }) });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Reopen attempt on UNSAFE row"),
+    });
+    expect(res.status).toBe(409);
+    await close();
+  });
+
+  it("NON-EXISTENT incident → 404", async () => {
+    const { url, close } = await startApp({ row: null as unknown as IncidentRow });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenForRole("Admin")}`,
+        "content-type": "application/json",
+      },
+      body: reopenBody("Reopen attempt on missing row"),
+    });
+    expect(res.status).toBe(404);
+    await close();
+  });
+
+  it("No bearer token → 401", async () => {
+    const { url, close } = await startApp({
+      row: baseRow({ state: "RESOLVED" }),
+    });
+    const res = await fetch(`${url}/api/incidents/${INCIDENT_ID}/reopen`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: reopenBody("Unauthenticated reopen attempt"),
+    });
+    expect(res.status).toBe(401);
     await close();
   });
 });

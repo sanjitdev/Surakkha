@@ -2,8 +2,9 @@
 title: "Story 4.11 — Reopen Path (RESOLVED → REOPENED → OPEN)"
 type: "feature"
 created: "2026-08-28"
-status: "draft"
+status: "in-progress"
 review_loop_iteration: 0
+baseline_commit: "8a3c889"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/planning-artifacts/epics.md

@@ -112,7 +112,28 @@ const submitResultBodySchema = z
 
 const resolveBodySchema = z.object({}).strict().optional();
 
-const reopenBodySchema = z.object({}).strict().optional();
+/**
+ * Story 4.11 — reopen body schema. Requires `reason ≥ MIN_LENGTH`
+ * chars (trimmed). The Admin who reopens a misclassified incident
+ * must record a meaningful explanation; the value lands in the
+ * `IncidentEvent.payload.reason` for the audit trail.
+ *
+ * The length cap (`MAX_LENGTH` chars) matches the assign /
+ * submit-result payload ceilings and prevents operator-misuse
+ * (paste-the-PR-description anti-pattern). Trim prevents
+ * whitespace-only reasons from passing.
+ *
+ * Bounds extracted to constants so the `no-magic-numbers` lint
+ * rule does not flag the literal values in the Zod chain.
+ */
+const REOPEN_REASON_MIN_LENGTH = 10;
+const REOPEN_REASON_MAX_LENGTH = 2000;
+
+const reopenBodySchema = z
+  .object({
+    reason: z.string().trim().min(REOPEN_REASON_MIN_LENGTH).max(REOPEN_REASON_MAX_LENGTH),
+  })
+  .strict();
 
 /**
  * Parse the request body for the given verb.
@@ -142,7 +163,11 @@ const dispatchParse = (verb: ActionVerb, raw: unknown): z.SafeParseReturnType<un
     case "resolve":
       return resolveBodySchema.safeParse(raw ?? {});
     case "reopen":
-      return reopenBodySchema.safeParse(raw ?? {});
+      // Story 4.11 — reopen requires `{ reason }` (≥ 10 chars). The
+      // body is required (not optional like the empty-body verbs);
+      // a missing body yields a Zod issues list that the caller
+      // surfaces as 400 `validation_error`.
+      return reopenBodySchema.safeParse(raw);
   }
 };
 
@@ -206,6 +231,40 @@ interface PipelineOutcome {
 }
 
 /**
+ * Story 4.11 — per-cell RBAC gate for `reopen`. The matrix-level
+ * RBAC check (`authorize({ action: "reopen", resource: "Incident" })`)
+ * already runs in `router.ts`; this is the inner per-verb guard
+ * that mirrors the `submit_result` ownership rule. A naïve matrix
+ * would let Operator reopen because `update.Incident = Y` is
+ * granted to Operator; the per-cell guard is the seam.
+ *
+ * Returns `true` if the request was denied (handler should
+ * short-circuit), `false` otherwise.
+ */
+export const maybeReopenAdminDenied = (input: {
+  readonly deps: IncidentsRouterDepsLike;
+  readonly verb: ActionVerb;
+  readonly req: AuthorizedRequest;
+  readonly res: Response;
+}): boolean => {
+  if (input.verb !== "reopen") return false;
+  if (input.req.user?.role === "Admin") return false;
+  input.deps.audit.emit({
+    auditAction: "rbac_denied",
+    userId: input.req.user?.id,
+    outcome: "failure",
+    context: {
+      subject: input.req.user?.role ?? null,
+      action: "reopen",
+      resource: "Incident",
+      reason: "not_admin",
+    },
+  });
+  input.res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Admin" });
+  return true;
+};
+
+/**
  * Run the (ownership-check → pure-transition → commit) pipeline.
  * Returns `null` if any step short-circuited (handler already
  * responded).
@@ -216,8 +275,8 @@ export const runTransitionPipeline = async (
   const { deps, verb, id, body, currentRow, req, res } = input;
 
   const actorUserId = req.user?.id ?? null;
-  const denied = await maybeOwnershipDenied({ deps, verb, currentRow, req, res, actorUserId });
-  if (denied) return null;
+  if (maybeReopenAdminDenied({ deps, verb, req, res })) return null;
+  if (await maybeOwnershipDenied({ deps, verb, currentRow, req, res, actorUserId })) return null;
 
   const computed = computeTransition({ body, currentRow, verb, actorUserId });
   if (!computed.ok) {
@@ -295,6 +354,42 @@ type ComputeOutcome =
     };
 
 /**
+ * Per-verb body field extraction — pulls the verb-specific typed
+ * value out of the validated body envelope. Split into small
+ * helpers to keep `computeTransition`'s cyclomatic complexity
+ * under the `complexity: 10` lint ceiling.
+ */
+const extractOutcome = (
+  body: Record<string, unknown> | undefined,
+): InspectionOutcome | undefined => {
+  // Patch (code review 2026-08-27 #14): drop `outcome as never`.
+  // `transition()` accepts `InspectionOutcome | undefined` and
+  // the route's strict-Zod schema has already narrowed `body` to
+  // the verb-specific shape; pass through the typed value instead
+  // of bypassing the type system.
+  const raw = body?.["outcome"];
+  if (typeof raw !== "string") return undefined;
+  return raw as InspectionOutcome;
+};
+
+const extractAssigneeUserId = (body: Record<string, unknown> | undefined): string | undefined => {
+  const raw = body?.["assignee_user_id"];
+  return typeof raw === "string" ? raw : undefined;
+};
+
+const extractReopenReason = (
+  verb: ActionVerb,
+  body: Record<string, unknown> | undefined,
+): string | null => {
+  // Story 4.11 — for `reopen`, the body is `{ reason: string }`
+  // (length-validated by Zod upstream). `null` for other verbs
+  // so the pure function's optional arg stays shape-stable.
+  if (verb !== "reopen") return null;
+  const raw = body?.["reason"];
+  return typeof raw === "string" ? raw : null;
+};
+
+/**
  * Run the pure state machine on the validated row + body. Returns
  * either a successful `TransitionResult` (with the captured
  * `assigneeUserId` so the writer can use it) or a typed failure
@@ -302,27 +397,16 @@ type ComputeOutcome =
  */
 export const computeTransition = (input: ComputeInput): ComputeOutcome => {
   const { body, currentRow, verb, actorUserId } = input;
-  // Patch (code review 2026-08-27 #14): drop `outcome as never`.
-  // `transition()` accepts `InspectionOutcome | undefined` and
-  // the route's strict-Zod schema has already narrowed `body` to
-  // the verb-specific shape; pass through the typed value instead
-  // of bypassing the type system.
-  const rawOutcome = body?.["outcome"];
-  const outcome: InspectionOutcome | undefined =
-    rawOutcome === undefined
-      ? undefined
-      : typeof rawOutcome === "string"
-        ? (rawOutcome as InspectionOutcome)
-        : undefined;
-  const assigneeUserId = body?.["assignee_user_id"];
+  const outcome = extractOutcome(body);
+  const assigneeUserId = extractAssigneeUserId(body);
+  const reason = extractReopenReason(verb, body);
   const result = transition({
     incident: incidentRowToPayload(currentRow),
     action: verb,
     actorUserId,
     ...(outcome !== undefined ? { outcome } : {}),
-    ...(assigneeUserId !== undefined && typeof assigneeUserId === "string"
-      ? { assigneeUserId }
-      : {}),
+    ...(assigneeUserId !== undefined ? { assigneeUserId } : {}),
+    ...(reason !== null ? { reason } : {}),
   });
   if (!result.ok) {
     return { ok: false, from: result.from, attempted: result.attempted, at: result.at };

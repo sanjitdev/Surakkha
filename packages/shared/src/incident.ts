@@ -204,6 +204,7 @@ export type TransitionResult =
       readonly event_payload: {
         readonly outcome?: "SAFE" | "UNSAFE" | "MONITORING";
         readonly assigneeUserId?: string;
+        readonly reason?: string;
         readonly actorUserId: string | null;
       };
       readonly at: string;

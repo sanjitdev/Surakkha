@@ -122,6 +122,15 @@ export interface TransitionInput {
    * leaking it into the state machine's truth table.
    */
   readonly assigneeUserId?: string | null;
+  /**
+   * Story 4.11 — for `reopen` only: the Admin-supplied comment
+   * explaining the reopen (≥ 10 chars, validated by Zod at the
+   * route layer; the pure function trusts the caller and embeds
+   * the value into `event_payload.reason`). Ignored for other
+   * verbs. Length validation lives in `reopenPayloadSchema` so
+   * the state machine stays payload-shape-blind.
+   */
+  readonly reason?: string | null;
 }
 
 /**
@@ -171,8 +180,10 @@ export const transition = (input: TransitionInput): TransitionResult => {
     return applyAssign({ ...ctx, assignee: input.assigneeUserId });
   }
 
-  // Static-table lookup for the remaining verbs.
-  return applyTableTransition({ ...ctx, action });
+  // Static-table lookup for the remaining verbs. `reopen` threads
+  // the Admin-supplied `reason` through to the event payload; the
+  // route layer validates length (≥ 10 chars) before reaching here.
+  return applyTableTransition({ ...ctx, action, reason: input.reason ?? null });
 };
 
 interface SubmitResultCtx {
@@ -243,6 +254,13 @@ interface TableCtx {
   readonly action: ActionVerb;
   readonly actorUserId: string | null;
   readonly at: string;
+  /**
+   * Story 4.11 — the reopen reason. `null` for non-reopen verbs;
+   * the function passes the string through to `event_payload.reason`
+   * only when the verb is `reopen` so other verbs' payloads stay
+   * stable.
+   */
+  readonly reason: string | null;
 }
 
 /**
@@ -251,7 +269,7 @@ interface TableCtx {
  * non-table cell.
  */
 const applyTableTransition = (ctx: TableCtx): TransitionResult => {
-  const { from, action, actorUserId, at } = ctx;
+  const { from, action, actorUserId, at, reason } = ctx;
   // acknowledge is ONLY valid from OPEN. The TRANSITIONS table
   // also allows it from REOPENED, but the writer normalizes
   // REOPENED to OPEN before reaching here — so REOPENED should
@@ -278,10 +296,11 @@ const applyTableTransition = (ctx: TableCtx): TransitionResult => {
     ok: true,
     next_state: next,
     event_type: eventType,
-    // Default event_payload is `{ actorUserId }` for verbs that
-    // carry no operator-supplied data. submit_result + assign
-    // already returned their own payloads in their helpers.
-    event_payload: { actorUserId },
+    // Story 4.11 — `reopen` embeds the Admin-supplied reason in the
+    // audit event payload. Other verbs stay shape-stable (the
+    // route layer validated the reason length upstream).
+    event_payload:
+      action === "reopen" && reason !== null ? { actorUserId, reason } : { actorUserId },
     at,
   };
 };

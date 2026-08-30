@@ -42,20 +42,15 @@
 import { type IncidentStateChangedEvent } from "@surakkha/shared/events";
 import {
   type IncidentEventPayload,
-  IncidentEventPayloadSchema,
   type IncidentPayload,
-  IncidentPayloadSchema,
   type InspectionOutcome,
 } from "@surakkha/shared/incident";
 import { type Role } from "@surakkha/shared/rbac";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { z } from "zod";
 
 import { NotFound } from "../access/NotFound";
 import { RbacDenied } from "../access/RbacDenied";
-import { apiFetch } from "../api/apiClient";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { readUserIdFromStore } from "../auth/tokenStore";
 
@@ -64,26 +59,16 @@ import { IncidentDetailNotFoundError } from "./IncidentDetailNotFoundError";
 import { IncidentDetailRbacDeniedError } from "./IncidentDetailRbacDeniedError";
 import { SEVERITY_DOT_BG, SEVERITY_LABEL, STATE_LABEL } from "./KanbanCard";
 import { ToastRegion, useToasts } from "./toast";
-import { type AcknowledgeMutationError, useAcknowledgeMutation } from "./useAcknowledgeMutation";
-import { type AssignMutationError, useAssignMutation } from "./useAssignMutation";
+import { useAcknowledgeMutation } from "./useAcknowledgeMutation";
+import { useAssignMutation } from "./useAssignMutation";
+import { useDetailActionHandlers } from "./useDetailActionHandlers";
+import {
+  type IncidentDetailRowQuery,
+  useIncidentDetailPageQueries,
+} from "./useIncidentDetailPageQueries";
 import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
-import { type SubmitResultMutationError, useSubmitResultMutation } from "./useSubmitResultMutation";
-
-/** HTTP status code sentinels — RBAC denial + not-found. */
-const HTTP_FORBIDDEN = 403;
-const HTTP_NOT_FOUND = 404;
-
-const IncidentEventEnvelopeSchema = z.object({
-  events: z.array(IncidentEventPayloadSchema),
-});
-
-interface IncidentDetailEnvelope {
-  readonly incident: IncidentPayload;
-}
-
-interface IncidentTimeline {
-  readonly events: readonly IncidentEventPayload[];
-}
+import { useReopenMutation } from "./useReopenMutation";
+import { useSubmitResultMutation } from "./useSubmitResultMutation";
 
 /**
  * The error-state, loading-skeleton, and helper components
@@ -160,127 +145,27 @@ export const IncidentDetailPage = () => {
   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
   const assignMutation = useAssignMutation(id ?? "");
   const submitResultMutation = useSubmitResultMutation(id ?? "");
+  const reopenMutation = useReopenMutation(id ?? "");
 
   useIncidentDetailSocket(id ?? "");
 
-  const rowQuery = useQuery<IncidentDetailEnvelope>({
-    queryKey: incidentDetailQueryKey(id ?? ""),
-    enabled: id !== undefined,
-    queryFn: async () => {
-      const res = await apiFetch(`/api/incidents/${id}`);
-      if (res.status === HTTP_FORBIDDEN) {
-        throw new IncidentDetailRbacDeniedError();
-      }
-      if (res.status === HTTP_NOT_FOUND) {
-        // The detail page distinguishes 404 (not found) from generic
-        // errors. We throw a tagged error so the `isError` branch
-        // can render `<NotFound />` without a separate `error`
-        // type union.
-        throw new IncidentDetailNotFoundError();
-      }
-      if (!res.ok) {
-        throw new Error(`/api/incidents/${id} failed: ${res.status}`);
-      }
-      const parsed = IncidentPayloadSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("incidents/:id wire-shape mismatch", parsed.error);
-        throw new Error("incidents/:id wire-shape mismatch");
-      }
-      return { incident: parsed.data };
-    },
-  });
+  const { rowQuery, incident, timeline } = useIncidentDetailPageQueries(id);
 
-  const timelineQuery = useQuery<IncidentTimeline>({
-    queryKey: [...incidentDetailQueryKey(id ?? ""), "events"],
-    enabled: id !== undefined && !rowQuery.isError,
-    queryFn: async () => {
-      const res = await apiFetch(`/api/incidents/${id}/events`);
-      if (res.status === HTTP_FORBIDDEN) {
-        // Mirror the row's RBAC denial.
-        throw new IncidentDetailRbacDeniedError();
-      }
-      if (res.status === HTTP_NOT_FOUND) {
-        // The timeline endpoint returns 404 when the parent
-        // incident doesn't exist; treat it the same as the row's
-        // 404 so the page renders `<NotFound />` cleanly.
-        throw new IncidentDetailNotFoundError();
-      }
-      if (!res.ok) {
-        throw new Error(`/api/incidents/${id}/events failed: ${res.status}`);
-      }
-      const parsed = IncidentEventEnvelopeSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("incidents/:id/events wire-shape mismatch", parsed.error);
-        throw new Error("incidents/:id/events wire-shape mismatch");
-      }
-      return { events: parsed.data.events };
-    },
-  });
-
-  const incident = rowQuery.data?.incident;
-
-  // Project events into timeline rows. `useMemo` because the
-  // projection is O(N) over the events array; re-running on every
-  // render is wasteful for an operator that may park on this page
-  // for minutes while inspecting a single incident.
-  const timeline = useMemo<readonly IncidentEventPayload[]>(
-    () => timelineQuery.data?.events ?? [],
-    [timelineQuery.data?.events],
-  );
-
-  // Success + error handlers for the Acknowledge mutation. The
-  // handlers are defined as local function references; the
-  // `mutate()` call invokes them after the Promise settles.
-  // The mutation itself owns the `isPending` state, so the button
-  // visibility + disabled state reads through `acknowledgeMutation.isPending`.
-  const handleAcknowledge = (): void => {
-    acknowledgeMutation.mutate(undefined, {
-      onSuccess: () => {
-        pushToast("success", "Acknowledged");
-      },
-      onError: (err: AcknowledgeMutationError) => {
-        // The mutation classifier pinned the toast copy. The
-        // `status` is preserved on the error for any future
-        // routing logic that wants to switch on it.
-        pushToast("error", err.message);
-      },
+  // Success + error handlers for each mutation, wired through
+  // a shared factory so the page-level `IncidentDetailPage`
+  // stays under the lint complexity ceiling. Each handler mirrors
+  // the same pattern: forward the verb-specific payload to
+  // `mutate()`, surface success + error toasts via the page's
+  // `pushToast` queue. Toast copy is per-verb; the factory
+  // centralizes the structure.
+  const { handleAcknowledge, handleAssign, handleSubmitResult, handleReopen } =
+    useDetailActionHandlers({
+      acknowledgeMutation,
+      assignMutation,
+      submitResultMutation,
+      reopenMutation,
+      pushToast,
     });
-  };
-
-  // Success + error handlers for the Assign mutation. Mirrors
-  // `handleAcknowledge` with the verb-specific copy swapped.
-  const handleAssign = (assigneeUserId: string): void => {
-    assignMutation.mutate(
-      { assigneeUserId },
-      {
-        onSuccess: () => {
-          pushToast("success", "Technician assigned");
-        },
-        onError: (err: AssignMutationError) => {
-          pushToast("error", err.message);
-        },
-      },
-    );
-  };
-
-  // Success + error handlers for the Submit Result mutation. Mirrors
-  // `handleAcknowledge` and `handleAssign` with verb-specific copy
-  // swapped. The mutation accepts the uppercase enum directly — the
-  // radio's `value` attribute is already uppercase, and the wire body
-  // uses the same uppercase enum per `InspectionOutcomeSchema`.
-  const handleSubmitResult = (outcome: InspectionOutcome): void => {
-    submitResultMutation.mutate(
-      { outcome },
-      {
-        onSuccess: () => {
-          pushToast("success", "Result submitted");
-        },
-        onError: (err: SubmitResultMutationError) => {
-          pushToast("error", err.message);
-        },
-      },
-    );
-  };
 
   return (
     <>
@@ -293,9 +178,11 @@ export const IncidentDetailPage = () => {
         isAck={acknowledgeMutation.isPending}
         isAssign={assignMutation.isPending}
         isSubmitting={submitResultMutation.isPending}
+        isReopening={reopenMutation.isPending}
         onAcknowledge={handleAcknowledge}
         onAssign={handleAssign}
         onSubmitResult={handleSubmitResult}
+        onReopen={handleReopen}
         onRetry={() => {
           void queryClient.invalidateQueries({
             queryKey: incidentDetailQueryKey(id ?? ""),
@@ -327,12 +214,14 @@ const IncidentDetailDispatch = ({
   isAck,
   isAssign,
   isSubmitting,
+  isReopening,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onReopen,
   onRetry,
 }: {
-  readonly rowQuery: ReturnType<typeof useQuery<IncidentDetailEnvelope>>;
+  readonly rowQuery: IncidentDetailRowQuery;
   readonly incident: IncidentPayload | undefined;
   readonly timeline: readonly IncidentEventPayload[];
   readonly viewerRole: Role | null;
@@ -340,9 +229,11 @@ const IncidentDetailDispatch = ({
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isReopening: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onReopen: (reason: string) => void;
   readonly onRetry: () => void;
 }) => {
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
@@ -366,9 +257,11 @@ const IncidentDetailDispatch = ({
       isAck={isAck}
       isAssign={isAssign}
       isSubmitting={isSubmitting}
+      isReopening={isReopening}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
+      onReopen={onReopen}
     />
   );
 };
@@ -389,9 +282,11 @@ const IncidentDetailBody = ({
   isAck,
   isAssign,
   isSubmitting,
+  isReopening,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onReopen,
 }: {
   readonly incident: IncidentPayload;
   readonly timeline: readonly IncidentEventPayload[];
@@ -400,9 +295,11 @@ const IncidentDetailBody = ({
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isReopening: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onReopen: (reason: string) => void;
 }) => (
   <div
     data-testid="incident-detail-root"
@@ -465,9 +362,11 @@ const IncidentDetailBody = ({
       isAck={isAck}
       isAssign={isAssign}
       isSubmitting={isSubmitting}
+      isReopening={isReopening}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
+      onReopen={onReopen}
     />
 
     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">

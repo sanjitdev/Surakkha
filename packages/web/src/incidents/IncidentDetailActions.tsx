@@ -66,6 +66,11 @@ const TECH_LABEL_TAIL_LENGTH = 8;
  * `SubmitResult` callback receives the selected `outcome` (uppercase
  * enum; passed straight into the wire body — no casing swap).
  *
+ * Story 4.11 — `onReopen` carries the Admin-supplied `reason`
+ * (validated server-side for ≥ 10 chars; the form enforces the
+ * same length locally so the disabled-when-empty affordance stays
+ * consistent with the Assign / Submit Result forms).
+ *
  * `viewerUserId` is threaded through to `actionSlotsFor`'s third
  * argument — the INSPECTING ownership gate
  * (`slotsForInspecting` returns `["submit-result"]` only when
@@ -83,6 +88,9 @@ const TECH_LABEL_TAIL_LENGTH = 8;
  *     passing the regex. The trailing `Pending` is implied by the
  *     React Query / mutation semantics; the page wires the
  *     `.isPending` field straight through.
+ *   - `isReopening` — same verb-form pattern as `isSubmitting`;
+ *     the rule rejects the canonical `isReopen` (single capitalized
+ *     syllable after `is`).
  */
 interface IncidentDetailActionsProps {
   readonly incident: IncidentPayload;
@@ -91,9 +99,11 @@ interface IncidentDetailActionsProps {
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isReopening: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onReopen: (reason: string) => void;
 }
 
 /**
@@ -127,16 +137,19 @@ export const IncidentDetailActions = ({
   isAck,
   isAssign,
   isSubmitting,
+  isReopening,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onReopen,
 }: IncidentDetailActionsProps) => {
   const slots = actionSlotsFor(incident, viewerRole, viewerUserId);
   const canAcknowledge = slots.includes("acknowledge");
   const canAssign = slots.includes("assign");
   const canSubmitResult = slots.includes("submit-result");
+  const canReopen = slots.includes("reopen");
 
-  if (!canAcknowledge && !canAssign && !canSubmitResult) return null;
+  if (!canAcknowledge && !canAssign && !canSubmitResult && !canReopen) return null;
 
   return (
     <div data-testid="incident-detail-actions" className="flex flex-col gap-3">
@@ -164,6 +177,7 @@ export const IncidentDetailActions = ({
       {canSubmitResult ? (
         <SubmitResultForm isPending={isSubmitting} onSubmitResult={onSubmitResult} />
       ) : null}
+      {canReopen ? <ReopenForm isPending={isReopening} onReopen={onReopen} /> : null}
     </div>
   );
 };
@@ -344,6 +358,94 @@ const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) 
         ].join(" ")}
       >
         {isPending ? "Submitting..." : "Submit result"}
+      </button>
+    </fieldset>
+  );
+};
+
+/**
+ * Story 4.11 — Inline Reopen form (Admin-only when state is RESOLVED).
+ *
+ * Mirrors the Assign / Submit Result form patterns:
+ *
+ *   - Local state for the typed `reason` text.
+ *   - Disabled-when-empty affordance (the canFire guard).
+ *   - Inline `<fieldset>` / `<legend>` for the accessible name.
+ *   - Single Submit button (no per-row confirmation modal — the
+ *     `useReopenMutation`'s toast surface handles the success /
+ *     error feedback).
+ *
+ * Why a textarea (not an `<input type="text">`): the spec requires
+ * `reason ≥ 10 chars` and the comment is naturally multi-line
+ * (operator writes "Misclassified — device still failing. Reviewed
+ * the inspection log and the SAFE submit was incorrect."). A
+ * textarea handles both 10-char and multi-paragraph reasons without
+ * an artificial cap.
+ *
+ * Why no `confirm` dialog before firing: reopen is the Admin's
+ * authoritative verb (the Admin reviewed the audit timeline and
+ * decided the original resolve was wrong). The mutation's toast
+ * surface is the feedback loop; a confirm dialog would add a click
+ * with no information gain.
+ *
+ * Length validation lives on the server (Zod `reopenPayloadSchema`
+ * — `min(10).max(2000).trim()`). The form mirrors the lower bound
+ * locally so the disabled-when-empty affordance stays consistent
+ * with the Assign form (no client/server validation divergence).
+ *
+ * Visible only when `actionSlotsFor` returns `"reopen"` in the
+ * slot list — i.e. viewer is Admin AND state is RESOLVED. The
+ * orchestrator above already gates the mount.
+ */
+const REOPEN_REASON_MIN_LENGTH = 10;
+
+interface ReopenFormProps {
+  readonly isPending: boolean;
+  readonly onReopen: (reason: string) => void;
+}
+
+const ReopenForm = ({ isPending, onReopen }: ReopenFormProps) => {
+  const [reason, setReason] = useState<string>("");
+  const canFire = reason.trim().length >= REOPEN_REASON_MIN_LENGTH && !isPending;
+
+  return (
+    <fieldset
+      data-testid="incident-detail-reopen-form"
+      disabled={isPending}
+      className="flex flex-col gap-2 self-start rounded-input border border-neutral-border bg-neutral-surface p-3"
+    >
+      <legend className="text-xs font-medium text-neutral-secondary">Reopen incident</legend>
+      <label className="text-xs text-neutral-secondary" htmlFor="incident-detail-reopen-reason">
+        Reason (required, at least 10 characters)
+      </label>
+      {/* eslint-disable react/forbid-dom-props -- the `id` is the
+          target of the sibling `<label htmlFor>` above. The rule's
+          intent (avoid duplicate / colliding DOM ids) does not
+          apply to a single, test-stable testid-derived value. */}
+      <textarea
+        id="incident-detail-reopen-reason"
+        data-testid="incident-detail-reopen-reason"
+        value={reason}
+        disabled={isPending}
+        onChange={(e) => setReason(e.target.value)}
+        rows={3}
+        className="rounded-input border border-neutral-border bg-neutral-page px-3 py-2 text-sm text-neutral-body disabled:cursor-not-allowed disabled:bg-neutral-page"
+      />
+      {/* eslint-enable react/forbid-dom-props */}
+      <button
+        type="button"
+        data-testid="incident-detail-reopen-button"
+        disabled={!canFire}
+        onClick={() => {
+          if (canFire) onReopen(reason.trim());
+        }}
+        className={[
+          "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
+          "border-slate-900 bg-slate-900 hover:bg-slate-700",
+          "disabled:bg-slate-400 disabled:cursor-not-allowed",
+        ].join(" ")}
+      >
+        {isPending ? "Reopening..." : "Reopen"}
       </button>
     </fieldset>
   );

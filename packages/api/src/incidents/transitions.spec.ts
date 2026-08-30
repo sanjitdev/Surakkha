@@ -238,6 +238,23 @@ describe("Story 4.2 — valid transitions (AC3)", () => {
     if (!result.ok) return;
     expect(result.next_state).toBe("OPEN");
   });
+
+  // Story 4.11 — reopen's event_payload embeds the Admin-supplied
+  // `reason` (the route layer validates ≥ 10 chars upstream). The
+  // pure function trusts the caller and threads the value through.
+  it("RESOLVED + reopen + reason → event_payload carries reason", () => {
+    const result = transition({
+      incident: makeIncident({ state: "RESOLVED" }),
+      action: "reopen",
+      actorUserId: ADMIN_ID,
+      reason: "Misclassified — device still failing",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event_type).toBe("reopen");
+    expect(result.event_payload.reason).toBe("Misclassified — device still failing");
+    expect(result.event_payload.actorUserId).toBe(ADMIN_ID);
+  });
 });
 
 describe("Story 4.2 — INVALID transitions (AC3)", () => {
