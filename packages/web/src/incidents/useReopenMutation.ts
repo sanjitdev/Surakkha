@@ -10,10 +10,11 @@
  *
  * 4xx classification:
  *
+ *   - 400 `validation_error`           → first server issues[].message
+ *                                       (e.g. "String must contain at least 10 character(s)")
+ *                                       or a generic fallback if the body is unparseable.
  *   - 409 `invalid_state_transition`  → "Cannot reopen — incident is not RESOLVED"
  *   - 403                              → "Not authorized"
- *   - 400 `validation_error`           → "Reason must be at least 10 characters" (and the
- *                                       server's issues list, if available)
  *   - 404                              → "Incident not found"
  *   - 401 (token refresh failed)       → "Session expired — please sign in again"
  *
@@ -42,6 +43,7 @@ import { apiFetch } from "../api/apiClient";
 import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
 
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_BAD_REQUEST = 400;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
@@ -65,7 +67,57 @@ export class ReopenMutationError extends Error {
   }
 }
 
-const classifyReopenError = (status: number): ReopenMutationError => {
+/**
+ * Fallback copy for a 400 `validation_error` envelope whose body
+ * is missing or unparseable. The server's Zod issues array is the
+ * preferred source — it surfaces the exact constraint violation
+ * (min-length, max-length, missing field, extra field, wrong type)
+ * so the operator can fix the input without guessing.
+ */
+const VALIDATION_FALLBACK = "Reason invalid — please review and resubmit";
+
+/**
+ * Extract the first human-readable message from the server's Zod
+ * issues array. The shape mirrors the backend's error envelope
+ * (`{ error: "validation_error", issues: [{ message, path }] }`).
+ *
+ * Returns `null` when the body is unparseable or has no
+ * `issues[]` array — the caller falls back to a generic copy.
+ */
+const firstIssueMessage = (body: unknown): string | null => {
+  if (typeof body !== "object" || body === null) return null;
+  const { issues } = body as { issues?: unknown };
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  const first = issues[0];
+  if (typeof first !== "object" || first === null) return null;
+  const { message } = first as { message?: unknown };
+  return typeof message === "string" && message.length > 0 ? message : null;
+};
+
+/**
+ * Classify a non-OK response into a `ReopenMutationError`. Reads
+ * the response body (cloned — the original body is left for any
+ * subsequent reader) so 400 `validation_error` responses surface
+ * the first Zod issue's message verbatim. The mutationFn clones
+ * the response BEFORE this classifier runs so the body's stream
+ * is preserved.
+ *
+ * Network errors (status 0) fall through to the 5xx path.
+ */
+export const classifyReopenError = async (res: Response): Promise<ReopenMutationError> => {
+  const { status } = res;
+  // Try to surface the server's Zod issues list for 400. The
+  // `clone()` keeps the original body intact for any other reader.
+  if (status === HTTP_BAD_REQUEST) {
+    let body: unknown = null;
+    try {
+      body = await res.clone().json();
+    } catch {
+      body = null;
+    }
+    const message = firstIssueMessage(body) ?? VALIDATION_FALLBACK;
+    return new ReopenMutationError(status, message);
+  }
   if (status === HTTP_CONFLICT) {
     return new ReopenMutationError(status, "Cannot reopen — incident is not RESOLVED");
   }
@@ -91,11 +143,13 @@ export const useReopenMutation = (id: string) => {
           body: JSON.stringify({ reason }),
         });
         if (!res.ok) {
-          throw classifyReopenError(res.status);
+          throw await classifyReopenError(res);
         }
       } catch (err) {
         if (err instanceof ReopenMutationError) throw err;
-        throw classifyReopenError(HTTP_NETWORK_THROW);
+        // Network / parse failure — synthesize a `Response`-shaped
+        // carrier so the same classifier can produce the toast copy.
+        throw await classifyReopenError(new Response(null, { status: HTTP_NETWORK_THROW }));
       }
     },
     onSuccess: () => {

@@ -389,15 +389,21 @@ const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) 
  * with no information gain.
  *
  * Length validation lives on the server (Zod `reopenPayloadSchema`
- * — `min(10).max(2000).trim()`). The form mirrors the lower bound
+ * — `min(10).max(2000).trim()`). The form mirrors BOTH bounds
  * locally so the disabled-when-empty affordance stays consistent
- * with the Assign form (no client/server validation divergence).
+ * with the Assign form AND an operator who pastes a 5 KB PR
+ * description cannot submit a payload the server will reject with
+ * a misleading "too short" toast. The `maxLength` attribute is the
+ * standard browser-level affordance; the submit-button guard is the
+ * source of truth (so future Story 4.x changes can bump the bound
+ * without a layout-level migration).
  *
  * Visible only when `actionSlotsFor` returns `"reopen"` in the
  * slot list — i.e. viewer is Admin AND state is RESOLVED. The
  * orchestrator above already gates the mount.
  */
 const REOPEN_REASON_MIN_LENGTH = 10;
+const REOPEN_REASON_MAX_LENGTH = 2000;
 
 interface ReopenFormProps {
   readonly isPending: boolean;
@@ -416,7 +422,7 @@ const ReopenForm = ({ isPending, onReopen }: ReopenFormProps) => {
     >
       <legend className="text-xs font-medium text-neutral-secondary">Reopen incident</legend>
       <label className="text-xs text-neutral-secondary" htmlFor="incident-detail-reopen-reason">
-        Reason (required, at least 10 characters)
+        Reason (required, between 10 and 2000 characters)
       </label>
       {/* eslint-disable react/forbid-dom-props -- the `id` is the
           target of the sibling `<label htmlFor>` above. The rule's
@@ -427,6 +433,15 @@ const ReopenForm = ({ isPending, onReopen }: ReopenFormProps) => {
         data-testid="incident-detail-reopen-reason"
         value={reason}
         disabled={isPending}
+        // `required` + `aria-required` mirror the label copy
+        // ("required, between 10 and 2000 characters") at the
+        // HTML level so screen-reader users hear the constraint.
+        required
+        aria-required="true"
+        // `maxLength` mirrors the server's Zod `max(2000)` cap so
+        // the browser refuses keys past the limit — preventing a
+        // misleading "too short" toast for a too-long input.
+        maxLength={REOPEN_REASON_MAX_LENGTH}
         onChange={(e) => setReason(e.target.value)}
         rows={3}
         className="rounded-input border border-neutral-border bg-neutral-page px-3 py-2 text-sm text-neutral-body disabled:cursor-not-allowed disabled:bg-neutral-page"
