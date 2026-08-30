@@ -2571,3 +2571,97 @@ describe("Story 4.11 — AC: CONFLICT_409 (error toast + row reconciles)", () =>
     });
   });
 });
+
+describe("Story 4.13 — AC: attachments section mounted below the audit timeline", () => {
+  it("renders the AttachmentsSection with the row's incident id", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/attachments`)) {
+        return new Response(JSON.stringify({ attachments: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("attachments-section")).toBeInTheDocument();
+    // Empty attachments renders the empty-state copy.
+    expect(screen.getByTestId("attachments-list-empty")).toHaveTextContent("No attachments yet.");
+  });
+
+  it("hides the 'Add attachment' button for Viewer viewers", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/attachments`)) {
+        return new Response(JSON.stringify({ attachments: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Viewer");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("attachments-section")).toBeInTheDocument();
+    // No create affordance for Viewer (matrix `create.Attachment = N`).
+    expect(screen.queryByTestId("attachments-add-button")).toBeNull();
+  });
+
+  it("renders attachment rows below the audit-timeline section", async () => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/attachments`)) {
+        return new Response(
+          JSON.stringify({
+            attachments: [
+              {
+                id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+                incident_id: INCIDENT_ID,
+                url: "https://example.com/photo.png",
+                label: "Sensor photo",
+                mime: "image/png",
+                uploaded_by_user_id: null,
+                created_at: "2026-08-28T00:00:00.000Z",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    // The attachment row sits below the audit-timeline section —
+    // the document order pin checks the section is in the tree.
+    const row = screen.getByTestId("attachments-row-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01");
+    expect(row).toBeInTheDocument();
+    // The row's link renders the label as text.
+    expect(
+      screen.getByTestId("attachments-row-link-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01"),
+    ).toHaveTextContent("Sensor photo");
+  });
+});

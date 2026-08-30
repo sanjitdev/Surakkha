@@ -54,6 +54,7 @@ import {
   resolveAlertAcknowledgeRepository,
   resolveAlertListRepository,
 } from "./alerts/index.js";
+import { mountAttachmentRouter } from "./attachments/routerWiring.js";
 import { type AuditLogger } from "./audit";
 import { buildActorUserIdResolver } from "./auth/actorUserIdResolver";
 import { assertJwtSecret } from "./auth/jwt";
@@ -671,6 +672,16 @@ app.use(
  * under `max-lines: 500` (Story 4.10 added ~63 lines).
  */
 mountNotificationRouter({ app, audit, resolvePrismaClient });
+
+/**
+ * Story 4.13 — mount `/api/incidents/:id/attachments` (POST +
+ * GET) and `/api/attachments/:id` (DELETE). Lazy-resolved
+ * Prisma wrapper (mirror of the notification pattern); the
+ * router also needs an `incidentFindUnique` seam for
+ * Tech-ownership, which the wiring helper narrows to just the
+ * `assigneeUserId` column (no full incident delegate leak).
+ */
+mountAttachmentRouter({ app, audit, resolvePrismaClient });
 
 // Final 404 — registered AFTER every router mount (including the
 // incidents adapter above) so the catch-all only fires for paths

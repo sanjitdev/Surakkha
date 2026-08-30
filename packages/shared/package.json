@@ -46,6 +46,26 @@
     "./dashboard": {
       "types": "./dist/dashboard.d.ts",
       "import": "./dist/dashboard.js"
+    },
+    "./rule": {
+      "types": "./dist/rule.d.ts",
+      "import": "./dist/rule.js"
+    },
+    "./alerts": {
+      "types": "./dist/alerts.d.ts",
+      "import": "./dist/alerts.js"
+    },
+    "./urlValidation": {
+      "types": "./dist/urlValidation.d.ts",
+      "import": "./dist/urlValidation.js"
+    },
+    "./mimeAutoDetect": {
+      "types": "./dist/mimeAutoDetect.d.ts",
+      "import": "./dist/mimeAutoDetect.js"
+    },
+    "./attachment": {
+      "types": "./dist/attachment.d.ts",
+      "import": "./dist/attachment.js"
     }
   },
   "scripts": {

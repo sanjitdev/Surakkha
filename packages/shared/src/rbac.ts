@@ -50,7 +50,8 @@ export type Action = z.infer<typeof ActionSchema>;
 /**
  * Resources cover every entity surfaced via the api or referenced in the
  * incident workflow. `School` and `severity_banner` were added in Story 1.1
- * to bring the TS enum into 1:1 alignment with the appendix.
+ * to bring the TS enum into 1:1 alignment with the appendix. `Attachment`
+ * is added in Story 4.13 for the URL-only attachment evidence surface.
  */
 export const ResourceSchema = z.enum([
   "Device",
@@ -64,6 +65,7 @@ export const ResourceSchema = z.enum([
   "Notification",
   "Simulator",
   "SeverityBanner",
+  "Attachment",
 ]);
 export type Resource = z.infer<typeof ResourceSchema>;
 
@@ -111,12 +113,17 @@ export const RBAC_MATRIX = {
       School: Y,
       SeverityBanner: Y,
       Simulator: N,
+      // Story 4.13 — every authenticated role can read attachments
+      // (read-only access via the detail page's attachments section).
+      Attachment: Y,
     },
     create: {
       Device: Y,
       Reading: N,
       Alert: N,
       Incident: N,
+      // Story 4.13 — Admin can create attachments.
+      Attachment: Y,
     },
     update: {
       Device: Y,
@@ -125,6 +132,10 @@ export const RBAC_MATRIX = {
     delete: {
       Device: Y,
       Rule: Y,
+      // Story 4.13 — Admin can delete ANY attachment (the matrix
+      // grant is the baseline; the per-row "uploader can delete
+      // own" rule lives in the handler, not the matrix).
+      Attachment: Y,
     },
     acknowledge: {
       Alert: Y,
@@ -170,12 +181,16 @@ export const RBAC_MATRIX = {
       School: Y,
       SeverityBanner: N,
       Simulator: N,
+      // Story 4.13 — Operator can read attachments.
+      Attachment: Y,
     },
     create: {
       Device: N,
       Reading: N,
       Alert: N,
       Incident: N,
+      // Story 4.13 — Operator can create attachments.
+      Attachment: Y,
     },
     update: {
       Device: N,
@@ -184,6 +199,9 @@ export const RBAC_MATRIX = {
     delete: {
       Device: N,
       Rule: N,
+      // Story 4.13 — Operator cannot matrix-delete; the per-row
+      // ownership check in the handler allows deleting OWN uploads.
+      Attachment: N,
     },
     acknowledge: {
       Alert: Y,
@@ -232,12 +250,18 @@ export const RBAC_MATRIX = {
       School: Y,
       SeverityBanner: N,
       Simulator: N,
+      // Story 4.13 — Technician can read attachments (subject to
+      // the per-incident ownership check in the handler).
+      Attachment: Y,
     },
     create: {
       Device: N,
       Reading: N,
       Alert: N,
       Incident: N,
+      // Story 4.13 — Technician can create attachments (subject to
+      // the per-incident ownership check in the handler).
+      Attachment: Y,
     },
     update: {
       Device: N,
@@ -246,6 +270,9 @@ export const RBAC_MATRIX = {
     delete: {
       Device: N,
       Rule: N,
+      // Story 4.13 — Technician cannot matrix-delete; the per-row
+      // ownership check in the handler allows deleting OWN uploads.
+      Attachment: N,
     },
     acknowledge: {
       Alert: N,
@@ -291,12 +318,16 @@ export const RBAC_MATRIX = {
       School: Y,
       SeverityBanner: N,
       Simulator: N,
+      // Story 4.13 — Viewer can read attachments (read-only).
+      Attachment: Y,
     },
     create: {
       Device: N,
       Reading: N,
       Alert: N,
       Incident: N,
+      // Story 4.13 — Viewer cannot create attachments.
+      Attachment: N,
     },
     update: {
       Device: N,
@@ -305,6 +336,8 @@ export const RBAC_MATRIX = {
     delete: {
       Device: N,
       Rule: N,
+      // Story 4.13 — Viewer cannot delete attachments.
+      Attachment: N,
     },
     acknowledge: {
       Alert: N,

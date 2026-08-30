@@ -2,8 +2,9 @@
 title: "Story 4.13 — Attachments (external URL + label)"
 type: "feature"
 created: "2026-08-28"
-status: "draft"
+status: "done"
 review_loop_iteration: 0
+baseline_commit: "729c6a4"
 context:
   - _bmad-output/implementation-artifacts/epic-4-context.md
   - _bmad-output/planning-artifacts/epics.md

@@ -51,6 +51,7 @@ import { useParams } from "react-router-dom";
 
 import { NotFound } from "../access/NotFound";
 import { RbacDenied } from "../access/RbacDenied";
+import { AttachmentsSection } from "../attachments/AttachmentsSection";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { readUserIdFromStore } from "../auth/tokenStore";
 
@@ -409,6 +410,8 @@ const IncidentDetailBody = ({
         </ul>
       )}
     </section>
+
+    <AttachmentsSection incidentId={incident.id} />
   </div>
 );
 

@@ -110,7 +110,7 @@ development_status:
   4-10-notificationbell-dropdown: done
   4-11-reopen-path: done
   4-12-technician-filtered-kanban: done
-  4-13-attachments: backlog
+  4-13-attachments: done
 
   # ===== Epic 5 — Reporting & Audit =====
   epic-5: backlog
