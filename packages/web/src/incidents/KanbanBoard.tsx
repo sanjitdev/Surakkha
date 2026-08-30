@@ -59,7 +59,7 @@ import { z } from "zod";
 
 import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
-import { useCurrentRole } from "../auth/CurrentRoleContext";
+import { useCurrentRole, useCurrentUserId } from "../auth/CurrentRoleContext";
 
 import { KanbanCard } from "./KanbanCard";
 import { KanbanRbacDeniedError } from "./KanbanRbacDeniedError";
@@ -199,18 +199,44 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   // 404 / 403 / 500 / loading / success; the Kanban stays focused
   // on the active-list projection.
   const navigate = useNavigate();
-  // Story 4.12 — the role drives the empty-state branch. The
-  // hook returns `null` for unauthenticated; the route gate handles
-  // that case before this component renders.
+  // Story 4.12 — the role + userId drive the render-time Tech
+  // filter and the empty-state branch. The hooks return `null`
+  // for unauthenticated; the route gate handles that case before
+  // this component renders.
   const role = useCurrentRole();
+  const currentUserId = useCurrentUserId();
 
-  // Mount the realtime subscription (per-page lifecycle).
+  // Mount the realtime subscription (per-page lifecycle). The hook
+  // mutates the SHARED `["incidents", "active"]` cache in place —
+  // it does NOT apply the Tech filter (see `useKanbanBoardSocket.ts`
+  // header). The render-time filter below is the single place the
+  // Tech-only view is enforced; the cache stays authoritative for
+  // `useSeverityBanner` (a global safety surface).
   useKanbanBoardSocket(socketUrl);
 
   const query = useQuery<ActiveIncidentsEnvelope>({
     queryKey: [...KANBAN_ACTIVE_QUERY_KEY],
     queryFn: fetchActiveIncidents,
   });
+
+  // Story 4.12 — render-time Tech filter. The server's `/api/
+  // incidents/active` endpoint returns EVERY active row (the
+  // server doesn't know the viewer is a Tech until they pass the
+  // token; the shared cache also feeds the severity banner which
+  // is global). The Kanban filters its rendered slice by
+  // `assignee_user_id === currentUserId` for Technicians.
+  //
+  // Why render-time and not query-time: the cache is shared with
+  // `useSeverityBanner` (Story 4.8). A cache-time filter would
+  // hide other-Tech UNSAFE rows from the banner — a global
+  // safety surface must NOT be Tech-filtered (spec line 144 +
+  // AC9). The Kanban's Tech-only view is a render concern; the
+  // underlying data is global.
+  const renderedIncidents = useMemo<readonly IncidentPayload[]>(() => {
+    const all = query.data?.incidents ?? [];
+    if (role !== "Technician" || currentUserId === null) return all;
+    return all.filter((i) => i.assignee_user_id === currentUserId);
+  }, [query.data?.incidents, role, currentUserId]);
 
   // Project incidents into columns. `useMemo` because the
   // grouping is O(N) over the active list and re-running on
@@ -225,8 +251,8 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   // and break the React-keyed DOM identity (the columns are the
   // layout seam; their order matters to the grid).
   const columns = useMemo<readonly KanbanColumnView[]>(
-    () => groupByColumn(query.data?.incidents ?? []),
-    [query.data?.incidents],
+    () => groupByColumn(renderedIncidents),
+    [renderedIncidents],
   );
 
   if (query.isError && query.error instanceof KanbanRbacDeniedError) {
@@ -243,8 +269,15 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
     );
   }
 
-  const incidentCount = query.data?.incidents.length ?? 0;
-  const isTechEmpty = incidentCount === 0 && role === "Technician";
+  // Story 4.12 — Tech-empty-state branch. The branch only fires
+  // when the QUERY has finished loading (no flash during the
+  // initial fetch — a Tech with a still-loading board should NOT
+  // see the empty state for a frame). The Tech-empty branch
+  // counts the render-time-filtered rows (NOT the raw envelope),
+  // so a Tech whose server envelope has rows but none are theirs
+  // also sees the empty state.
+  const isQuerySettled = !query.isLoading && !query.isFetching;
+  const isTechEmpty = isQuerySettled && renderedIncidents.length === 0 && role === "Technician";
 
   return (
     <div

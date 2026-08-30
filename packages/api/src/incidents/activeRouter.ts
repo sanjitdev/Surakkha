@@ -83,10 +83,26 @@ export const buildActiveIncidentsRouter = (deps: ActiveIncidentsDeps): Router =>
       // clause (server-side, indexed), not at the row projection.
       // The where-builder pattern uses a conditional spread so the
       // payload stays identical for non-Tech viewers.
-      const techFilter =
-        req.user?.role === "Technician" && req.user.id !== undefined
-          ? { assigneeUserId: req.user.id }
-          : {};
+      //
+      // Step-04 review fix — defensive `req.user` check: the
+      // `authorize` middleware is supposed to populate
+      // `req.user` from the JWT, but a malformed/missing user is
+      // possible in test rigs and in a misconfigured middleware
+      // chain. For Technicians we MUST have an id to filter on
+      // (filtering by `undefined` would match every row, leaking
+      // the entire active list — a worse outcome than the
+      // non-Tech case). When a Tech request lacks an id we treat
+      // it the same as 500 (the request is malformed at the
+      // authorization layer; returning a partial-ok would mask
+      // the misconfiguration).
+      const role = req.user?.role;
+      const userId = req.user?.id;
+      if (role === "Technician" && userId === undefined) {
+        console.error("api/incidents/active: Technician request missing user id");
+        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        return;
+      }
+      const techFilter = role === "Technician" ? { assigneeUserId: userId as string } : {};
       let rows: IncidentRow[];
       try {
         rows = await deps.repo.incident.findMany({

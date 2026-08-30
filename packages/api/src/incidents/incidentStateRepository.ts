@@ -88,6 +88,16 @@ export interface IncidentStateRepository {
      * `never` — a follow-up story that narrows the projection
      * should add a separate narrow-typed `findManyLite` rather
      * than thread a returned-shape union through this method.
+     *
+     * `take` is the CALLER's responsibility: the type accepts
+     * `take?: number` (so the caller can pass `take: 50` for
+     * pagination later) but the active endpoint never sets it
+     * today. The active board returns every non-RESOLVED incident
+     * un-paginated — the upper bound is "a few hundred" per the
+     * spec's "Ask First: pagination" decision. A follow-up story
+     * that paginates the active list should thread `take` from a
+     * `?limit=` query param, NOT silently cap inside the data
+     * layer.
      */
     findMany(args: {
       readonly where?: {
@@ -99,6 +109,15 @@ export interface IncidentStateRepository {
          * continue to see every non-RESOLVED row. The column is
          * indexed (4.2's migration), so the predicate adds no
          * measurable overhead.
+         *
+         * Step-04 review fix — WARN: this is a SHARED scope. A
+         * future handler that reuses this method MUST consciously
+         * decide whether to thread `assigneeUserId` for Technicians
+         * or fall back to the global view. Copy-pasting the
+         * `activeRouter.ts` `techFilter` pattern is the safer
+         * default for any "list everything for a viewer" endpoint;
+         * a "list everything period" endpoint (e.g. an admin
+         * audit-trail feed) should leave the predicate undefined.
          */
         readonly assigneeUserId?: string;
       };

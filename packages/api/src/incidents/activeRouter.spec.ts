@@ -53,9 +53,21 @@ const OPERATOR_ID = "00000000-0000-4000-8000-00000000a002";
 // reassign test.
 const TECH_A_ID = "00000000-0000-4000-8000-00000000a003";
 const TECH_B_ID = "00000000-0000-4000-8000-00000000a007";
-const tokenForRole = (role: "Admin" | "Operator" | "Technician") =>
+// Step-04 review fix — Viewer is seeded as `a004` in `auth/users.ts`.
+// Viewer maps to the unfiltered branch (same as Admin / Operator)
+// so the seed id only needs to be a stable UUID; it's never
+// matched against the `assigneeUserId` filter in this spec.
+const VIEWER_ID = "00000000-0000-4000-8000-00000000a004";
+const tokenForRole = (role: "Admin" | "Operator" | "Technician" | "Viewer") =>
   issueAccessToken({
-    userId: role === "Admin" ? ADMIN_ID : role === "Technician" ? TECH_A_ID : OPERATOR_ID,
+    userId:
+      role === "Admin"
+        ? ADMIN_ID
+        : role === "Technician"
+          ? TECH_A_ID
+          : role === "Viewer"
+            ? VIEWER_ID
+            : OPERATOR_ID,
     role,
   }).token;
 
@@ -412,6 +424,19 @@ describe("Story 4.3 — GET /api/incidents/active", () => {
     });
     expect(resAdmin.status).toBe(200);
     expect(observedWhere?.assigneeUserId).toBeUndefined();
+
+    // Viewer — full list, no filter. Step-04 review fix: pin this
+    // branch explicitly. A regression that defaulted the filter to
+    // `req.user.id` would still render the wrong list for Viewer
+    // (a global read surface that must show every incident).
+    observedWhere = undefined;
+    const resViewer = await fetch(`${url}/api/incidents/active`, {
+      headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
+    });
+    expect(resViewer.status).toBe(200);
+    expect(observedWhere?.assigneeUserId).toBeUndefined();
+    const viewerBody = (await resViewer.json()) as { incidents: IncidentPayload[] };
+    expect(viewerBody.incidents).toHaveLength(5);
 
     await close();
   });

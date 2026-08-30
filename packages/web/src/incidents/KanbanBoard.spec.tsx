@@ -851,16 +851,26 @@ describe("Story 4.12 — AC: Tech empty state when the active list is empty", ()
   });
 });
 
-describe("Story 4.12 — AC: socket helper drops rows for other Technicians", () => {
-  // SOCKET_FILTER_DROP / SOCKET_FILTER_KEEP — exercise the
-  // `applyStateChangeToCache` helper directly. The component-level
-  // socket listener is wired in the main board render; this pair
-  // of tests isolates the helper so the assertion pins the
-  // TECH_FILTER_DROP contract.
+describe("Story 4.12 — applyStateChangeToCache no longer filters (4.3 contract restored)", () => {
+  // Step-04 review fix: the helper no longer takes `currentUserId`
+  // and no longer applies TECH_FILTER_DROP. The shared cache is
+  // read by both the Kanban (filtered at render time) AND
+  // `useSeverityBanner` (global safety surface, NOT filtered). If
+  // the helper filtered at cache-write time, the banner would
+  // silently drop rows assigned to other Technicians. So the
+  // helper applies the original 4.3 contract: every row's
+  // `state` is mutated in place (or dropped on RESOLVED); no
+  // assignee check. See spec line 144 + AC9.
   const TECH_A = "00000000-0000-4000-8000-00000000a003";
   const TECH_B = "00000000-0000-4000-8000-00000000a007";
 
-  it("drops a row whose assignee_user_id does not match currentUserId (SOCKET_FILTER_DROP)", () => {
+  it("mutates a row in place even when the assignee is a different Technician", () => {
+    // Tech B's row is in the cache (the server's active list
+    // returns every active row — the global `["incidents",
+    // "active"]` key is not viewer-filtered). The helper mutates
+    // the row's state in place because the cache is shared.
+    // The Kanban then filters at render time; the banner reads
+    // the row as-is.
     const populatedEnvelope = {
       incidents: [
         baseIncident({
@@ -878,14 +888,12 @@ describe("Story 4.12 — AC: socket helper drops rows for other Technicians", ()
       changed_at: "2026-08-27T01:00:00.000Z",
       actor_user_id: TECH_B,
     };
-    // Tech A receives an event for Tech B's incident — the helper
-    // MUST drop it (TECH_FILTER_DROP). The shape is the same as
-    // the `idx === -1` branch: `prev` is returned unchanged.
-    const result = applyStateChangeToCache(populatedEnvelope, event, TECH_A);
-    expect(result).toBe(populatedEnvelope);
+    const result = applyStateChangeToCache(populatedEnvelope, event);
+    expect(result?.incidents).toHaveLength(1);
+    expect(result?.incidents[0]?.state).toBe("ACKNOWLEDGED");
   });
 
-  it("keeps a row whose assignee_user_id matches currentUserId (SOCKET_FILTER_KEEP)", () => {
+  it("mutates a row in place when the assignee matches currentUserId", () => {
     const populatedEnvelope = {
       incidents: [
         baseIncident({
@@ -902,38 +910,6 @@ describe("Story 4.12 — AC: socket helper drops rows for other Technicians", ()
       to_state: "ACKNOWLEDGED",
       changed_at: "2026-08-27T01:00:00.000Z",
       actor_user_id: TECH_A,
-    };
-    // Tech A receives an event for THEIR OWN incident — the helper
-    // mutates the cached row's state in place.
-    const result = applyStateChangeToCache(populatedEnvelope, event, TECH_A);
-    expect(result).not.toBe(populatedEnvelope);
-    expect(result?.incidents).toHaveLength(1);
-    expect(result?.incidents[0]?.state).toBe("ACKNOWLEDGED");
-  });
-
-  it("does NOT drop the row when currentUserId is undefined (4.3 contract preserved)", () => {
-    // The 4.3 hook signature was `applyStateChangeToCache(prev, event)`
-    // — no Tech filter. Admin / Operator / Viewer still go through
-    // the helper without a `currentUserId`, and the helper MUST
-    // NOT filter them. A regression that always applied the filter
-    // would break Admin's global view (every row could be filtered
-    // out when Admin's userId is undefined).
-    const populatedEnvelope = {
-      incidents: [
-        baseIncident({
-          id: "16161616-1616-4161-8161-161616161616",
-          state: "OPEN",
-          severity: "critical",
-          assignee_user_id: TECH_B,
-        }),
-      ],
-    };
-    const event: IncidentStateChangedEvent = {
-      incident_id: "16161616-1616-4161-8161-161616161616",
-      from_state: "OPEN",
-      to_state: "ACKNOWLEDGED",
-      changed_at: "2026-08-27T01:00:00.000Z",
-      actor_user_id: TECH_B,
     };
     const result = applyStateChangeToCache(populatedEnvelope, event);
     expect(result?.incidents).toHaveLength(1);

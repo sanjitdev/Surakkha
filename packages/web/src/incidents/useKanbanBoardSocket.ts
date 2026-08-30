@@ -20,6 +20,17 @@
  * invariant is honoured here: we mutate the cache, never refetch.
  * The TanStack Query spy test asserts this contract.
  *
+ * IMPORTANT — Story 4.12 review fix:
+ *   This helper mutates the SHARED `["incidents", "active"]` cache.
+ *   `useSeverityBanner` reads from the same key (Story 4.8) and the
+ *   severity banner is GLOBAL — Operators / Admins / Viewers see
+ *   every active incident's worst severity regardless of
+ *   `assignee_user_id`. If this helper filtered by viewer id at
+ *   cache-write time, the banner would silently drop rows assigned
+ *   to other Technicians (a global safety surface would lie). So
+ *   the cache stays unfiltered; the Tech-only render-time filter
+ *   lives in `KanbanBoard` instead. See spec line 144 + AC9.
+ *
  * Disconnect handling mirrors `useDashboardSocket`: the underlying
  * socket is module-scoped (owned by `socketClient.ts`), so a
  * transport disconnect does NOT unmount this hook — TanStack Query
@@ -38,13 +49,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { apiFetch } from "../api/apiClient";
-import { useCurrentUserId } from "../auth/CurrentRoleContext";
 import { connectSocket } from "../realtime/socketClient";
 
 /**
  * The shared TanStack Query key for the active list. `useKanbanBoard`
  * uses the same key for its initial fetch; this hook mutates the
  * same cache so the board's render stays the single source of truth.
+ *
+ * IMPORTANT — Story 4.12 review fix:
+ *   This cache key is SHARED. Both `useKanbanBoard` and
+ *   `useSeverityBanner` read from it; both surfaces must see the
+ *   same row set. The Tech-only filter for the Kanban board lives
+ *   in `KanbanBoard` at render time (NOT here at cache-write time)
+ *   so the banner remains a global safety surface.
  */
 export const KANBAN_ACTIVE_QUERY_KEY = ["incidents", "active"] as const;
 
@@ -61,26 +78,25 @@ const KANBAN_SOCKET_URL = "/dashboard";
  * up a real socket.
  *
  * Returns the updated envelope, or the unchanged `prev` envelope on
- * any silent-drop path:
+ * either silent-drop path:
  *   - `prev === undefined` — the active list hasn't loaded yet.
  *   - `incident_id` not in the cache — the row was already removed
  *     (RESOLVED, or a duplicate event).
- *   - `RESOLVED_DROP` — the row transitioned to RESOLVED; we drop
- *     it (spec edge case).
- *   - `TECH_FILTER_DROP` (Story 4.12) — for Technician viewers,
- *     `assignee_user_id !== currentUserId`. The row belongs to
- *     another Tech, so the cache mutator drops the event silently
- *     (same shape as the `incident_id not found` branch above).
  *
- * `currentUserId` is OPTIONAL: when `undefined`, the helper falls
- * back to the original 4.3 contract (no Tech filter). The hook reads
- * `useCurrentUserId()` and threads the value through; unit tests
- * that don't care about the Tech filter pass `undefined`.
+ * Story 4.12 — TECH_FILTER_DROP was originally implemented here,
+ * filtering rows by `assignee_user_id === currentUserId` for
+ * Technician viewers. The Step-04 review surfaced that this filter
+ * silently dropped rows from the SHARED cache key that
+ * `useSeverityBanner` reads (a global safety surface must NOT be
+ * Tech-filtered). The fix moved the filter to render time in
+ * `KanbanBoard`; this helper now treats every row the same way
+ * (4.3's original behaviour). The cache stays authoritative for
+ * all consumers; consumers that need a Tech-only view filter at
+ * read time.
  */
 export const applyStateChangeToCache = (
   prev: ActiveCacheEnvelope | undefined,
   event: IncidentStateChangedEvent,
-  currentUserId?: string,
 ): ActiveCacheEnvelope | undefined => {
   if (prev === undefined) return prev;
   const idx = prev.incidents.findIndex((i) => i.id === event.incident_id);
@@ -91,17 +107,8 @@ export const applyStateChangeToCache = (
       incidents: prev.incidents.filter((_, i) => i !== idx),
     };
   }
-  // Story 4.12 — TECH_FILTER_DROP. The hook passes `currentUserId`
-  // when the viewer is a Technician; the helper compares the row's
-  // `assignee_user_id` against it and drops the event silently when
-  // they differ. This mirrors the 4.3 `RESOLVED_DROP` shape: the
-  // helper returns `prev` unchanged, the React tree does not
-  // re-derive, and the row stays absent from the cache.
   const current = prev.incidents[idx];
   if (current === undefined) return prev;
-  if (currentUserId !== undefined && current.assignee_user_id !== currentUserId) {
-    return prev;
-  }
   const nextIncidents = prev.incidents.slice();
   nextIncidents[idx] = {
     ...current,
@@ -123,24 +130,16 @@ export const applyStateChangeToCache = (
  * without call-site configuration. Tests pass a stub `url` (the
  * socket itself is mocked at the network layer via the
  * `connectSocket` vi.mock pattern used in `Dashboard.spec.tsx`).
- *
- * Story 4.12 — the hook reads `useCurrentUserId()` and threads it
- * into every cache mutation, so the helper's TECH_FILTER_DROP
- * guard can drop events for rows assigned to other Technicians.
- * The provider is mounted above `<KanbanBoard>` in the AppShell
- * tree (see `main.tsx`), so the hook's `useContext` call resolves
- * before the socket emits.
  */
 export const useKanbanBoardSocket = (url: string = KANBAN_SOCKET_URL): void => {
   const queryClient = useQueryClient();
-  const currentUserId = useCurrentUserId();
 
   useEffect(() => {
     const socket = connectSocket({ url }, { onSessionLost: () => undefined });
 
     const handleStateChange = (payload: IncidentStateChangedEvent): void => {
       queryClient.setQueryData<ActiveCacheEnvelope>([...KANBAN_ACTIVE_QUERY_KEY], (prev) =>
-        applyStateChangeToCache(prev, payload, currentUserId ?? undefined),
+        applyStateChangeToCache(prev, payload),
       );
     };
 
@@ -148,7 +147,7 @@ export const useKanbanBoardSocket = (url: string = KANBAN_SOCKET_URL): void => {
     return () => {
       socket.off("incident:state_changed", handleStateChange);
     };
-  }, [queryClient, url, currentUserId]);
+  }, [queryClient, url]);
 };
 
 /**
