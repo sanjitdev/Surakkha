@@ -66,6 +66,10 @@
     "./attachment": {
       "types": "./dist/attachment.d.ts",
       "import": "./dist/attachment.js"
+    },
+    "./error-envelope": {
+      "types": "./dist/error-envelope.d.ts",
+      "import": "./dist/error-envelope.js"
     }
   },
   "scripts": {

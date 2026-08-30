@@ -20,11 +20,19 @@
  * The `BroadcastTarget` adapter mirrors the shape used by 3.4's
  * `alert:opened` emit in `applyTransition.ts:189` — same `to(room)
  * .emit(event, payload)` chain.
+ *
+ * Idempotency (Story 4.x — critique P1 #2): the transition router
+ * reads `Idempotency-Key: <UUIDv4>` from each request and replays
+ * the cached response on duplicate keys within `IDEMPOTENCY_TTL_MS`
+ * (5 minutes). The `IdempotencyStore` singleton is created here so
+ * every transition route in this process shares one cache. See
+ * `../middleware/idempotency.ts`.
  */
 
 import express, { type Router } from "express";
 
 import { type AuditLogger } from "../audit.js";
+import { idempotency, IdempotencyStore } from "../middleware/idempotency.js";
 
 import { type ActiveIncidentsDeps, buildActiveIncidentsRouter } from "./activeRouter.js";
 import {
@@ -128,6 +136,11 @@ const buildIncidentRepoResolver = (
  * needs the `incident.findMany` method and is mounted
  * independently to keep its dependency surface narrow (no
  * `incidentEvent` / `notification` access).
+ *
+ * Idempotency (Story 4.x — critique P1 #2): a process-wide
+ * `IdempotencyStore` is created here so all 5 transition routes
+ * share one cache. `idempotency(store)` wraps `res.json` to
+ * capture the outbound body for replay on duplicate keys.
  */
 export const buildIncidentsRouterMount = (input: {
   readonly audit: AuditLogger;
@@ -136,11 +149,13 @@ export const buildIncidentsRouterMount = (input: {
   readonly resolveActorUserId: (jwtSub: string | null) => Promise<string | null>;
 }): Router => {
   const { wrapper } = buildIncidentRepoResolver(input.resolvePrismaClient);
+  const idempotencyStore = new IdempotencyStore();
   const transitionDeps: IncidentsRouterDeps = {
     audit: input.audit,
     repo: wrapper,
     broadcast: buildIncidentBroadcastTarget(input.io),
     resolveActorUserId: input.resolveActorUserId,
+    idempotency: idempotency(idempotencyStore),
   };
   const activeDeps: ActiveIncidentsDeps = {
     audit: input.audit,

@@ -19,3 +19,4 @@ export * from "./alerts.js";
 export * from "./urlValidation.js";
 export * from "./mimeAutoDetect.js";
 export * from "./attachment.js";
+export * from "./error-envelope.js";

@@ -35,6 +35,20 @@
  *   Optimistic concurrency on `updatedAt` rejects concurrent
  *   writers with HTTP 409.
  *
+ * Idempotency (closes api critique P1 #2):
+ *
+ *   Each of the 5 transition POSTs is wrapped in `idempotency(...)`
+ *   middleware that mounts BETWEEN `authorize(...)` and the handler.
+ *   The middleware reads `Idempotency-Key: <UUIDv4>` from the
+ *   request, looks up `(user_id, route, key)` in an in-memory
+ *   store, and replays the cached response on duplicate keys within
+ *   `IDEMPOTENCY_TTL_MS` (5 minutes). This protects against
+ *   flaky-network double-taps ("Rahim the Operator" tapping
+ *   Acknowledge twice on a slow uplink) producing duplicate
+ *   `IncidentEvent` rows. Missing header → pass-through (the route
+ *   is idempotent by state-machine machinery). Malformed key →
+ *   400 `invalid_idempotency_key`. See `../middleware/idempotency.ts`.
+ *
  * AC4 (AI-3.2 closure): every successful transition emits a
  * `console.warn({ event: "incident_transition", ... })` log line.
  *
@@ -53,6 +67,7 @@ import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
+import { idempotency, IdempotencyStore } from "../middleware/idempotency.js";
 
 import {
   type IncidentEventRow,
@@ -103,6 +118,14 @@ export interface IncidentsRouterDeps {
    * the test rig omits it because it stubs `req.user` directly.
    */
   readonly resolveActorUserId?: (jwtSub: string | null) => Promise<string | null>;
+  /**
+   * Idempotency-Key middleware factory (Story 4.x — critique P1 #2).
+   * Production wires `idempotency(idempotencyStore)` from
+   * `src/index.ts` so all 5 transition routes share the same
+   * in-memory cache. Tests can omit this — a per-test default
+   * `IdempotencyStore` is created on first use.
+   */
+  readonly idempotency?: ReturnType<typeof idempotency>;
 }
 
 /**
@@ -215,6 +238,15 @@ const buildTransitionHandler =
  */
 export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
   const router = express.Router();
+
+  // Idempotency middleware — Story 4.x (critique P1 #2). Production
+  // wires `deps.idempotency` (a process-wide `IdempotencyStore`) from
+  // `src/index.ts` so all 5 transition routes share the same cache.
+  // When `deps.idempotency` is omitted (test rigs that don't care
+  // about the header) we fall back to a fresh per-builder store so
+  // test isolation is preserved — `IdempotencyStore.reset()` is still
+  // available via the same singleton if a test wants to wipe state.
+  const idempotencyMw = deps.idempotency ?? idempotency(new IdempotencyStore());
 
   // Read-side. RBAC: `read × Incident`. All four v1 roles can read;
   // Technician's ownership rule (only assigned) is enforced via
@@ -349,26 +381,31 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
   router.post(
     "/api/incidents/:id/acknowledge",
     authorize({ action: RBAC_ACTION_BY_VERB.acknowledge, resource: "Incident" }, deps.audit),
+    idempotencyMw,
     buildAcknowledgeHandler(deps),
   );
   router.post(
     "/api/incidents/:id/assign",
     authorize({ action: RBAC_ACTION_BY_VERB.assign, resource: "Incident" }, deps.audit),
+    idempotencyMw,
     buildAssignHandler(deps),
   );
   router.post(
     "/api/incidents/:id/submit-result",
     authorize({ action: RBAC_ACTION_BY_VERB.submit_result, resource: "Incident" }, deps.audit),
+    idempotencyMw,
     buildSubmitResultHandler(deps),
   );
   router.post(
     "/api/incidents/:id/resolve",
     authorize({ action: RBAC_ACTION_BY_VERB.resolve, resource: "Incident" }, deps.audit),
+    idempotencyMw,
     buildResolveHandler(deps),
   );
   router.post(
     "/api/incidents/:id/reopen",
     authorize({ action: RBAC_ACTION_BY_VERB.reopen, resource: "Incident" }, deps.audit),
+    idempotencyMw,
     buildReopenHandler(deps),
   );
 

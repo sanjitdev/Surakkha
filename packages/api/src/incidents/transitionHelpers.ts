@@ -16,6 +16,7 @@
  * The `runTransitionPipeline` orchestrator ties them together in
  * the order the route invokes them.
  */
+import { InvalidStateTransitionEnvelopeSchema } from "@surakkha/shared/error-envelope";
 import {
   type ActionVerb,
   type IncidentPayload,
@@ -46,6 +47,35 @@ export const HTTP_FORBIDDEN = 403;
 export const HTTP_NOT_FOUND = 404;
 export const HTTP_CONFLICT = 409;
 export const HTTP_INTERNAL_ERROR = 500;
+
+/**
+ * Canonical 409 envelope for `invalid_state_transition` — closes
+ * api critique P1 #3.
+ *
+ * Three pre-existing shapes (the typed state-machine miss via
+ * `respondInvalidAttempt`, the OptimisticConcurrencyError branch
+ * in `commitTransition`, and the P2002 partial-unique-index branch
+ * in `commitTransition`) collapse to one discriminated body:
+ *
+ *   - typed state-machine miss:    { error, from, attempted }                  (no `reason`)
+ *   - DB-layer concurrency:        { error, reason: "concurrent_modification" } (no `from`/`attempted`)
+ *
+ * Clients discriminate on which optional fields are present. The
+ * Zod parse guarantees the wire shape conforms to the shared
+ * `InvalidStateTransitionEnvelopeSchema` — a stray shape (e.g.
+ * `{ error, foo: "bar" }`) throws at parse time so we don't ship
+ * a malformed envelope.
+ */
+export const respondInvalidStateTransition = (
+  res: Response,
+  body: { readonly from?: string; readonly attempted?: string; readonly reason?: string },
+): void => {
+  const envelope = InvalidStateTransitionEnvelopeSchema.parse({
+    error: "invalid_state_transition",
+    ...body,
+  });
+  res.status(HTTP_CONFLICT).json(envelope);
+};
 
 /**
  * `IncidentsRouterDeps` shape — duplicated here as a type-only
@@ -490,16 +520,12 @@ interface InvalidAttemptResponseInput {
 
 /**
  * Write the `invalid_transition_attempt` audit event + respond
- * 409 with the from/attempted pair.
+ * 409 with the canonical `from/attempted` envelope.
  */
 export const respondInvalidAttempt = async (input: InvalidAttemptResponseInput): Promise<void> => {
   const { deps, incidentId, actorUserId, from, attempted, at, res } = input;
   await writeInvalidAttemptEvent({ deps, incidentId, actorUserId, from, attempted, at });
-  res.status(HTTP_CONFLICT).json({
-    error: "invalid_state_transition",
-    from,
-    attempted,
-  });
+  respondInvalidStateTransition(res, { from, attempted });
 };
 
 interface CommitTransitionInput {
@@ -542,10 +568,7 @@ export const commitTransition = async (
         attempted: verb,
         at: new Date().toISOString(),
       });
-      res.status(HTTP_CONFLICT).json({
-        error: "invalid_state_transition",
-        reason: "concurrent_modification",
-      });
+      respondInvalidStateTransition(res, { reason: "concurrent_modification" });
       return null;
     }
     if (isPrismaErrorWithCode(err, "P2002")) {
@@ -555,10 +578,7 @@ export const commitTransition = async (
       console.warn(
         `api/incidents/${id}/${verb}: P2002 collapsed to existing row, treating as concurrent_modification`,
       );
-      res.status(HTTP_CONFLICT).json({
-        error: "invalid_state_transition",
-        reason: "concurrent_modification",
-      });
+      respondInvalidStateTransition(res, { reason: "concurrent_modification" });
       return null;
     }
     if (isPrismaErrorWithCode(err, "P2003")) {
