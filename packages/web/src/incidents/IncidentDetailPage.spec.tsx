@@ -2675,3 +2675,264 @@ describe("Story 4.13 — AC: attachments section mounted below the audit timelin
     expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
+
+/**
+ * `/impeccable clarify` audit-timeline renderer — Story 4.4 + 4.11.
+ *
+ * Replaces the raw-JSON `<pre>{JSON.stringify(payload)}</pre>` block
+ * that previously surfaced developer-grade data to the named key-
+ * journey protagonist (Rahim, an Operator). Each event type now
+ * renders a calm, one-line summary; the verbose `type` and actor
+ * id remain in a secondary line for debugging.
+ */
+describe("/impeccable clarify — audit timeline typed renderer", () => {
+  const ACTOR = "00000000-0000-4000-8000-00000000a001";
+  const TECHS = "00000000-0000-4000-8000-00000000b002";
+
+  // Event ids must be UUIDs to pass `IncidentEventPayloadSchema`
+  // (the timeline `queryFn` runs the envelope through Zod before
+  // returning). The ids double as DOM testid suffixes — readable
+  // UUIDs keep assertions obvious.
+  const E = {
+    ACK: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01",
+    ASSIGN: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa02",
+    SAFE: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa03",
+    UNSAFE: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa04",
+    MON: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa05",
+    REOPEN: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa06",
+    REOPEN_EMPTY: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa07",
+    REJECT: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa08",
+    ANON: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa09",
+    WEIRD: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa0b",
+    TIME: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa0c",
+  } as const;
+
+  const renderDetailWithEvents = async (
+    events: ReadonlyArray<{
+      readonly id: string;
+      readonly type: string;
+      readonly actor_user_id: string | null;
+      readonly payload: Record<string, unknown>;
+      readonly created_at: string;
+    }>,
+  ): Promise<void> => {
+    installFetch(async (url) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident()), { status: 200 });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-timeline-list")).toBeInTheDocument();
+    });
+  };
+
+  it("renders 'Acknowledged by {actor}' for an acknowledge event", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.ACK,
+        incident_id: INCIDENT_ID,
+        type: "acknowledge",
+        actor_user_id: ACTOR,
+        payload: { actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.ACK}-summary`)).toHaveTextContent(
+      `Acknowledged by ${ACTOR}.`,
+    );
+    // The old <pre> tag MUST NOT be emitted — operators never see JSON.
+    expect(screen.queryByTestId(`incident-detail-event-${E.ACK}-payload`)).toBeNull();
+    // The secondary line preserves the verbose type + actor for debugging.
+    expect(screen.getByTestId(`incident-detail-event-${E.ACK}-type`)).toHaveTextContent(
+      "acknowledge",
+    );
+  });
+
+  it("renders 'Assigned to {assignee} by {actor}' for an assign event", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.ASSIGN,
+        incident_id: INCIDENT_ID,
+        type: "assign",
+        actor_user_id: ACTOR,
+        payload: { assigneeUserId: TECHS, actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.ASSIGN}-summary`)).toHaveTextContent(
+      `Assigned to ${TECHS} by ${ACTOR}.`,
+    );
+  });
+
+  it("renders outcome phrase for a submit_result event (SAFE)", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.SAFE,
+        incident_id: INCIDENT_ID,
+        type: "submit_result",
+        actor_user_id: ACTOR,
+        payload: { outcome: "SAFE", actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.SAFE}-summary`)).toHaveTextContent(
+      "Marked safe",
+    );
+  });
+
+  it("renders outcome phrase for a submit_result event (UNSAFE)", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.UNSAFE,
+        incident_id: INCIDENT_ID,
+        type: "submit_result",
+        actor_user_id: ACTOR,
+        payload: { outcome: "UNSAFE", actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.UNSAFE}-summary`)).toHaveTextContent(
+      "Marked unsafe",
+    );
+  });
+
+  it("renders outcome phrase for a submit_result event (MONITORING)", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.MON,
+        incident_id: INCIDENT_ID,
+        type: "submit_result",
+        actor_user_id: ACTOR,
+        payload: { outcome: "MONITORING", actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.MON}-summary`)).toHaveTextContent(
+      "Marked for monitoring",
+    );
+  });
+
+  it("renders the Admin-supplied reason in quotes for a reopen event", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.REOPEN,
+        incident_id: INCIDENT_ID,
+        type: "reopen",
+        actor_user_id: ACTOR,
+        payload: { reason: "Misclassified — device still failing", actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.REOPEN}-summary`)).toHaveTextContent(
+      `Reopened by ${ACTOR} — "Misclassified — device still failing".`,
+    );
+  });
+
+  it("renders 'no reason given' when a reopen event has an empty reason", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.REOPEN_EMPTY,
+        incident_id: INCIDENT_ID,
+        type: "reopen",
+        actor_user_id: ACTOR,
+        payload: { reason: "", actorUserId: ACTOR },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.REOPEN_EMPTY}-summary`)).toHaveTextContent(
+      "no reason given",
+    );
+  });
+
+  it("renders the rejected-transition copy for an invalid_transition_attempt event", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.REJECT,
+        incident_id: INCIDENT_ID,
+        type: "invalid_transition_attempt",
+        actor_user_id: ACTOR,
+        payload: { from: "RESOLVED", attempted: "acknowledge", at: "2026-08-27T01:00:00.000Z" },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.REJECT}-summary`)).toHaveTextContent(
+      "Rejected: acknowledge from RESOLVED is not a valid transition.",
+    );
+  });
+
+  it("renders 'anonymous' for the actor when actor_user_id is null", async () => {
+    await renderDetailWithEvents([
+      {
+        id: E.ANON,
+        incident_id: INCIDENT_ID,
+        type: "acknowledge",
+        actor_user_id: null,
+        payload: { actorUserId: null },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    expect(screen.getByTestId(`incident-detail-event-${E.ANON}-summary`)).toHaveTextContent(
+      "Acknowledged by anonymous.",
+    );
+  });
+
+  it("falls back to a calm line (not JSON) when the payload is an unexpected shape", async () => {
+    // The wire schema is open (`Record<string, unknown>`); this
+    // guards against a future payload shape that the renderer
+    // doesn't recognise. The operator must NEVER see raw JSON.
+    await renderDetailWithEvents([
+      {
+        id: E.WEIRD,
+        incident_id: INCIDENT_ID,
+        type: "submit_result",
+        actor_user_id: ACTOR,
+        payload: {
+          /* outcome missing entirely */
+        },
+        created_at: "2026-08-27T01:00:00.000Z",
+      },
+    ]);
+    const summary = screen.getByTestId(`incident-detail-event-${E.WEIRD}-summary`);
+    expect(summary.textContent).not.toContain("{");
+    expect(summary.textContent).not.toContain("JSON");
+    expect(summary).toHaveTextContent("Inspection result recorded");
+  });
+
+  it("renders a relative timestamp inside a <time> element", async () => {
+    // Pin the formatter's `Date.now()` to a fixed instant so the
+    // relative bucket is deterministic. `vi.spyOn(Date, 'now')`
+    // leaves `setTimeout` alone (TanStack Query + `waitFor` keep
+    // working under real timers) and only intercepts the calls the
+    // formatter makes.
+    const fakeNow = new Date("2026-08-27T01:05:00.000Z").getTime();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
+    try {
+      await renderDetailWithEvents([
+        {
+          id: E.TIME,
+          incident_id: INCIDENT_ID,
+          type: "acknowledge",
+          actor_user_id: ACTOR,
+          payload: { actorUserId: ACTOR },
+          created_at: "2026-08-27T01:00:00.000Z",
+        },
+      ]);
+      const timeEl = screen.getByTestId(`incident-detail-event-${E.TIME}-at`);
+      // The <time> element exposes the canonical ISO via dateTime
+      // for screen readers + the relative bucket in its body.
+      expect(timeEl.tagName.toLowerCase()).toBe("time");
+      expect(timeEl.getAttribute("datetime")).toBe("2026-08-27T01:00:00.000Z");
+      expect(timeEl.textContent).toBe("5 min ago");
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+});

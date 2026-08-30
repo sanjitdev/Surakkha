@@ -26,6 +26,15 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code runtime (skills, settings.json, hooks, personal CLAUDE.md).
+# Per-developer install, not a project artefact — same treatment as
+# `_bmad/`, `.vscode/`, `.idea/`. If a future commit needs to share
+# project-specific commands/agents, uncomment the two `!.claude/...`
+# lines below to allowlist the project-shared subset.
+.claude/
+# !.claude/commands/
+# !.claude/agents/
+
 # Coverage
 coverage/
 *.lcov

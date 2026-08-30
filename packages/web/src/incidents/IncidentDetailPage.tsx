@@ -114,6 +114,123 @@ const formatActorOrAnonymous = (id: string | null): string => (id === null ? "an
 const ISO_DATE_PREFIX_LENGTH = 10;
 
 /**
+ * Human-readable relative timestamp for the audit timeline.
+ * Buckets mirror `KanbanCard`'s `formatRelativeOpenedAt` so the two
+ * surfaces read in lock-step, but anchored to the EVENT's
+ * `created_at` (not the incident's `opened_at`) so the operator can
+ * see at a glance which action was recent and which was days old.
+ *
+ * Pure function — the test rig passes `now` to pin the bucket.
+ */
+const formatTimelineTimestamp = (iso: string): string => {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  const delta = Date.now() - at;
+  if (delta < 0) return iso;
+  if (delta < MS_PER_MINUTE) return "just now";
+  if (delta < MS_PER_HOUR) return `${Math.floor(delta / MS_PER_MINUTE)} min ago`;
+  if (delta < MS_PER_DAY) return `${Math.floor(delta / MS_PER_HOUR)} h ago`;
+  if (delta < MS_PER_WEEK) return `${Math.floor(delta / MS_PER_DAY)} d ago`;
+  return new Date(at).toISOString().slice(0, ISO_DATE_PREFIX_LENGTH);
+};
+
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 3_600_000;
+const MS_PER_DAY = 86_400_000;
+const MS_PER_WEEK = 604_800_000;
+
+/**
+ * The InspectionOutcome wire form is the canonical vocabulary
+ * (SAFE / UNSAFE / MONITORING) — kept in caps on the timeline so
+ * the operator can scan a busy incident and match the headline to
+ * the action they took in the field.
+ */
+const OUTCOME_LABEL: Record<InspectionOutcome, string> = {
+  SAFE: "Marked safe",
+  UNSAFE: "Marked unsafe",
+  MONITORING: "Marked for monitoring",
+};
+
+/**
+ * Render the audit-timeline summary line for one event.
+ *
+ * Replaces the previous `<pre>{JSON.stringify(payload)}</pre>` block,
+ * which surfaced raw JSON to the named key-journey protagonist
+ * (Rahim, an Operator). The summary follows clarify.md's message
+ * hierarchy: lead with the verb, then by whom, then supporting
+ * context (assignee / reason / attempted transition). The verbose
+ * event type and actor id remain in a secondary line below for
+ * debugging — but never as JSON.
+ *
+ * Payload access is defensive: the schema is `Record<string, unknown>`
+ * (open shape — see `@surakkha/shared/incident`). Unexpected payloads
+ * fall through to a calm "no additional details" line, NOT a
+ * raw-JSON dump, so the timeline never teaches the operator to
+ * read JSON.
+ *
+ * Implementation note: per-event-type helpers are extracted so the
+ * dispatcher's cyclomatic complexity stays under the `complexity: 10`
+ * ESLint ceiling. Each helper closes over the `actor` string built
+ * once by the dispatcher (and never has to read `event.payload`).
+ */
+const readStringField = (payload: Record<string, unknown>, key: string): string | null => {
+  const value = payload[key];
+  return typeof value === "string" ? value : null;
+};
+
+const formatAcknowledgeSummary = (actor: string): string => `Acknowledged by ${actor}.`;
+
+const formatAssignSummary = (actor: string, payload: Record<string, unknown>): string => {
+  const assignee = readStringField(payload, "assigneeUserId") ?? "an unassigned technician";
+  return `Assigned to ${assignee} by ${actor}.`;
+};
+
+const formatSubmitResultSummary = (actor: string, payload: Record<string, unknown>): string => {
+  const { outcome } = payload;
+  const outcomeLabel =
+    outcome === "SAFE" || outcome === "UNSAFE" || outcome === "MONITORING"
+      ? OUTCOME_LABEL[outcome]
+      : "Inspection result recorded";
+  return `${outcomeLabel} by ${actor}.`;
+};
+
+const formatResolveSummary = (actor: string): string => `Resolved by ${actor}.`;
+
+const formatReopenSummary = (actor: string, payload: Record<string, unknown>): string => {
+  const reason = readStringField(payload, "reason");
+  const reasonText = reason !== null && reason.length > 0 ? reason : "no reason given";
+  return `Reopened by ${actor} — "${reasonText}".`;
+};
+
+const formatInvalidTransitionSummary = (
+  actor: string,
+  payload: Record<string, unknown>,
+): string => {
+  const fromText = readStringField(payload, "from") ?? "the current state";
+  const attemptedText = readStringField(payload, "attempted") ?? "an action";
+  return `Rejected: ${attemptedText} from ${fromText} is not a valid transition.`;
+};
+
+const formatTimelineEventSummary = (event: IncidentEventPayload): string => {
+  const { payload } = event;
+  const actor = formatActorOrAnonymous(event.actor_user_id);
+  switch (event.type) {
+    case "acknowledge":
+      return formatAcknowledgeSummary(actor);
+    case "assign":
+      return formatAssignSummary(actor, payload);
+    case "submit_result":
+      return formatSubmitResultSummary(actor, payload);
+    case "resolve":
+      return formatResolveSummary(actor);
+    case "reopen":
+      return formatReopenSummary(actor, payload);
+    case "invalid_transition_attempt":
+      return formatInvalidTransitionSummary(actor, payload);
+  }
+};
+
+/**
  * Render the incident row + timeline for a known id. Mounts the
  * realtime subscription (per-page lifecycle). Two TanStack
  * Queries (row + timeline); each has its own cache key so the
@@ -388,23 +505,26 @@ const IncidentDetailBody = ({
               data-event-type={event.type}
               className="rounded-input border border-neutral-border bg-neutral-surface p-3 text-sm text-neutral-body"
             >
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{event.type}</span>
-                <time dateTime={event.created_at} className="text-xs text-neutral-secondary">
-                  {new Date(event.created_at).toISOString()}
+              <div className="flex items-start justify-between gap-3">
+                <p
+                  data-testid={`incident-detail-event-${event.id}-summary`}
+                  className="text-neutral-body"
+                >
+                  {formatTimelineEventSummary(event)}
+                </p>
+                <time
+                  dateTime={event.created_at}
+                  data-testid={`incident-detail-event-${event.id}-at`}
+                  className="shrink-0 text-xs text-neutral-secondary"
+                >
+                  {formatTimelineTimestamp(event.created_at)}
                 </time>
               </div>
-              <div className="mt-1 text-xs text-neutral-secondary">
-                actor: {formatActorOrAnonymous(event.actor_user_id)}
-              </div>
-              {Object.keys(event.payload).length > 0 && (
-                <pre
-                  data-testid={`incident-detail-event-${event.id}-payload`}
-                  className="mt-2 overflow-x-auto rounded-input bg-neutral-page p-2 text-xs text-neutral-body"
-                >
-                  {JSON.stringify(event.payload, null, 2)}
-                </pre>
-              )}
+              <p className="mt-1 text-xs text-neutral-secondary">
+                <span data-testid={`incident-detail-event-${event.id}-type`}>{event.type}</span>
+                {" · "}
+                <span>{formatActorOrAnonymous(event.actor_user_id)}</span>
+              </p>
             </li>
           ))}
         </ul>

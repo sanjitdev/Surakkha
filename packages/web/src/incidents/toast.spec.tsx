@@ -19,7 +19,7 @@
 import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ToastRegion, useToasts, TOAST_TTL_MS } from "./toast";
+import { ToastRegion, type ToastEntry, useToasts, TOAST_TTL_MS } from "./toast";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -128,5 +128,59 @@ describe("Story 4.5 — toast region mount/unmount", () => {
     const { container } = render(<div data-testid="no-toast-here">No toasts here.</div>);
     expect(screen.queryByTestId("toast-region")).toBeNull();
     expect(container.querySelector("[data-testid='toast-region']")).toBeNull();
+  });
+});
+
+describe("Epic-6 sweep — <ToastRegion /> per-page testid prefix", () => {
+  // The Epic-6 sweep lets multiple pages mount their own <ToastRegion />
+  // without colliding on `data-testid="toast-region"`. The testid
+  // prefix is configurable, and the per-item id suffix is opt-out
+  // (preserves the canonical `toast-{tone}-{id}` shape for the
+  // IncidentDetailPage consumers but emits `simulator-toast-{tone}` /
+  // `thresholds-toast-{tone}` for the admin pages).
+
+  const FIXTURES: readonly ToastEntry[] = [
+    { id: 1, tone: "success", message: "Saved." },
+    { id: 2, tone: "error", message: "Save failed." },
+  ];
+
+  it("scopes the region testid to the supplied prefix", () => {
+    render(<ToastRegion toasts={FIXTURES} testIdPrefix="simulator-toast" isId={false} />);
+    expect(screen.getByTestId("simulator-toast-region")).toBeInTheDocument();
+    // Canonical `toast-region` MUST NOT appear when a non-default
+    // prefix is supplied (collision guard for multi-mount pages).
+    expect(screen.queryByTestId("toast-region")).toBeNull();
+  });
+
+  it("emits `{prefix}-{tone}` (no id) when isId=false", () => {
+    render(<ToastRegion toasts={FIXTURES} testIdPrefix="thresholds-toast" isId={false} />);
+    expect(screen.getByTestId("thresholds-toast-success")).toHaveTextContent("Saved.");
+    expect(screen.getByTestId("thresholds-toast-error")).toHaveTextContent("Save failed.");
+    // id-suffixed testids MUST NOT be emitted in this mode.
+    expect(screen.queryByTestId("thresholds-toast-success-1")).toBeNull();
+    expect(screen.queryByTestId("thresholds-toast-error-2")).toBeNull();
+  });
+
+  it("emits `{prefix}-{tone}-{id}` by default (isId omitted)", () => {
+    render(<ToastRegion toasts={FIXTURES} testIdPrefix="toast" />);
+    expect(screen.getByTestId("toast-success-1")).toHaveTextContent("Saved.");
+    expect(screen.getByTestId("toast-error-2")).toHaveTextContent("Save failed.");
+  });
+
+  it("applies Tailwind severity-token classes (design-system routing)", () => {
+    // The shared primitive MUST route through the Tailwind severity
+    // tokens in `tailwind.config.ts` so the toast palette stays in
+    // lock-step with the rest of the app. The classes below are
+    // enumerated LITERALLY in toast.tsx (Tailwind's JIT scanner
+    // ignores interpolated class strings).
+    const { container } = render(<ToastRegion toasts={FIXTURES} testIdPrefix="toast" />);
+    const success = container.querySelector("[data-testid='toast-success-1']");
+    const error = container.querySelector("[data-testid='toast-error-2']");
+    expect(success?.className).toContain("bg-severity-healthy-bg");
+    expect(success?.className).toContain("text-severity-healthy-text");
+    expect(success?.className).toContain("border-severity-healthy-text");
+    expect(error?.className).toContain("bg-severity-critical-bg");
+    expect(error?.className).toContain("text-severity-critical-text");
+    expect(error?.className).toContain("border-severity-critical-text");
   });
 });

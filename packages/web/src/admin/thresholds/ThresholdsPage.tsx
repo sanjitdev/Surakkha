@@ -19,25 +19,22 @@
  * `ThresholdsModals.tsx`, and the populated view lives in
  * `ThresholdsPopulatedView.tsx` — both are extracted so this
  * orchestrator can stay under the lint `max-lines-per-function`
- * + `max-lines` ceilings.
+ * + `max-lines` ceilings. The toast hook is shared from
+ * `incidents/toast.tsx` (Epic-6 sweep).
  */
 import { type RuleRow } from "@surakkha/shared";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+
+import { useToasts } from "../../incidents/toast";
 
 import { type NewRuleForm } from "./ThresholdsModals";
-import {
-  ThresholdsPopulatedView,
-  type ToastEntry,
-  type ToastTone,
-} from "./ThresholdsPopulatedView";
+import { ThresholdsPopulatedView } from "./ThresholdsPopulatedView";
 import {
   useActivateThreshold,
   useCreateThreshold,
   useThresholds,
   useUpdateThreshold,
 } from "./useThresholds";
-
-const TOAST_TTL_MS = 4_000;
 
 /**
  * Compute the slot key for the history toggle. Inactive rows with
@@ -53,30 +50,8 @@ export const ThresholdsPage = () => {
   const createMutation = useCreateThreshold();
   const updateMutation = useUpdateThreshold();
   const activateMutation = useActivateThreshold();
-  const [toasts, setToasts] = useState<readonly ToastEntry[]>([]);
+  const { toasts, pushToast } = useToasts();
   const [showHistory, setShowHistory] = useState(false);
-  const nextIdRef = useRef(0);
-  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
-
-  const pushToast = (tone: ToastTone, message: string): void => {
-    const id = ++nextIdRef.current;
-    setToasts((cur) => [...cur, { id, tone, message }]);
-    const timer = setTimeout(() => {
-      timersRef.current.delete(timer);
-      setToasts((cur) => cur.filter((t) => t.id !== id));
-    }, TOAST_TTL_MS);
-    timersRef.current.add(timer);
-  };
-
-  // Clear any pending toast timers when the page unmounts so the
-  // deferred `setToasts` callbacks don't fire on an unmounted tree.
-  useEffect(() => {
-    const timers = timersRef.current;
-    return () => {
-      for (const t of timers) clearTimeout(t);
-      timers.clear();
-    };
-  }, []);
 
   // Hooks MUST run on every render — derive the lists BEFORE any
   // early returns so the hook order is stable across the loading

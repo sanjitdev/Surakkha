@@ -1,38 +1,51 @@
 /**
- * `toast.ts` — Story 4.5.
+ * `toast.ts` — Story 4.5, Epic-6 sweep.
  *
- * Tiny inline toast surface for the Incident detail page. Mirrors the
- * pattern that already lives in
- * `packages/web/src/admin/thresholds/ThresholdsPage.tsx:56-69` and
- * `ThresholdsPopulatedView.tsx:18-23`: a `useToasts()` hook that
- * exposes a `pushToast(tone, message)` imperative API, paired with a
- * `<ToastRegion />` renderer that walks the live toast list. No
- * external toast library is introduced — Stories 4.6 / 4.7 / 4.11
- * each consume this same primitive from the detail page; extracting
- * to a shared `<ToastRegion />` across all pages is a future Epic-6
- * sweep.
+ * Shared inline-toast primitive for every Surakkha page surface.
+ * Exposes:
  *
- * Why inline (not a library):
+ *   - `useToasts()` — page-local toast queue with auto-expiry TTL.
+ *   - `<ToastRegion />` — renders the current queue as a polite
+ *     `<ul>`, with optional per-page testid prefix so multiple
+ *     pages can mount their own region without colliding on
+ *     `data-testid="toast-region"`.
  *
- *   - The codebase has zero toast dependencies today. Pulling in a
+ * Why shared (not a library):
+ *
+ *   - Surakkha has zero toast dependencies today. Pulling in a
  *     third-party library for a single 4-second transient would be
  *     premature.
- *   - ThresholdsPage already owns an inline pattern; mirroring it
- *     keeps the operator UX consistent (same green/red palette, same
- *     4-second TTL).
+ *   - Four pages (`IncidentDetailPage`, `ThresholdsPage`,
+ *     `ThresholdsPopulatedView`, `SimulatorPage`) each had their own
+ *     inline implementation, all with the same green/red palette and
+ *     same 4-second TTL. The Epic-6 sweep consolidates them here so
+ *     the visual language stays in lock-step.
  *
  * Design notes:
  *
  *   - `useToasts()` owns the toast list state + a `Set<Timeout>`
  *     ref-tracked timer pool so unmount cleanly cancels pending `setTimeout`
  *     callbacks (no late `setState` on an unmounted tree).
- *   - `<ToastRegion />` is mounted at the page root by
- *     `IncidentDetailPage`. It renders an `aria-live="polite"` `<ul>`
- *     mirroring the Thresholds convention.
+ *   - `<ToastRegion />` is mounted at the page root by every
+ *     consumer. It renders an `aria-live="polite"` `<ul>` so screen
+ *     readers announce the toast.
  *   - The `ToastEntry.id` counter is page-scoped (a single
  *     `useRef<number>(0)`); toasts do NOT collide across mounts because
  *     the hook is page-local.
- *   - TTL is 4_000 ms — matches `ThresholdsPage`'s `TOAST_TTL_MS`.
+ *   - TTL is 4_000 ms.
+ *
+ * Tone palette — routed through the design tokens in
+ * `tailwind.config.ts` so the toast surface is in lock-step with the
+ * rest of the app's severity language:
+ *
+ *   - success → `bg-severity-healthy-bg` / `text-severity-healthy-text` /
+ *     `border-severity-healthy-text`
+ *   - error   → `bg-severity-critical-bg` / `text-severity-critical-text` /
+ *     `border-severity-critical-text`
+ *
+ *   These classes are enumerated LITERALLY in the className strings
+ *   below (not interpolated) so Tailwind's content scanner picks them
+ *   up at build time. See DESIGN.md §Colors.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -89,7 +102,7 @@ export const useToasts = (): UseToastsResult => {
   }, []);
 
   // Cancel every tracked timer on unmount so a late TTL `setState`
-  // does not fire on a torn-down tree. Mirrors ThresholdsPage:73-79.
+  // does not fire on a torn-down tree.
   useEffect(() => {
     const timers = timersRef.current;
     return () => {
@@ -102,21 +115,55 @@ export const useToasts = (): UseToastsResult => {
 };
 
 /**
- * `TOAST_TTL_MS` — exported so tests can pin the exact duration that
- * the ThresholdsPage pattern uses. Keeps the two toast surfaces in
- * sync.
+ * `TOAST_TTL_MS` — exported so tests can pin the exact duration.
  */
 export { TOAST_TTL_MS };
 
 /**
+ * Tone → Tailwind class map. The class strings are written as
+ * LITERAL concatenations (not template-interpolated) so Tailwind's
+ * content scanner finds them at build time. Adding a new tone
+ * requires extending both the `ToastTone` union and the two records
+ * below.
+ */
+const TOAST_CLASSES: Record<ToastTone, string> = {
+  // bg-severity-healthy-bg border-severity-healthy-text text-severity-healthy-text
+  success: "bg-severity-healthy-bg border-severity-healthy-text text-severity-healthy-text",
+  // bg-severity-critical-bg border-severity-critical-text text-severity-critical-text
+  error: "bg-severity-critical-bg border-severity-critical-text text-severity-critical-text",
+};
+
+interface ToastRegionProps {
+  readonly toasts: readonly ToastEntry[];
+  /**
+   * Prefix prepended to every emitted `data-testid` so multiple
+   * pages can mount their own region without colliding on
+   * `data-testid="toast-region"`. Defaults to `"toast"`.
+   *
+   * The full prefix (including any `toast-` infix) is supplied by
+   * the caller, so consumers can opt into either shape:
+   *
+   *   testIdPrefix="toast"               → `toast-region`, `toast-{tone}-{id}`
+   *   testIdPrefix="simulator-toast"     → `simulator-toast-region`, `simulator-toast-{tone}`
+   *   testIdPrefix="thresholds-toast"    → `thresholds-toast-region`, `thresholds-toast-{tone}`
+   */
+  readonly testIdPrefix?: string;
+  /**
+   * Whether the item testid includes the toast's numeric id suffix.
+   * Defaults to `true` — the canonical shape is
+   * `toast-{tone}-{id}` (used by `IncidentDetailPage`). Set to
+   * `false` for the per-page `simulator-toast-{tone}` /
+   * `thresholds-toast-{tone}` convention.
+   */
+  readonly isId?: boolean;
+}
+
+/**
  * `<ToastRegion />` — renders the current toast queue.
  *
- * Mounted by `IncidentDetailPage` at the page root. Mirrors the
- * ThresholdsPage markup: `aria-live="polite"` `<ul>` with one
- * `<li>` per toast. The toast testid prefix is neutral
- * (`toast-{tone}-{id}`) so Stories 4.6 / 4.7 / 4.11 can reuse
- * this primitive without inheriting a `incident-detail-`
- * namespace.
+ * Mounted at the page root by every consumer. The testid prefix is
+ * configurable so two pages can both render a region without
+ * colliding on `data-testid="toast-region"`.
  *
  * Accessibility:
  *   - The region itself announces politely (success / info tones).
@@ -124,46 +171,24 @@ export { TOAST_TTL_MS };
  *     `aria-live="assertive"` so failures are announced immediately
  *     instead of waiting for the next idle — failures are the
  *     class of message the operator MUST see right now.
- *
- * Tone palette — re-uses the ThresholdsPage colours so the operator
- * gets the same green / red visual language for "success" /
- * "error" across the app:
- *   - success: pale green (`#E8F6EE`) bg, deep-green (`#0F6B3A`) text
- *   - error:   pale red   (`#FEE2E2`) bg, deep-red   (`#7F1D1D`) text
  */
-export const ToastRegion = ({ toasts }: { readonly toasts: readonly ToastEntry[] }) => {
-  const TOAST_BG: Record<ToastTone, string> = {
-    success: "#E8F6EE",
-    error: "#FEE2E2",
-  };
-  const TOAST_TEXT: Record<ToastTone, string> = {
-    success: "#0F6B3A",
-    error: "#7F1D1D",
-  };
-
-  return (
-    <ul data-testid="toast-region" aria-live="polite" className="flex flex-col gap-2">
-      {toasts.map((t) => (
-        <li
-          key={t.id}
-          data-testid={`toast-${t.tone}-${t.id}`}
-          data-tone={t.tone}
-          // Error toasts are the "operator MUST see this now" class —
-          // upgrade to role="alert" + aria-live="assertive" so screen
-          // readers announce immediately. Success / info stay polite.
-          {...(t.tone === "error"
-            ? { role: "alert", "aria-live": "assertive" }
-            : { "aria-live": "polite" })}
-          className="rounded-input border px-4 py-2 text-md"
-          style={{
-            backgroundColor: TOAST_BG[t.tone],
-            borderColor: TOAST_TEXT[t.tone],
-            color: TOAST_TEXT[t.tone],
-          }}
-        >
-          {t.message}
-        </li>
-      ))}
-    </ul>
-  );
-};
+export const ToastRegion = ({ toasts, testIdPrefix = "toast", isId = true }: ToastRegionProps) => (
+  <ul data-testid={`${testIdPrefix}-region`} aria-live="polite" className="flex flex-col gap-2">
+    {toasts.map((t) => (
+      <li
+        key={t.id}
+        data-testid={isId ? `${testIdPrefix}-${t.tone}-${t.id}` : `${testIdPrefix}-${t.tone}`}
+        data-tone={t.tone}
+        // Error toasts are the "operator MUST see this now" class —
+        // upgrade to role="alert" + aria-live="assertive" so screen
+        // readers announce immediately. Success / info stay polite.
+        {...(t.tone === "error"
+          ? { role: "alert", "aria-live": "assertive" }
+          : { "aria-live": "polite" })}
+        className={`rounded-input border px-4 py-2 text-md ${TOAST_CLASSES[t.tone]}`}
+      >
+        {t.message}
+      </li>
+    ))}
+  </ul>
+);

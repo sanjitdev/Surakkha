@@ -7,12 +7,13 @@
  *   3. enabled                             → six `DeviceRow`s + a toast
  *      region for switch success / failure toasts.
  *
- * The toast region is a small inline list — Story 2.5 does not pull
- * in a global toast system; the spec mandates "toast" semantics
- * (auto-dismiss) but a list with a manual dismiss works for the v1
- * surface and keeps the dependency footprint small.
+ * The toast types + region are shared from `incidents/toast.tsx`
+ * (Epic-6 sweep); see `toast.tsx` for the `testIdPrefix` convention
+ * used below.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
+
+import { ToastRegion, useToasts } from "../../incidents/toast";
 
 import { DeviceRow } from "./DeviceRow";
 import { DisabledBanner } from "./DisabledBanner";
@@ -22,28 +23,11 @@ import {
   useSimulatorStatus,
 } from "./useSimulatorDevices";
 
-interface ToastEntry {
-  readonly id: number;
-  readonly tone: "success" | "error";
-  readonly message: string;
-}
-
-const TOAST_TTL_MS = 4_000;
-
 // HTTP status codes the SimulatorPage branches on directly (G3-01 /
 // G3-12 / G3-15). Named constants so the lint rule
 // `no-magic-numbers` doesn't flag the inline literals.
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
-
-const TOAST_BG: Record<ToastEntry["tone"], string> = {
-  success: "#E8F6EE",
-  error: "#FEE2E2",
-};
-const TOAST_TEXT: Record<ToastEntry["tone"], string> = {
-  success: "#0F6B3A",
-  error: "#7F1D1D",
-};
 
 /**
  * Map a typed mutation error to a user-facing toast string. The
@@ -74,25 +58,7 @@ const errorMessage = (err: SwitchScenarioError): string => {
 export const SimulatorPage = () => {
   const statusQuery = useSimulatorStatus();
   const devicesQuery = useSimulatorDevices();
-  const [toasts, setToasts] = useState<readonly ToastEntry[]>([]);
-  // G3-08: monotonic id generator. `Date.now() + Math.random()`
-  // collided when two toasts landed in the same ms from sibling
-  // rows (a burst of clicks or two failures from one tick).
-  const nextIdRef = useRef(0);
-  // G3-09: track pending TTL timers so they can be cleared on
-  // unmount; otherwise a navigation away during the 4-second window
-  // fires setState on an unmounted component and leaks a closure
-  // per toast.
-  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
-
-  useEffect(
-    () => () => {
-      // G3-09 cleanup: clear all pending TTL timers on unmount.
-      for (const t of timersRef.current) clearTimeout(t);
-      timersRef.current.clear();
-    },
-    [],
-  );
+  const { toasts, pushToast } = useToasts();
 
   // G3-03 / G3-04: when a Switch POST surfaces a `secret_mismatch`
   // or a 503-with-disabled body, invalidate the status query so the
@@ -101,8 +67,7 @@ export const SimulatorPage = () => {
   // surfaces for the user feedback loop, but the banner is the
   // persistent operator-facing signal.
   useEffect(() => {
-    const errorStatus = (devicesQuery.error as { status?: number } | null)
-      ?.status;
+    const errorStatus = (devicesQuery.error as { status?: number } | null)?.status;
     if (
       devicesQuery.isError &&
       // api may return 401 (token role downgrade) or 403 (RBAC
@@ -112,16 +77,6 @@ export const SimulatorPage = () => {
       void statusQuery.refetch();
     }
   }, [devicesQuery.isError, devicesQuery.error, statusQuery]);
-
-  const pushToast = (tone: ToastEntry["tone"], message: string): void => {
-    const id = ++nextIdRef.current;
-    setToasts((cur) => [...cur, { id, tone, message }]);
-    const timer = setTimeout(() => {
-      timersRef.current.delete(timer);
-      setToasts((cur) => cur.filter((t) => t.id !== id));
-    }, TOAST_TTL_MS);
-    timersRef.current.add(timer);
-  };
 
   // Loading state.
   if (statusQuery.isLoading || devicesQuery.isLoading) {
@@ -211,10 +166,7 @@ export const SimulatorPage = () => {
     <div data-testid="simulator-page" className="flex flex-col gap-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
-        <span
-          data-testid="simulator-device-count"
-          className="text-md text-neutral-secondary"
-        >
+        <span data-testid="simulator-device-count" className="text-md text-neutral-secondary">
           {devices.length} device{devices.length === 1 ? "" : "s"}
         </span>
       </header>
@@ -229,10 +181,7 @@ export const SimulatorPage = () => {
             // surfaces (the persistent operator-facing signal). The
             // toast still surfaces for the user feedback loop.
             onError={(err) => {
-              if (
-                err.kind === "secret_mismatch" ||
-                err.kind === "simulator_unreachable"
-              ) {
+              if (err.kind === "secret_mismatch" || err.kind === "simulator_unreachable") {
                 void statusQuery.refetch();
               }
               pushToast("error", errorMessage(err));
@@ -242,26 +191,7 @@ export const SimulatorPage = () => {
         ))}
       </div>
 
-      <ul
-        data-testid="simulator-toast-region"
-        aria-live="polite"
-        className="flex flex-col gap-2"
-      >
-        {toasts.map((t) => (
-          <li
-            key={t.id}
-            data-testid={`simulator-toast-${t.tone}`}
-            className="rounded-input border px-4 py-2 text-md"
-            style={{
-              backgroundColor: TOAST_BG[t.tone],
-              borderColor: TOAST_TEXT[t.tone],
-              color: TOAST_TEXT[t.tone],
-            }}
-          >
-            {t.message}
-          </li>
-        ))}
-      </ul>
+      <ToastRegion toasts={toasts} testIdPrefix="simulator-toast" isId={false} />
     </div>
   );
 };

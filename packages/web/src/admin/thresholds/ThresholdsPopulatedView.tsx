@@ -8,28 +8,16 @@
  * here.
  *
  * The two modals (`NewRuleModal`, `EditRuleModal`) live in
- * `ThresholdsModals.tsx`.
+ * `ThresholdsModals.tsx`. The toast types + region are shared from
+ * `incidents/toast.tsx` (Epic-6 sweep); see `toast.tsx` for the
+ * `testIdPrefix` convention used below.
  */
 import { type RuleRow } from "@surakkha/shared";
 import { useState } from "react";
 
+import { type ToastEntry, ToastRegion } from "../../incidents/toast";
+
 import { EditRuleModal, type NewRuleForm, NewRuleModal } from "./ThresholdsModals";
-
-export type ToastTone = "success" | "error";
-export interface ToastEntry {
-  readonly id: number;
-  readonly tone: ToastTone;
-  readonly message: string;
-}
-
-const TOAST_BG: Record<ToastTone, string> = {
-  success: "#E8F6EE",
-  error: "#FEE2E2",
-};
-const TOAST_TEXT: Record<ToastTone, string> = {
-  success: "#0F6B3A",
-  error: "#7F1D1D",
-};
 
 interface RuleRowRendererProps {
   readonly row: RuleRow;
@@ -205,22 +193,7 @@ export const ThresholdsPopulatedView = ({
         </p>
       ) : null}
 
-      <ul data-testid="thresholds-toast-region" aria-live="polite" className="flex flex-col gap-2">
-        {toasts.map((t) => (
-          <li
-            key={t.id}
-            data-testid={`thresholds-toast-${t.tone}`}
-            className="rounded-input border px-4 py-2 text-md"
-            style={{
-              backgroundColor: TOAST_BG[t.tone],
-              borderColor: TOAST_TEXT[t.tone],
-              color: TOAST_TEXT[t.tone],
-            }}
-          >
-            {t.message}
-          </li>
-        ))}
-      </ul>
+      <ToastRegion toasts={toasts} testIdPrefix="thresholds-toast" isId={false} />
 
       {creating ? (
         <NewRuleModal onClose={() => setCreating(false)} onSubmit={handleCreateSubmit} />
