@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-30T05:00:00.000Z
+# last_updated: 2026-08-30T18:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-30T05:00:00.000Z
+last_updated: 2026-08-30T18:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -97,7 +97,7 @@ development_status:
   epic-3-retrospective: done
 
   # ===== Epic 4 — Incidents & Workflow =====
-  epic-4: in-progress
+  epic-4: done
   4-1-card-action-affordance-contract: done
   4-2-incident-state-machine-implementation: done
   4-3-kanban-column-projection: done
@@ -111,6 +111,7 @@ development_status:
   4-11-reopen-path: done
   4-12-technician-filtered-kanban: done
   4-13-attachments: done
+  epic-4-retrospective: done
 
   # ===== Epic 5 — Reporting & Audit =====
   epic-5: backlog
@@ -451,25 +452,25 @@ stories:
   # ===== Epic 4 — Incidents & Workflow (backlog) =====
   - id: "4.1"
     title: "Card Action Affordance Contract"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "cd9e002"
+    shipped: "2026-08-27"
+    covers: ["UX-DR-2", "UX-DR-6", "UX-DR-7"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-4-1-card-action-affordance-contract.md"
+      review: "_bmad-output/implementation-artifacts/spec-4-1-card-action-affordance-contract.md"
 
   - id: "4.2"
     title: "Incident State Machine Implementation"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "e1a74c6"
+    shipped: "2026-08-28"
+    covers: ["PRD-F-16", "AR-7", "I-8"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine-implementation.md"
+      review: "_bmad-output/implementation-artifacts/spec-4-2-incident-state-machine-implementation.md"
 
   - id: "4.3"
     title: "Kanban Column Projection"
@@ -541,12 +542,12 @@ stories:
     title: "Notification Writer"
     status: done
     epic: "4"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "6ac0979"
+    shipped: "2026-08-28"
+    covers: ["PRD-F-16", "FR-21", "AR-7"]
     ledger:
       context: "_bmad-output/implementation-artifacts/spec-4-9-notification-writer.md"
-      review: null
+      review: "_bmad-output/implementation-artifacts/review-4-9-notification-writer.md"
 
   - id: "4.10"
     title: "NotificationBell Dropdown"
@@ -583,14 +584,14 @@ stories:
 
   - id: "4.13"
     title: "Attachments"
-    status: backlog
+    status: done
     epic: "4"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "6ac0979"
+    shipped: "2026-08-30"
+    covers: ["PRD-F-19", "FR-21", "AR-7", "UX-DR-14"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-4-13-attachments.md"
+      review: "_bmad-output/implementation-artifacts/review-4-13-verification-gap.md"
 
   # ===== Epic 5 — Reporting & Audit (backlog) =====
   - id: "5.1"
@@ -812,6 +813,87 @@ action_items:
     target: "Epic 4 plan"
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
 
+  # ===== Epic 4 action items (committed 2026-08-30) =====
+  - id: "AI-4.1"
+    epic: "4"
+    title: "Extract shared 'createIncidentEvent + audit on success' helper for cross-verb mutation handlers"
+    status: open
+    owner: "Charlie"
+    target: "Before Epic 5 begins"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.2"
+    epic: "4"
+    title: "Triage the 6 pre-existing test failures (AI-3.1 / 3.5-test-fixture-drift) before Epic 5"
+    status: open
+    owner: "Elena"
+    target: "Before Epic 5 Story 5.3"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.3"
+    epic: "4"
+    title: "Codify the PR-review-checklist rules (AI-3.4 + AI-3.5) into a single CONTRIBUTING.md section"
+    status: open
+    owner: "Charlie"
+    target: "This week"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.4"
+    epic: "4"
+    title: "Add cross-verb contract test template to CONTRIBUTING.md (4-step pattern)"
+    status: open
+    owner: "Charlie"
+    target: "Before Epic 5 begins"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.5"
+    epic: "4"
+    title: "Build Step-04 review pre-flight: re-run grep + cache-key + DOM-order pin checks automatically"
+    status: open
+    owner: "Charlie"
+    target: "Epic 5 prep"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.6"
+    epic: "4"
+    title: "Move SEVERITY_DOT_BG / SEVERITY_LABEL / STATE_LABEL / formatRelativeOpenedAt into @surakkha/shared"
+    status: open
+    owner: "Charlie"
+    target: "Epic 5 prep"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.7"
+    epic: "4"
+    title: "Defer F-4.2 (UX-completeness) and F-4.4 (schema-evolution safety net) into Epic 6 backlog"
+    status: open
+    owner: "Alice"
+    target: "Epic 6 plan"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.8"
+    epic: "4"
+    title: "Audit RBAC denied-state surface: ensure RbacDenied is reused across all 404/403 branches"
+    status: open
+    owner: "Charlie"
+    target: "Epic 5 prep"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.9"
+    epic: "4"
+    title: "Add ESLint complexity ceiling enforcement to CI (block complexity > 12)"
+    status: open
+    owner: "Charlie"
+    target: "Before Epic 5 Story 5.3"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
+  - id: "AI-4.10"
+    epic: "4"
+    title: "File deferred-work F-4.12 review: 14 entries in this epic, classify into Epic 5/6 slices"
+    status: open
+    owner: "Alice"
+    target: "Before Epic 5 begins"
+    source: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
 # Retrospectives committed
 retrospectives:
   - id: "epic-1-retrospective"
@@ -835,6 +917,13 @@ retrospectives:
     shipped: "2026-08-27"
     output: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
 
+  - id: "epic-4-retrospective"
+    title: "Epic 4 — Incidents & Workflow"
+    status: done
+    epic: "4"
+    shipped: "2026-08-30"
+    output: "_bmad-output/implementation-artifacts/epic-4-retrospective.md"
+
 # Epic-level summaries (preserved for the readiness gate + tracking view)
 epics:
   - id: "1"
@@ -855,7 +944,7 @@ epics:
   - id: "4"
     title: "Incidents & Workflow"
     goal: "Operators and Technicians acknowledge, assign, inspect, and resolve incidents through the 4-column Kanban with RBAC enforcement at every transition."
-    status: in-progress
+    status: done
     stories:
       [
         "4.1",
