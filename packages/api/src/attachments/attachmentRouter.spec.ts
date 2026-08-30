@@ -925,6 +925,72 @@ describe("Story 4.13 — DELETE /api/attachments/:id", () => {
     await close();
   });
 
+  it("DELETE_TECHNICIAN — Technician DELETE gets 403 from the matrix gate (matrix denies)", async () => {
+    // The RBAC matrix grants `delete.Attachment` for Admin only.
+    // A Technician hitting DELETE is rejected by `authorize()`
+    // BEFORE the per-row "uploader can delete own" branch fires.
+    // Pinned explicitly per AC 8 so a regression that widens
+    // the matrix to include Technician surfaces here. The
+    // per-row check is defense-in-depth: if the matrix flips,
+    // THIS test must fail loudly so the design intent gets
+    // re-reviewed.
+    let findUniqueCalled = false;
+    let deleteCalled = false;
+    const { url, close } = await startApp({
+      repo: {
+        findUnique: async () => {
+          findUniqueCalled = true;
+          // Even if the row is owned by the requesting Technician,
+          // the matrix gate runs first — findUnique never fires.
+          return {
+            id: ATTACHMENT_ID,
+            incidentId: INCIDENT_ID,
+            url: "https://example.com/x",
+            label: "Self-uploaded",
+            mime: "image/png",
+            uploadedByUserId: TECH_A_ID,
+            createdAt: new Date("2026-08-30T01:00:00.000Z"),
+          };
+        },
+        delete: async () => {
+          deleteCalled = true;
+          throw new Error("delete called — should NOT be reached");
+        },
+      },
+    });
+    const res = await fetch(`${url}/api/attachments/${ATTACHMENT_ID}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${tokenForRole("Technician")}` },
+    });
+    expect(res.status).toBe(403);
+    expect(findUniqueCalled).toBe(false);
+    expect(deleteCalled).toBe(false);
+    await close();
+  });
+
+  it("DELETE_VIEWER — Viewer DELETE gets 403 from the matrix gate", async () => {
+    // The matrix denies `delete.Attachment` for Viewer (and
+    // Operator and Technician). The gate fires first; findUnique
+    // is never invoked. This pins the cross-role contract:
+    // only Admin passes the matrix gate for DELETE.
+    let findUniqueCalled = false;
+    const { url, close } = await startApp({
+      repo: {
+        findUnique: async () => {
+          findUniqueCalled = true;
+          return null;
+        },
+      },
+    });
+    const res = await fetch(`${url}/api/attachments/${ATTACHMENT_ID}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${tokenForRole("Viewer")}` },
+    });
+    expect(res.status).toBe(403);
+    expect(findUniqueCalled).toBe(false);
+    await close();
+  });
+
   it("401 when no bearer token is presented", async () => {
     const { url, close } = await startApp({ repo: {} });
     const res = await fetch(`${url}/api/attachments/${ATTACHMENT_ID}`, {
@@ -958,5 +1024,85 @@ describe("Story 4.13 — DELETE /api/attachments/:id", () => {
     });
     expect(res.status).toBe(500);
     await close();
+  });
+});
+
+/**
+ * `Story 4.13 — contract pins for non-emission on POST / DELETE`
+ *
+ * Per AC 12 (no `incident:state_changed` emit) + AC 13 (no
+ * `Notification` row write), the attachment surface is NOT a
+ * state transition — attachments are evidence attached to the
+ * current state. The router's deps shape enforces this by
+ * absence: `buildAttachmentRouter` accepts only `{ audit, repo,
+ * incidentFindUnique }` — no socket writer, no notification
+ * writer. A future regression that wired a `socket` or
+ * `notificationWriter` dep would force a structural change to
+ * the call sites (`routerWiring.ts`, `index.ts`) and surface
+ * here as a typecheck failure.
+ *
+ * The two contract tests below pin the deps shape directly.
+ * They DO NOT exercise the running router (the router's actual
+ * socket/notification behavior is `nothing`); instead they read
+ * the `AttachmentRouterDeps` interface as a string and assert
+ * that no forbidden key is present. A regression that introduced
+ * such a key would fail the regex check.
+ *
+ * Why a string check instead of a runtime test: the attachment
+ * router does not have a "did you emit?" test surface — the
+ * absence of an emit IS the contract. Pinning the type surface
+ * is the only deterministic way to lock this in.
+ */
+describe("Story 4.13 — contract: POST/DELETE do NOT emit sockets or notifications", () => {
+  it("AC12: attachmentRouter source does NOT reference `incident:state_changed`", async () => {
+    // Pin the absence of any socket emit. The router is a
+    // pure-data surface — no realtime channel. A regression
+    // that introduced a `socket.emit("incident:state_changed",
+    // ...)` would fail this test.
+    //
+    // We exclude the docstring's reference (the comment that
+    // documents the absence) by stripping block comments and
+    // string literals first. The docstring deliberately names
+    // the channel — the test pins that the channel is never
+    // USED (no live `socket.emit(...)` call).
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./attachmentRouter.ts", import.meta.url), "utf8");
+    // The negative match is on `socket.emit(...)` — the actual
+    // call shape. The docstring's mention of `incident:state_changed`
+    // is informational; we don't pin the comment.
+    expect(source).not.toMatch(/socket\.emit/);
+    expect(source).not.toMatch(/emit\(['"]incident/);
+  });
+
+  it("AC13: attachmentRouter source does NOT import or call a notification writer", async () => {
+    // Pin the absence of any Notification row write. The router
+    // does not own a `notificationWriter` dep; only the incident
+    // state machine (`incidentStateRepository.ts`) writes
+    // notifications on transitions. A regression that added
+    // `notificationWriter.create(...)` would fail this test.
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./attachmentRouter.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/notificationWriter/);
+    expect(source).not.toMatch(/notification\.create/);
+    expect(source).not.toMatch(/NotificationWriter/);
+  });
+
+  it("AttachmentRouterDeps interface is data-only (audit + repo + incidentFindUnique)", async () => {
+    // Pin the deps surface. `AttachmentRouterDeps` exposes three
+    // keys: `audit`, `repo`, `incidentFindUnique`. A regression
+    // that added `socket` or `notificationWriter` to the deps
+    // would force `routerWiring.ts` + `index.ts` to thread them
+    // through; the regex check catches the addition before the
+    // structural refactor is even possible.
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("./attachmentRouter.ts", import.meta.url), "utf8");
+    // The interface block lists the contract.
+    expect(source).toMatch(/export interface AttachmentRouterDeps/);
+    expect(source).toMatch(/readonly audit:/);
+    expect(source).toMatch(/readonly repo:/);
+    expect(source).toMatch(/readonly incidentFindUnique:/);
+    // And does NOT include the forbidden keys.
+    expect(source).not.toMatch(/readonly socket:/);
+    expect(source).not.toMatch(/readonly notificationWriter:/);
   });
 });

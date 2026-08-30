@@ -2663,5 +2663,15 @@ describe("Story 4.13 — AC: attachments section mounted below the audit timelin
     expect(
       screen.getByTestId("attachments-row-link-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaa01"),
     ).toHaveTextContent("Sensor photo");
+    // DOM-order pin (AC 9): the attachments section MUST be
+    // positioned AFTER the audit-timeline section. `compareDocumentPosition`
+    // returns `Node.DOCUMENT_POSITION_FOLLOWING` (4) when `other`
+    // follows `node` in document order. A regression that re-
+    // ordered the page (e.g., moved attachments above the
+    // timeline) would fail here.
+    const timelineSection = screen.getByTestId("incident-detail-timeline-section");
+    const attachmentsSection = screen.getByTestId("attachments-section");
+    const order = timelineSection.compareDocumentPosition(attachmentsSection);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
