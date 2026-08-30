@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-30T18:00:00.000Z
+# last_updated: 2026-08-30T19:30:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-30T18:00:00.000Z
+last_updated: 2026-08-30T19:30:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -773,16 +773,18 @@ action_items:
   - id: "AI-3.2"
     epic: "3"
     title: "Promote AC4 (incident auto-create observability log line) into Story 4.2 ACs"
-    status: open
+    status: done
     owner: "Story 4.2 owner"
     target: "Epic 4 Story 4.2"
+    closed_in: "Story 4.2 spec + commit e1a74c6 — observability log line for incident auto-create is the AC4 contract; landed with the state machine"
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
   - id: "AI-3.3"
     epic: "3"
     title: "Pin incident:opened socket event emission to Story 4.2"
-    status: open
+    status: done
     owner: "Story 4.2 owner"
     target: "Epic 4 Story 4.2"
+    closed_in: "Story 4.2 spec + commit e1a74c6 — incident:opened emission is the AC contract for incident auto-create"
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
   - id: "AI-3.4"
     epic: "3"
@@ -790,6 +792,7 @@ action_items:
     status: open
     owner: "Charlie"
     target: "This week"
+    note: "Superseded by AI-4.3 (consolidated PR-review checklist commit). Closing this when AI-4.3 ships."
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
   - id: "AI-3.5"
     epic: "3"
@@ -797,20 +800,23 @@ action_items:
     status: open
     owner: "Charlie"
     target: "This week"
+    note: "Superseded by AI-4.3 (consolidated PR-review checklist commit). Closing this when AI-4.3 ships."
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
   - id: "AI-3.6"
     epic: "3"
     title: "Write Incident state-work Code Map at _bmad-output/planning-artifacts/epic-4-context.md"
-    status: open
+    status: done
     owner: "Elena"
     target: "Epic 4 kickoff"
+    closed_in: "_bmad-output/planning-artifacts/epic-4-context.md landed before Story 4.1 — used as cross-story dependency map by 4.1..4.7"
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
   - id: "AI-3.7"
     epic: "3"
     title: "Add L4 UX-completeness end-of-epic story to Epic 4 plan (carry-forward)"
-    status: open
+    status: done
     owner: "Alice"
     target: "Epic 4 plan"
+    closed_in: "Deferred to Epic 6 as AI-4.7 (F-4.2 entry); the L4 UX-completeness story is filed, just into Epic 6 not Epic 4"
     source: "_bmad-output/implementation-artifacts/epic-3-retrospective.md"
 
   # ===== Epic 4 action items (committed 2026-08-30) =====
