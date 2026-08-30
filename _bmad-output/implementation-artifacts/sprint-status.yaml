@@ -477,10 +477,10 @@ stories:
     status: done
     epic: "4"
     commit: "12f1fb4"
-    shipped: 2026-08-27
+    shipped: "2026-08-27"
     covers: []
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-4-3-kanban-column-projection.md"
       review: null
 
   - id: "4.4"
@@ -488,17 +488,17 @@ stories:
     status: done
     epic: "4"
     commit: "8e8be1d"
-    shipped: 2026-08-28
+    shipped: "2026-08-28"
     covers: []
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-4-4-incident-detail-page.md"
       review: null
 
   - id: "4.5"
     title: "Acknowledge Flow"
     status: done
     epic: "4"
-    commit: null
+    commit: "e1a74c6"
     shipped: "2026-08-28"
     covers: []
     ledger:
@@ -586,7 +586,7 @@ stories:
     title: "Attachments"
     status: done
     epic: "4"
-    commit: "6ac0979"
+    commit: "67fab28"
     shipped: "2026-08-30"
     covers: ["PRD-F-19", "FR-21", "AR-7", "UX-DR-14"]
     ledger:
