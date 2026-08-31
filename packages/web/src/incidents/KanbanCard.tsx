@@ -133,7 +133,7 @@ export const KanbanCard = ({ incident, now, onClick }: KanbanCardProps) => {
           <span
             aria-hidden
             data-testid="kanban-card-severity-dot"
-            className={`inline-block h-2 w-2 rounded-full ${dot}`}
+            className={`inline-block size-2 rounded-full ${dot}`}
           />
           <span className="font-medium">{sevLabel}</span>
           <span className="text-neutral-secondary">· {stateLabel}</span>

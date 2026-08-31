@@ -373,7 +373,7 @@ const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) 
               checked={selectedOutcome === outcome}
               disabled={isPending}
               onChange={() => setSelectedOutcome(outcome)}
-              className="h-4 w-4 disabled:cursor-not-allowed"
+              className="size-4 disabled:cursor-not-allowed"
             />
             {/* Visible label = human-language consequence; enum code
                 in muted text alongside for audit-log traceability. */}

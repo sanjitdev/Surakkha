@@ -52,7 +52,7 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
     <div className="flex items-center gap-2">
       <div
         aria-hidden
-        className="flex h-8 w-8 items-center justify-center rounded-input text-white"
+        className="flex size-8 items-center justify-center rounded-input text-white"
         style={{
           backgroundImage: BRAND_GRADIENT,
           borderRadius: "8px",

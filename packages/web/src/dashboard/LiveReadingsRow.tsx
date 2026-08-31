@@ -249,7 +249,7 @@ export const LiveReadingsRow = ({ reading }: LiveReadingsRowProps) => {
       >
         <span
           aria-hidden="true"
-          className={`inline-flex h-4 w-4 items-center justify-center rounded-full ${severityClass} text-[10px] font-bold leading-none text-white`}
+          className={`inline-flex size-4 items-center justify-center rounded-full ${severityClass} text-[10px] font-bold leading-none text-white`}
         >
           {severityGlyph}
         </span>

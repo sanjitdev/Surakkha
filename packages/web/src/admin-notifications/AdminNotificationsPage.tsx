@@ -216,7 +216,7 @@ export const AdminNotificationsPage = ({
               }`}
             >
               <span
-                className={`inline-block h-2 w-2 rounded-full ${SEVERITY_DOT_CLASS[s]}`}
+                className={`inline-block size-2 rounded-full ${SEVERITY_DOT_CLASS[s]}`}
                 aria-hidden="true"
               />
               {SEVERITY_LABEL[s]}
@@ -371,7 +371,7 @@ const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) =>
       >
         <td className="py-2 pr-4">
           <span
-            className={`inline-block h-2 w-2 rounded-full ${SEVERITY_DOT_CLASS[row.severity]}`}
+            className={`inline-block size-2 rounded-full ${SEVERITY_DOT_CLASS[row.severity]}`}
             aria-hidden="true"
           />
           <span className="ml-2">{SEVERITY_LABEL[row.severity]}</span>

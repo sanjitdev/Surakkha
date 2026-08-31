@@ -25,7 +25,18 @@ import jsxA11y from "eslint-plugin-jsx-a11y";
 import importPlugin from "eslint-plugin-import";
 import nodePlugin from "eslint-plugin-n";
 import unicorn from "eslint-plugin-unicorn";
+import tailwindPlugin from "eslint-plugin-tailwindcss";
 import prettier from "eslint-config-prettier";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as resolvePath } from "node:path";
+
+/**
+ * Absolute path to the monorepo root — used for plugin settings that
+ * require absolute paths (notably `eslint-plugin-tailwindcss`'s
+ * `config` option, whose internal mlly resolver fails when handed a
+ * relative config path under pnpm).
+ */
+const repoRoot = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Shared defaults.
@@ -425,6 +436,101 @@ export default [
             "Hex literal in JSX style prop bypasses the design-token system. Use a Tailwind class (bg-neutral-surface, text-severity-critical-value, border-neutral-border, etc.). If a gradient is required, use backgroundImage (Tailwind has no gradient utility).",
         },
       ],
+    },
+  },
+
+  // 4c. Tailwind-aware ESLint rules for packages/web (Story 6.10).
+  //
+  // Three rules ship as `warn` here (per the Story 6.10 rollout plan):
+  //   - `enforces-shorthand`              — `h-2 w-2` → `size-2`
+  //                                          (real fixable drift; 7 hits)
+  //   - `enforces-negative-arbitrary-values` — `-mt-[10px]` vs `mt-[-10px]`
+  //                                          (canonical form enforcement)
+  //   - `no-unnecessary-arbitrary-value`  — `[10px]` when `10` is the
+  //                                          default (canonical form)
+  //
+  // Three rules are deliberately OFF because the plugin's static
+  // analysis can't trace our design-token system (it reads the
+  // Tailwind config but doesn't fully understand the `severity.*` /
+  // `neutral.*` / `primary.*` namespace extension). 31 false positives
+  // would fire on the current codebase. These are deferred until
+  // either (a) we publish a Tailwind plugin that exposes the token
+  // utilities as proper Tailwind classes (so the static analyzer sees
+  // them), or (b) we accept a 30+ entry whitelist:
+  //   - `no-custom-classname`   — 31 hits, all against `bg-neutral-*`
+  //                                 / `bg-severity-*` / `bg-primary-*`
+  //                                 tokens that ARE valid Tailwind
+  //                                 classes at build time but the
+  //                                 plugin's analyzer can't trace.
+  //   - `classnames-order`      — 24 hits; the codebase has no
+  //                                 class-order convention and the
+  //                                 /impeccable critique didn't flag one.
+  //                                 Don't enforce a rule we don't have
+  //                                 a convention for.
+  //   - `no-contradicting-classname` — only fires after classnames-order
+  //                                 is stable; defer.
+  //
+  // Also OFF: `no-arbitrary-value` — the design system uses *some*
+  // arbitrary values legitimately (`p-density-card`, `min-h-touch`,
+  // `bg-[#xxxxxx]` etc.). Promote to `warn` after one sprint of clean
+  // lint if the false-positive rate proves <0.1%.
+  //
+  // All three enabled rules are at `warn` (per Story 6.10's rollout
+  // plan): the pre-commit hook runs ESLint with `--max-warnings 0`, so
+  // a `warn` currently blocks commits. Once the codebase proves clean
+  // for one sprint, promote them to `error`.
+  //
+  // Config resolution note: the plugin's internal `mlly.resolvePathSync`
+  // fails on relative config paths under pnpm (`url: ["."]` can't be
+  // resolved to `tailwindcss`). Passing an absolute path via
+  // `fileURLToPath(import.meta.url)` works around this without adding
+  // a build step.
+  {
+    files: ["packages/web/**/*.{ts,tsx}"],
+    plugins: {
+      tailwindcss: tailwindPlugin,
+    },
+    languageOptions: {
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    settings: {
+      tailwindcss: {
+        callees: ["classnames", "clsx", "cn", "twMerge"],
+        config: resolvePath(repoRoot, "packages/web/tailwind.config.ts"),
+        // Whitelist: classes the plugin flags as "not in Tailwind" but
+        // ARE valid because they're defined in tailwind.config.ts
+        // under a sub-namespace the static analyzer can't trace. Kept
+        // short — only the cases where `no-custom-classname` would
+        // otherwise fire despite the class being in the config.
+        whitelist: [
+          // Density tokens (theme.extend.padding.density.*).
+          "p-density-card",
+          "py-density-card",
+          "px-density-card",
+          "p-density-row",
+          "py-density-row",
+          "px-density-row",
+          // Touch-target tokens (theme.extend.minHeight / minWidth).
+          "min-h-touch",
+          "min-w-touch",
+          // Motion-duration tokens (theme.extend.transitionDuration.*).
+          "duration-live-pulse",
+          "duration-critical-pulse",
+          "duration-pin-pulse",
+          "duration-banner-fade-in",
+        ],
+      },
+    },
+    rules: {
+      "tailwindcss/enforces-shorthand": "warn",
+      "tailwindcss/enforces-negative-arbitrary-values": "warn",
+      "tailwindcss/no-unnecessary-arbitrary-value": "warn",
+      "tailwindcss/classnames-order": "off",
+      "tailwindcss/no-custom-classname": "off",
+      "tailwindcss/no-arbitrary-value": "off",
+      "tailwindcss/no-contradicting-classname": "off",
     },
   },
 
