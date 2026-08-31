@@ -2,12 +2,31 @@
   "buildPath": "code",
   "detector": {
     "ignoreRules": [],
-    "ignoreFiles": [],
+    "ignoreFiles": ["packages/api/**", "packages/shared/**"],
     "ignoreValues": [
-      "border-l-4:severity-driven-accent",
-      "border-l-2:severity-driven-accent",
-      "border-l-3:severity-driven-accent",
-      "font-family: Inter:legibility-first-product-choice"
+      {
+        "rule": "side-tab",
+        "value": "border-l-4",
+        "files": ["packages/web/src/**"],
+        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-l-2",
+        "files": ["packages/web/src/**"],
+        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
+      },
+      {
+        "rule": "side-tab",
+        "value": "border-l-3",
+        "files": ["packages/web/src/**"],
+        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
+      },
+      {
+        "rule": "overused-font",
+        "value": "Inter",
+        "reason": "legibility-first product choice — DESIGN.md §Typography pins Inter as the type system"
+      }
     ],
     "designSystem": {
       "enabled": true

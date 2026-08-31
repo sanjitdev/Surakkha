@@ -199,6 +199,58 @@ Any bypass must be noted in the PR body so reviewers can audit. The hook will no
 
 ---
 
+## Design hook (impeccable)
+
+Surakkha uses the [`impeccable`](https://github.com/impeccable-dev/impeccable) Claude Code skill to catch AI-generated UI slop — gradient text on headings, hex literals that bypass the design-token layer, side-tab layout patterns, over-used fonts — at write time, before any of it lands in a commit.
+
+The hook is enabled for this repo and ships in the `.claude/settings.local.json` file (created on first hook enable). It is **advisory only** — findings surface in the Claude Code chat as a `[impeccable@1]` system reminder; they do **not** block writes or commits. The two tiers the hook emits are:
+
+| Pass                 | Trigger                                                                     | Purpose                                                                                                                                           |
+| -------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **PostToolUse**      | Every `Edit` / `Write` on a UI file (`.tsx`, `.jsx`, `.html`, `.css`, etc.) | Mechanical, objective checks: gradient text, broken images, low contrast, font drift, design-token bypass. The nit you can fix in place.          |
+| **Stop (deep pass)** | End of turn                                                                 | Full rule set over every file touched this session: copy cadence, palette taste, layout rhythm. Reported once, deduped against the per-edit pass. |
+
+Scope is `packages/web` only — `detector.ignoreFiles` in `.impeccable/config.json` lists `packages/api/**` and `packages/shared/**` so the detector never scans a server file.
+
+### Triaging a finding
+
+When the hook emits a finding, the system reminder lists three actions:
+
+1. **Real design problem** — fix it at the edit site. The PostToolUse tier is curated to keep this loop short.
+2. **Confident false positive or sanctioned exception** — persist the narrowest ignore yourself with:
+   ```bash
+   node .claude/skills/impeccable/scripts/hook-admin.mjs ignore-value <rule> "<value>" --reason "<who decided: evidence>"
+   ```
+   Add `--file <glob>` to scope the ignore to a single file. **Write "user confirmed" in a reason only when the user did.**
+3. **Unsure** — leave it as is and ask the user in one line. Do not guess.
+
+`ignore-file` (skip the whole detector in a path) and `ignore-rule` (suppress a rule project-wide) **need explicit user approval** — they are escape hatches, not defaults. Never add an ignore to push a blocked write through.
+
+### Status and overrides
+
+```bash
+node .claude/skills/impeccable/scripts/hook-admin.mjs status         # print hook state + current ignores
+node .claude/skills/impeccable/scripts/hook-admin.mjs on              # install hooks (idempotent)
+node .claude/skills/impeccable/scripts/hook-admin.mjs off             # remove hooks (keeps config + ignores)
+node .claude/skills/impeccable/scripts/hook-admin.mjs reset           # nuke all hook config + cache
+```
+
+Temporarily disable per-process: `IMPECCABLE_HOOK_DISABLED=1 pnpm lint`. Useful when a tool-execution is flapping on a known-false rule.
+
+The currently-configured scope exceptions (severity-driven accent stripes, the Inter font stack, package path ignores) are persisted in `.impeccable/config.json`. The `.impeccable/config.local.json` file holds per-developer consent and is gitignored.
+
+### When to run a full audit
+
+The write-time hook is the default. Run a full `/impeccable audit` (deep scan with the full rule set, scored output written to `.impeccable/critique/`) when:
+
+- Closing an epic branch, before merging to `main`.
+- After a `packages/web` refactor that touches more than 6 files.
+- Whenever the audit report at `.impeccable/critique/<latest>` is older than 30 days.
+
+The audit report surfaces P1/P2/P3 findings; the write-time hook's job is the per-edit catch, the audit's job is the periodic sweep. Both belong in the workflow.
+
+---
+
 ## Reporting issues
 
 - **Bugs:** use the [bug report template](./.github/ISSUE_TEMPLATE/bug_report.md).
