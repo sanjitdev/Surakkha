@@ -92,6 +92,18 @@ const tailwindConfig = {
           border: "#E2E8F0",
           body: "#0F172A",
           secondary: "#475569",
+          // Disabled foreground — solid muted slate used for
+          // interactive elements that are visibly disabled (bell
+          // icons for Viewer / GET_403, disabled submit buttons
+          // with `cursor-not-allowed`). Picked so the contrast on
+          // a white surface lands at 4.5:1+ — opacity-based
+          // "fades" (e.g. `text-neutral-secondary opacity-50`)
+          // drop the rendered colour below the WCAG 1.4.3 floor
+          // (effective contrast ~1.6:1) without announcing
+          // themselves as inaccessible. Solid muted token
+          // resolves the contrast while keeping the disabled
+          // affordance visually distinct from the active state.
+          disabled: "#94A3B8",
         },
         // Primary + supporting hues.
         primary: {

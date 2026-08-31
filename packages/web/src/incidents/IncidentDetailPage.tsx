@@ -485,8 +485,7 @@ const IncidentDetailBody = ({
         <span
           aria-hidden
           data-testid="incident-detail-severity-dot"
-          className="inline-block h-2 w-2 rounded-full"
-          style={{ backgroundColor: SEVERITY_DOT_BG[incident.severity] }}
+          className={`inline-block h-2 w-2 rounded-full ${SEVERITY_DOT_BG[incident.severity]}`}
         />
         <span data-testid="incident-detail-severity-label">
           {SEVERITY_LABEL[incident.severity]}

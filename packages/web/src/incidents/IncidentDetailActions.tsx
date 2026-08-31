@@ -254,7 +254,7 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
         >
           {/* eslint-enable react/forbid-dom-props */}
           <option value="" disabled>
-            Select a technician...
+            Select a technician…
           </option>
           {SEEDED_TECHNICIAN_IDS.map((id) => (
             <option key={id} value={id}>

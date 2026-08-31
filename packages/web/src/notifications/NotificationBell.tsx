@@ -354,7 +354,7 @@ const DisabledNotificationBell = () => (
     data-testid={DISABLED_BELL_TESTID}
     aria-disabled="true"
     title={DISABLED_BELL_TITLE}
-    className="inline-flex h-11 w-11 items-center justify-center rounded-input text-neutral-secondary opacity-50"
+    className="inline-flex h-11 w-11 items-center justify-center rounded-input text-neutral-disabled"
   >
     <span aria-hidden className="text-lg">
       {"\u2407"}
