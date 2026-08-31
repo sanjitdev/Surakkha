@@ -31,15 +31,9 @@
  * (we override `navigate` + `onOffline` from `main.tsx`) and decouples
  * it from `react-router-dom` so unit tests do not need a Router.
  */
-import {
-  AccessTokenSchema,
-  REFRESH_TOKEN_COOKIE,
-} from "@surakkha/shared/auth";
+import { AccessTokenSchema, REFRESH_TOKEN_COOKIE } from "@surakkha/shared/auth";
 
-import {
-  readAccessToken,
-  useTokenStore,
-} from "../auth/tokenStore";
+import { readAccessToken, useTokenStore } from "../auth/tokenStore";
 
 const HTTP_UNAUTHORIZED = 401;
 
@@ -153,20 +147,14 @@ const withJsonContentType = (
   return { ...headers, "Content-Type": "application/json" };
 };
 
-const withBearer = (
-  headers: Record<string, string>,
-  skipAuth: boolean,
-): Record<string, string> => {
+const withBearer = (headers: Record<string, string>, skipAuth: boolean): Record<string, string> => {
   if (skipAuth) return headers;
   const token = readAccessToken();
   if (token === null) return headers;
   return { ...headers, Authorization: `Bearer ${token}` };
 };
 
-const buildAuthedHeaders = (
-  init: ApiRequestInit,
-  skipAuth: boolean,
-): Record<string, string> => {
+const buildAuthedHeaders = (init: ApiRequestInit, skipAuth: boolean): Record<string, string> => {
   const base: Record<string, string> = { ...(init.headers ?? {}) };
   const withAuth = withBearer(base, skipAuth);
   return withJsonContentType(withAuth, init.body ?? null);
@@ -185,13 +173,10 @@ const computeNextPath = (): string => {
  *   - on network error during refresh, surfaces offline state without
  *     logging out
  *
- * The `skipAuth` flag is used by the login form (POST /auth/login)
- * which obviously has no token yet.
+ * The `skipAuth` flag is used by the login form (POST /auth/login),
+ * which runs before any token exists.
  */
-export const apiFetch = async (
-  path: string,
-  init: ApiRequestInit = {},
-): Promise<Response> => {
+export const apiFetch = async (path: string, init: ApiRequestInit = {}): Promise<Response> => {
   if (config === null) {
     throw new Error("apiClient: configureApiClient() must run before use");
   }
@@ -259,10 +244,7 @@ const retryAfterRefresh = async (args: RetryArgs): Promise<Response> => {
  * On failure, returns the Response object so the caller can branch on
  * status (401 = invalid_credentials → surface inline error).
  */
-export const apiLogin = async (
-  email: string,
-  password: string,
-): Promise<Response> => {
+export const apiLogin = async (email: string, password: string): Promise<Response> => {
   if (config === null) {
     throw new Error("apiClient: configureApiClient() must run before use");
   }

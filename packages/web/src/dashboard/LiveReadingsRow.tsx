@@ -92,11 +92,11 @@ const formatAge = (serverReceivedAt: string, now: number): string => {
  * variant spreads 24px which is too wide for a single row's
  * bounding box).
  *
- * IMPORTANT: these class strings are LITERAL — they must not be
- * built via template-literal interpolation. Tailwind's JIT content
- * scanner matches complete string literals only; interpolated
- * classes (e.g., `border-l-[${n}px]`) are invisible to the scanner
- * and the corresponding CSS rules never ship. See Verification-Gap
+ * Note: these class strings are literal — they must not be built via
+ * template-literal interpolation. Tailwind's JIT content scanner matches
+ * complete string literals only; interpolated classes (e.g.,
+ * `border-l-[${n}px]`) are invisible to the scanner and the
+ * corresponding CSS rules never ship. See Verification-Gap
  * review VG-1.
  */
 const CRITICAL_BORDER_CLASS =
