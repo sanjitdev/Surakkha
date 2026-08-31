@@ -167,7 +167,10 @@ describe("Story 1.2b — topbar", () => {
     renderShell("Admin");
     const topbar = screen.getByTestId("topbar");
     expect(topbar.style.height).toBe("56px");
-    expect(topbar.style.boxShadow).toBe("0 1px 2px rgba(15, 23, 42, 0.04)");
+    // Shadow flows through `shadow-elevation-topbar` Tailwind token
+    // (`tailwind.config.ts:153`) rather than inline style — same
+    // rationale as `TopBar.spec.tsx`'s shadow pin.
+    expect(topbar.className).toContain("shadow-elevation-topbar");
   });
 
   it("renders the brand mark with the primary gradient", () => {

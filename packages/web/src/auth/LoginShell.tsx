@@ -30,7 +30,6 @@ import { FormField, FormTextInput } from "../forms/FormField";
 
 const HERO_GRADIENT =
   "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
-const FORM_BG = "#FFFFFF"; /* color.neutral.surface */
 
 type Breakpoint = "lg" | "md" | "sm";
 const MEDIA_LG = "(min-width: 1024px)";
@@ -137,7 +136,6 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
           CANVAS_PADDING[breakpoint],
           "py-12",
         ].join(" ")}
-        style={{ backgroundColor: FORM_BG }}
       >
         <form
           data-testid="login-form"

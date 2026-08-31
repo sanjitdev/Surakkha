@@ -215,25 +215,48 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
             so only `threshold` is mutable across versions; the rest
             are shown read-only to make the slot visible to the
             operator without inviting drift. Each field has its own
-            `data-testid` so a RTL test can assert pre-fill. */}
+            `data-testid` so a RTL test can assert pre-fill.
+            Critique 2026-08-31 progressive-disclosure finding: the
+            earlier render surfaced all 7 immutable fields inline,
+            competing with the single editable threshold for the
+            Operator's attention. Now grouped into:
+              • a one-line "key identity" summary (device / severity /
+                rule type — the fields most likely to be wrong and
+                worth re-confirming at a glance);
+              • a `<details>` disclosure for the remaining
+                operator / min-duration / hysteresis fields (rarely
+                need to change but kept reachable for the audit-
+                log story).
+            Each field still has its own `data-testid` so the spec
+            rig's pre-fill assertions stay green. */}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-md">
           <dt className="text-neutral-secondary">Device</dt>
           <dd data-testid="thresholds-edit-field-deviceId" className="font-mono">
             {rule.deviceId ?? "global"}
           </dd>
-          <dt className="text-neutral-secondary">Metric</dt>
-          <dd data-testid="thresholds-edit-field-metric">{rule.metric}</dd>
-          <dt className="text-neutral-secondary">Operator</dt>
-          <dd data-testid="thresholds-edit-field-operator">{rule.operator}</dd>
           <dt className="text-neutral-secondary">Severity</dt>
           <dd data-testid="thresholds-edit-field-severity">{rule.severity}</dd>
           <dt className="text-neutral-secondary">Rule type</dt>
           <dd data-testid="thresholds-edit-field-ruleType">{rule.ruleType}</dd>
-          <dt className="text-neutral-secondary">Min duration (s)</dt>
-          <dd data-testid="thresholds-edit-field-minDurationSeconds">{rule.minDurationSeconds}</dd>
-          <dt className="text-neutral-secondary">Hysteresis (s)</dt>
-          <dd data-testid="thresholds-edit-field-hysteresisSeconds">{rule.hysteresisSeconds}</dd>
         </dl>
+        <details
+          data-testid="thresholds-edit-other-fields"
+          className="rounded-input border border-neutral-border bg-neutral-page px-3 py-2 text-md"
+        >
+          <summary className="cursor-pointer text-neutral-secondary">More rule details</summary>
+          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+            <dt className="text-neutral-secondary">Metric</dt>
+            <dd data-testid="thresholds-edit-field-metric">{rule.metric}</dd>
+            <dt className="text-neutral-secondary">Operator</dt>
+            <dd data-testid="thresholds-edit-field-operator">{rule.operator}</dd>
+            <dt className="text-neutral-secondary">Min duration (s)</dt>
+            <dd data-testid="thresholds-edit-field-minDurationSeconds">
+              {rule.minDurationSeconds}
+            </dd>
+            <dt className="text-neutral-secondary">Hysteresis (s)</dt>
+            <dd data-testid="thresholds-edit-field-hysteresisSeconds">{rule.hysteresisSeconds}</dd>
+          </dl>
+        </details>
         <label className="text-md">
           New threshold
           <input

@@ -21,14 +21,23 @@ import { type IncidentPayload } from "@surakkha/shared/incident";
 
 /**
  * Severity dot palette — Story 4.4 re-exports these so the detail
- * page reuses the SAME palette without duplication. The values
- * match `tailwind.config.js` semantic tokens (primary, warning,
- * critical) so a future token rename propagates cleanly.
+ * page reuses the SAME palette without duplication. Tailwind
+ * class strings (not hex literals) so a future token rename
+ * propagates by construction. The `IncidentPayload["severity"]`
+ * 3-bucket maps to the dashboard's `MapSeverity` 4-bucket as:
+ *   - info   → healthy (project colour: `severity.healthy.value`)
+ *   - warning → warning (`severity.warning.value`)
+ *   - critical → critical (`severity.critical.value`)
+ *
+ * Critique 2026-08-31 Round 2 finding: the prior version used raw
+ * hex strings (`#1E5BB8` / `#D97706` / `#DC2626`) that drifted
+ * silently if a designer retuned a token. Re-keying off the
+ * class names ties the dot to the design substrate end-to-end.
  */
 export const SEVERITY_DOT_BG: Record<IncidentPayload["severity"], string> = {
-  info: "#1E5BB8" /* primary */,
-  warning: "#D97706" /* warning */,
-  critical: "#DC2626" /* critical */,
+  info: "bg-severity-healthy-value",
+  warning: "bg-severity-warning-value",
+  critical: "bg-severity-critical-value",
 };
 
 export const SEVERITY_LABEL: Record<IncidentPayload["severity"], string> = {
@@ -124,8 +133,7 @@ export const KanbanCard = ({ incident, now, onClick }: KanbanCardProps) => {
           <span
             aria-hidden
             data-testid="kanban-card-severity-dot"
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ backgroundColor: dot }}
+            className={`inline-block h-2 w-2 rounded-full ${dot}`}
           />
           <span className="font-medium">{sevLabel}</span>
           <span className="text-neutral-secondary">· {stateLabel}</span>

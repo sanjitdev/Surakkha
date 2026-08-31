@@ -97,6 +97,13 @@ describe("Story 1.2b — topbar visual contract is preserved by the bell mount",
     renderTopBar("Operator");
     const topbar = screen.getByTestId("topbar");
     expect(topbar.style.height).toBe("56px");
-    expect(topbar.style.boxShadow).toBe("0 1px 2px rgba(15, 23, 42, 0.04)");
+    // Shadow now flows through the `shadow-elevation-topbar` Tailwind
+    // token (single source of truth at `tailwind.config.ts:153`) rather
+    // than an inline `style.boxShadow` literal — so the visible
+    // contract is asserted via `className` containment instead of the
+    // computed-style equality. Vitest's jsdom does NOT compute
+    // Tailwind utility classes into inline styles, so the only way to
+    // pin the elevation at this layer is the class-string assertion.
+    expect(topbar.className).toContain("shadow-elevation-topbar");
   });
 });

@@ -19,7 +19,6 @@
 import { NotificationBell } from "../notifications/NotificationBell";
 
 const TOPBAR_HEIGHT_PX = 56;
-const TOPBAR_BG = "#FFFFFF"; /* color.neutral.surface */
 const BRAND_GRADIENT =
   "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)"; /* color.primary_gradient */
 
@@ -30,12 +29,8 @@ interface TopBarProps {
 export const TopBar = ({ onHamburger }: TopBarProps) => (
   <header
     data-testid="topbar"
-    className="sticky top-0 z-30 flex items-center gap-3 px-4 lg:px-6"
-    style={{
-      height: `${TOPBAR_HEIGHT_PX}px`,
-      backgroundColor: TOPBAR_BG,
-      boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)" /* elevation.topbar */,
-    }}
+    className="sticky top-0 z-30 flex items-center gap-3 bg-neutral-surface px-4 shadow-elevation-topbar lg:px-6"
+    style={{ height: `${TOPBAR_HEIGHT_PX}px` }}
   >
     {/* Hamburger — visible below 1024px (lg breakpoint). The button
         carries aria-label so screen-readers describe the toggle
