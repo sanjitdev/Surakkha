@@ -48,13 +48,9 @@ export const NewRuleModal = ({ onClose, onSubmit }: NewRuleModalProps) => {
       data-testid="thresholds-new-rule-modal"
       role="dialog"
       aria-label="New rule"
-      className="fixed inset-0 flex items-center justify-center"
-      style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+      className="fixed inset-0 flex items-center justify-center bg-black/40"
     >
-      <div
-        className="flex w-full max-w-md flex-col gap-3 rounded-input p-4"
-        style={{ backgroundColor: "#FFFFFF" }}
-      >
+      <div className="flex w-full max-w-md flex-col gap-3 rounded-input bg-neutral-surface p-4">
         <h2 className="text-lg font-semibold">New Rule</h2>
         <label className="text-md">
           Device ID (blank = global)
@@ -169,8 +165,7 @@ export const NewRuleModal = ({ onClose, onSubmit }: NewRuleModalProps) => {
             type="button"
             data-testid="thresholds-new-rule-cancel"
             onClick={onClose}
-            className="rounded-input border px-3 py-1 text-md"
-            style={{ borderColor: "#E2E8F0" }}
+            className="rounded-input border border-neutral-border px-3 py-1 text-md"
           >
             Cancel
           </button>
@@ -178,12 +173,7 @@ export const NewRuleModal = ({ onClose, onSubmit }: NewRuleModalProps) => {
             type="button"
             data-testid="thresholds-new-rule-submit"
             onClick={() => onSubmit(form)}
-            className="rounded-input border px-3 py-1 text-md"
-            style={{
-              borderColor: "#0F172A",
-              color: "#FFFFFF",
-              backgroundColor: "#0F172A",
-            }}
+            className="rounded-input border border-primary bg-primary px-3 py-1 text-md text-white hover:bg-primary-hover"
           >
             Create
           </button>
@@ -211,13 +201,9 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
       data-testid="thresholds-edit-modal"
       role="dialog"
       aria-label={`Edit rule ${rule.id}`}
-      className="fixed inset-0 flex items-center justify-center"
-      style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+      className="fixed inset-0 flex items-center justify-center bg-black/40"
     >
-      <div
-        className="flex w-full max-w-md flex-col gap-3 rounded-input p-4"
-        style={{ backgroundColor: "#FFFFFF" }}
-      >
+      <div className="flex w-full max-w-md flex-col gap-3 rounded-input bg-neutral-surface p-4">
         <h2 className="text-lg font-semibold">
           Edit rule {rule.metric} {rule.operator} {rule.threshold}
         </h2>
@@ -262,8 +248,7 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
             type="button"
             data-testid="thresholds-edit-cancel"
             onClick={onClose}
-            className="rounded-input border px-3 py-1 text-md"
-            style={{ borderColor: "#E2E8F0" }}
+            className="rounded-input border border-neutral-border px-3 py-1 text-md"
           >
             Cancel
           </button>
@@ -275,12 +260,7 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
               if (Number.isNaN(next)) return;
               onSubmit({ supersede: true, threshold: next });
             }}
-            className="rounded-input border px-3 py-1 text-md"
-            style={{
-              borderColor: "#0F172A",
-              color: "#FFFFFF",
-              backgroundColor: "#0F172A",
-            }}
+            className="rounded-input border border-primary bg-primary px-3 py-1 text-md text-white hover:bg-primary-hover"
           >
             Supersede
           </button>

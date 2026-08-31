@@ -2,7 +2,7 @@
   "name": "@surakkha/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Frontend: Vite + React + TypeScript + Tailwind + shadcn/ui. Dashboard, Kanban, admin views. Connects to the api over Socket.IO. Honours prefers-reduced-motion (UX-DR-7).",
+  "description": "Frontend: Vite + React + TypeScript + Tailwind (hand-rolled primitives on a strict token system; tailwind.config.ts is the single source of truth). Dashboard, Kanban, admin views. Connects to the api over Socket.IO. Honours prefers-reduced-motion (UX-DR-7).",
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",

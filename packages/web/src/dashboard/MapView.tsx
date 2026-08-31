@@ -58,7 +58,13 @@ import { SEVERITY_CLASS, SEVERITY_GLYPH } from "./severityTokens";
 // dimensions — the map view sits inside the dashboard's left
 // column at 420 px tall; the operators centre on Dhaka and zoom
 // until every marker sits well inside the canvas.
-const MAP_HEIGHT_PX = 420;
+//
+// The container height is rendered as the literal `h-[420px]`
+// in the JSX below — Tailwind's JIT scanner doesn't expand
+// template-literal class strings (see `buildIconHtml` for the
+// same caveat applied to pin sizing). `PIN_SIZE_PX` is still
+// needed at runtime because Leaflet consumes it as a JS number
+// via `iconSize: [PIN_SIZE_PX, PIN_SIZE_PX]`.
 const PIN_SIZE_PX = 14;
 const PIN_ANCHOR_OFFSET = 7;
 const DHAKA_LAT = 23.78;
@@ -91,8 +97,15 @@ const buildIconHtml = (severity: MapSeverity): string => {
   // `rounded-full` for the circle; `border-2 border-white` for the
   // 2px ring. White always sits under the severity fill so dark
   // modes don't invert the ring.
-  const sizeClass = `h-[${PIN_SIZE_PX}px] w-[${PIN_SIZE_PX}px]`;
-  return `<span class="leaflet-pin leaflet-pin-${severity} inline-flex ${sizeClass} items-center justify-center rounded-full border-2 border-white${pulse} ${fill} text-[8px] font-bold leading-none text-white">${glyph}</span>`;
+  //
+  // Tailwind's JIT can't expand `h-[${PIN_SIZE_PX}px] w-[${PIN_SIZE_PX}px]`
+  // (template-literal interpolation defeats static class scanning),
+  // so the literal `"h-3.5 w-3.5"` (= 14px at 4px/step) is written
+  // directly. The corresponding JS-side `iconSize: [PIN_SIZE_PX, ...]`
+  // below still uses the named constant — only the className needs
+  // the literal because Tailwind's scanner doesn't run on runtime
+  // template strings.
+  return `<span class="leaflet-pin leaflet-pin-${severity} inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-white${pulse} ${fill} text-[8px] font-bold leading-none text-white">${glyph}</span>`;
 };
 
 /**
@@ -118,10 +131,7 @@ const buildPopupHtml = (args: {
       // Guard malformed timestamps so a corrupt `last_reading_at`
       // never surfaces as "NaNm ago" in the operator's popup.
       const minutes = Number.isFinite(lastSeenMs)
-        ? Math.max(
-            MIN_OFFLINE_MINUTES,
-            Math.round((Date.now() - lastSeenMs) / MINUTES_PER_MS),
-          )
+        ? Math.max(MIN_OFFLINE_MINUTES, Math.round((Date.now() - lastSeenMs) / MINUTES_PER_MS))
         : null;
       bodyLine =
         minutes === null
@@ -131,9 +141,7 @@ const buildPopupHtml = (args: {
   } else if (breach === null) {
     bodyLine = `<p class="text-xs text-neutral-secondary">All metrics in range</p>`;
   } else {
-    const value = Number.isFinite(breach.value)
-      ? String(breach.value)
-      : "\u2014";
+    const value = Number.isFinite(breach.value) ? String(breach.value) : "\u2014";
     bodyLine = `<p class="text-xs text-neutral-body"><span class="font-mono">${breach.key}</span> = <span class="font-mono">${value}</span></p>`;
   }
   return [
@@ -223,17 +231,11 @@ export const MapView = ({ devices, readings }: MapViewProps) => {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
 
-  const readingsById = useMemo(
-    () => indexReadingsByDevice(readings),
-    [readings],
-  );
+  const readingsById = useMemo(() => indexReadingsByDevice(readings), [readings]);
   // Bump-tick so the effect below treats "severity changed" as a
   // distinct render from "map first mounted". Extracted to a named
   // helper so the .map callback isn't an inline function (lint).
-  const renderTick = useMemo(
-    () => buildRenderTick(devices, readingsById),
-    [devices, readingsById],
-  );
+  const renderTick = useMemo(() => buildRenderTick(devices, readingsById), [devices, readingsById]);
 
   /**
    * Initial map mount. Runs once per MapView lifecycle (StrictMode
@@ -323,9 +325,7 @@ export const MapView = ({ devices, readings }: MapViewProps) => {
           iconAnchor: [PIN_ANCHOR_OFFSET, PIN_ANCHOR_OFFSET],
         });
         marker.setIcon(newIcon);
-        marker.setPopupContent(
-          buildPopupHtml({ device, severity, reading }),
-        );
+        marker.setPopupContent(buildPopupHtml({ device, severity, reading }));
       }
     }
     // Drop markers whose device vanished from the roster. Stable
@@ -342,7 +342,9 @@ export const MapView = ({ devices, readings }: MapViewProps) => {
     <div
       ref={containerRef}
       data-testid="dashboard-map-view"
-      className={`h-[${MAP_HEIGHT_PX}px] w-full overflow-hidden rounded-input border border-neutral-border`}
+      // `h-[420px]` is inlined as a literal — same JIT caveat as
+      // `buildIconHtml`: Tailwind's scanner only sees static strings.
+      className="h-[420px] w-full overflow-hidden rounded-input border border-neutral-border"
       aria-label="Devices map"
       role="region"
     />

@@ -695,7 +695,7 @@ describe("Story 4.5 — AC: MUTATION_IN_FLIGHT (button disabled, double-click is
         expect(screen.getByTestId("incident-detail-acknowledge-button")).toBeDisabled();
       });
       expect(screen.getByTestId("incident-detail-acknowledge-button")).toHaveTextContent(
-        "Acknowledging...",
+        "Acknowledging…",
       );
       expect(ackCallCount).toBe(1);
 
@@ -1271,7 +1271,7 @@ describe("Story 4.6 — AC: MUTATION_IN_FLIGHT (Assign button disabled, double-c
       await waitFor(() => {
         expect(screen.getByTestId("incident-detail-assign-button")).toBeDisabled();
       });
-      expect(screen.getByTestId("incident-detail-assign-button")).toHaveTextContent("Assigning...");
+      expect(screen.getByTestId("incident-detail-assign-button")).toHaveTextContent("Assigning…");
       expect(assignCallCount).toBe(1);
 
       // Second click: button is `disabled`, fireEvent.click is a
@@ -2023,7 +2023,7 @@ describe("Story 4.7 — AC: MUTATION_IN_FLIGHT (Submit button disabled, double-c
         expect(screen.getByTestId("incident-detail-submit-result-button")).toBeDisabled();
       });
       expect(screen.getByTestId("incident-detail-submit-result-button")).toHaveTextContent(
-        "Submitting...",
+        "Submitting…",
       );
       expect(submitCallCount).toBe(1);
 

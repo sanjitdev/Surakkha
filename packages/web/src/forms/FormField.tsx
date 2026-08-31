@@ -31,8 +31,6 @@ interface FormFieldProps {
   readonly children: (controlProps: FormFieldRenderProps) => ReactNode;
 }
 
-const ERROR_COLOR = "#B42318"; /* severity.critical.text */
-
 export const FormField = ({
   label,
   helperText,
@@ -46,11 +44,7 @@ export const FormField = ({
   const helperId = helperText === undefined ? undefined : `${baseId}-helper`;
   const errorId = error === undefined ? undefined : `${baseId}-error`;
   const describedBy =
-    errorId !== undefined
-      ? errorId
-      : helperId !== undefined
-      ? helperId
-      : undefined;
+    errorId !== undefined ? errorId : helperId !== undefined ? helperId : undefined;
 
   return (
     <div className={["flex flex-col gap-1.5", className ?? ""].join(" ")}>
@@ -60,9 +54,7 @@ export const FormField = ({
       >
         <span>{label}</span>
         {isRequired ? (
-          <span className="text-md font-normal text-neutral-secondary">
-            (required)
-          </span>
+          <span className="text-md font-normal text-neutral-secondary">(required)</span>
         ) : null}
       </label>
       {children({
@@ -81,12 +73,7 @@ export const FormField = ({
           </p>
         )
       ) : (
-        <p
-          id={errorId}
-          role="alert"
-          className="text-md"
-          style={{ color: ERROR_COLOR }}
-        >
+        <p id={errorId} role="alert" className="text-md text-severity-critical-text">
           {error}
         </p>
       )}

@@ -26,15 +26,7 @@
  */
 import { Link } from "react-router-dom";
 
-const PAGE_BG = "#F5F7F9"; /* color.neutral.page */
-const CARD_BG = "#FFFFFF"; /* color.neutral.surface */
-const BORDER = "#E2E8F0"; /* color.neutral.border */
-const HEADLINE = "#0F172A"; /* color.neutral.body */
-const SECONDARY = "#475569"; /* color.neutral.secondary */
-const PRIMARY = "#1E5BB8"; /* color.primary */
-
-export const RBAC_DENIED_MESSAGE =
-  "You don't have access to this page. Contact an Admin.";
+export const RBAC_DENIED_MESSAGE = "You don't have access to this page. Contact an Admin.";
 
 export interface RbacDeniedProps {
   readonly headline?: string;
@@ -53,37 +45,15 @@ export const RbacDenied = ({
     data-testid="rbac-denied"
     role="status"
     aria-live="polite"
-    className="flex min-h-[60vh] items-center justify-center"
-    style={{ backgroundColor: PAGE_BG }}
+    className="flex min-h-[60vh] items-center justify-center bg-neutral-page"
   >
-    <article
-      data-testid="rbac-denied-card"
-      className="max-w-md rounded-card border p-8 text-center"
-      style={{
-        backgroundColor: CARD_BG,
-        borderColor: BORDER,
-        boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
-      }}
-    >
-      <h1
-        className="text-xl font-semibold"
-        style={{ color: HEADLINE }}
-      >
-        {headline}
-      </h1>
-      <p
-        className="mt-3 text-md"
-        style={{ color: SECONDARY }}
-      >
-        {message}
-      </p>
+    <article className="max-w-md rounded-card border border-neutral-border bg-neutral-surface p-8 text-center shadow-elevation-topbar">
+      <h1 className="text-xl font-semibold text-neutral-body">{headline}</h1>
+      <p className="mt-3 text-md text-neutral-secondary">{message}</p>
       <Link
         to={backHref}
         data-testid="rbac-denied-back-link"
-        className="rbac-denied-back mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
-        style={{
-          backgroundColor: PRIMARY,
-        }}
+        className="rbac-denied-back mt-6 inline-flex items-center gap-2 rounded-input bg-primary px-4 py-2 text-md font-medium text-white no-underline hover:bg-primary-hover focus:outline-none"
       >
         {backLabel}
       </Link>

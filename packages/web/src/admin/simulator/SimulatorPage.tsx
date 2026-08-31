@@ -110,14 +110,7 @@ export const SimulatorPage = () => {
     return (
       <div data-testid="simulator-page-status-error" className="flex flex-col gap-4">
         <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
-        <p
-          className="rounded-input border px-4 py-2 text-md"
-          style={{
-            backgroundColor: "#FEE2E2",
-            borderColor: "#7F1D1D",
-            color: "#7F1D1D",
-          }}
-        >
+        <p className="rounded-input border border-severity-critical-value bg-severity-critical-bg px-4 py-2 text-md text-severity-critical-text">
           Failed to load simulator status. Reload the page.
         </p>
       </div>
@@ -133,26 +126,14 @@ export const SimulatorPage = () => {
     return (
       <div data-testid="simulator-page-error" className="flex flex-col gap-4">
         <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
-        <p
-          className="rounded-input border px-4 py-2 text-md"
-          style={{
-            backgroundColor: "#FEE2E2",
-            borderColor: "#7F1D1D",
-            color: "#7F1D1D",
-          }}
-        >
+        <p className="rounded-input border border-severity-critical-value bg-severity-critical-bg px-4 py-2 text-md text-severity-critical-text">
           Failed to load devices.
         </p>
         <button
           type="button"
           data-testid="simulator-page-retry"
           onClick={() => void devicesQuery.refetch()}
-          className="rounded-input border px-4 py-2 text-md"
-          style={{
-            borderColor: "#E2E8F0",
-            color: "#0F172A",
-            backgroundColor: "#FFFFFF",
-          }}
+          className="rounded-input border border-neutral-border bg-neutral-surface px-4 py-2 text-md text-neutral-body"
         >
           Retry
         </button>

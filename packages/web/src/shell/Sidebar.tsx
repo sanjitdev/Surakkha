@@ -20,10 +20,6 @@ import { filterNav, NAV_GROUPS } from "./nav";
 import type { Role } from "@surakkha/shared/rbac";
 
 const SIDEBAR_WIDTH_PX = 240;
-const SIDEBAR_BG = "#0F172A"; /* color.neutral.sidebar */
-const SIDEBAR_TEXT = "#CBD5E1"; /* color.neutral.sidebar_text */
-const ACTIVE_ICON = "#38BDF8"; /* DESIGN.md §Components → Sidebar */
-const DRAWER_OVERLAY = "rgba(15, 23, 42, 0.45)";
 
 interface SidebarProps {
   readonly currentRole: Role | null;
@@ -33,10 +29,7 @@ interface SidebarProps {
 }
 
 const GroupLabel = ({ children }: { readonly children: string }) => (
-  <div
-    className="px-3 pt-6 pb-2 text-[11px] font-semibold uppercase tracking-wider"
-    style={{ color: SIDEBAR_TEXT }}
-  >
+  <div className="px-3 pt-6 pb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-sidebar-text">
     {children}
   </div>
 );
@@ -57,8 +50,8 @@ const NavRow = ({
       [
         "mx-3 my-px flex items-center gap-3 rounded-input px-3 py-2 text-md no-underline transition-colors",
         isActive
-          ? "bg-[#1E293B] text-white"
-          : `text-[${SIDEBAR_TEXT}] hover:text-white`,
+          ? "bg-neutral-sidebar-active text-neutral-sidebar-text-active"
+          : "text-neutral-sidebar-text hover:text-neutral-sidebar-text-active",
       ].join(" ")
     }
   >
@@ -66,10 +59,10 @@ const NavRow = ({
       <>
         <span
           aria-hidden
-          className="inline-block h-2 w-2 rounded-full"
-          style={{
-            backgroundColor: isActive ? ACTIVE_ICON : SIDEBAR_TEXT,
-          }}
+          className={[
+            "inline-block h-2 w-2 rounded-full",
+            isActive ? "bg-primary-active" : "bg-neutral-sidebar-text",
+          ].join(" ")}
         />
         <span>{label}</span>
       </>
@@ -88,8 +81,7 @@ const SidebarBody = ({
   return (
     <nav
       aria-label="Primary navigation"
-      className="flex h-full flex-col overflow-y-auto"
-      style={{ backgroundColor: SIDEBAR_BG }}
+      className="flex h-full flex-col overflow-y-auto bg-neutral-sidebar"
     >
       <GroupLabel>{visible[0]?.label ?? "Menu"}</GroupLabel>
       <ul className="m-0 list-none p-0">
@@ -106,11 +98,7 @@ const SidebarBody = ({
             <ul className="m-0 list-none p-0">
               {group.items.map((item) => (
                 <li key={item.to}>
-                  <NavRow
-                    to={item.to}
-                    label={item.label}
-                    onNavigate={onItemClick}
-                  />
+                  <NavRow to={item.to} label={item.label} onNavigate={onItemClick} />
                 </li>
               ))}
             </ul>
@@ -123,12 +111,7 @@ const SidebarBody = ({
 
 const styles: React.CSSProperties = { width: `${SIDEBAR_WIDTH_PX}px` };
 
-export const Sidebar = ({
-  currentRole,
-  mode,
-  isOpen,
-  onClose,
-}: SidebarProps) => {
+export const Sidebar = ({ currentRole, mode, isOpen, onClose }: SidebarProps) => {
   if (mode === "drawer") {
     return (
       <>
@@ -139,10 +122,9 @@ export const Sidebar = ({
           data-testid="sidebar-overlay"
           onClick={onClose}
           className={[
-            "fixed inset-0 z-40 transition-opacity",
+            "fixed inset-0 z-40 bg-neutral-sidebar/45 transition-opacity",
             isOpen ? "opacity-100" : "pointer-events-none opacity-0",
           ].join(" ")}
-          style={{ backgroundColor: DRAWER_OVERLAY }}
         />
         <aside
           data-testid="sidebar-drawer"

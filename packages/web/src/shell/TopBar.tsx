@@ -45,7 +45,7 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
       aria-label="Open navigation"
       data-testid="topbar-hamburger"
       onClick={onHamburger}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-input text-neutral-body hover:bg-neutral-page lg:hidden"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-input text-neutral-body hover:bg-neutral-page lg:hidden"
     >
       <span aria-hidden className="block h-0.5 w-5 bg-current" />
       <span aria-hidden className="mt-1 block h-0.5 w-5 bg-current" />

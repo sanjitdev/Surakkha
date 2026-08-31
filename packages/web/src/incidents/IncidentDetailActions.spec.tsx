@@ -152,7 +152,7 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)", 
     );
     const button = screen.getByTestId("incident-detail-acknowledge-button");
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Acknowledging...");
+    expect(button).toHaveTextContent("Acknowledging…");
   });
 
   it("fires onAcknowledge on click", () => {
@@ -340,7 +340,7 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
     );
     const button = screen.getByTestId("incident-detail-assign-button");
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Assigning...");
+    expect(button).toHaveTextContent("Assigning…");
   });
 });
 
@@ -528,7 +528,7 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
     );
     const button = screen.getByTestId("incident-detail-submit-result-button");
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("Submitting...");
+    expect(button).toHaveTextContent("Submitting…");
   });
 
   it("fires onSubmitResult with the selected outcome when a radio is picked + Submit is clicked (AC #5)", () => {

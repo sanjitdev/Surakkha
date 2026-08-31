@@ -25,7 +25,7 @@ interface SeverityTriple {
 interface ColorExt {
   readonly severity: Record<"healthy" | "warning" | "critical" | "offline", SeverityTriple>;
   readonly neutral: Record<string, string>;
-  readonly primary: { readonly DEFAULT: string; readonly hover: string };
+  readonly primary: { readonly DEFAULT: string; readonly hover: string; readonly active: string };
 }
 
 const colors = (config.theme?.extend?.colors ?? {}) as ColorExt;
@@ -83,24 +83,26 @@ describe("Story 1.2a — severity quintets (DESIGN.md §Colors)", () => {
 
 describe("Story 1.2a — primary gradient (AC1)", () => {
   it("primary_gradient resolves to the documented gradient", () => {
-    expect(images["primary-gradient"]).toBe(
-      "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)",
-    );
+    expect(images["primary-gradient"]).toBe("linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)");
   });
 
-  it("primary DEFAULT and hover match DESIGN.md", () => {
+  it("primary DEFAULT, hover, and active accent match DESIGN.md", () => {
     expect(colors.primary?.DEFAULT).toBe("#1E5BB8");
     expect(colors.primary?.hover).toBe("#1E40AF");
+    // DESIGN.md §Components → Sidebar: "nav icon tinted to #38BDF8"
+    expect(colors.primary?.active).toBe("#38BDF8");
   });
 });
 
 describe("Story 1.2a — neutral palette", () => {
-  it("registers the eight documented neutrals", () => {
+  it("registers the nine documented neutrals", () => {
     expect(colors.neutral?.surface).toBe("#FFFFFF");
     expect(colors.neutral?.page).toBe("#F5F7F9");
     expect(colors.neutral?.sidebar).toBe("#0F172A");
     expect(colors.neutral?.sidebar_text).toBe("#CBD5E1");
     expect(colors.neutral?.sidebar_text_active).toBe("#FFFFFF");
+    // DESIGN.md §Components → Sidebar: active row tint `#1E293B`
+    expect(colors.neutral?.sidebar_active).toBe("#1E293B");
     expect(colors.neutral?.border).toBe("#E2E8F0");
     expect(colors.neutral?.body).toBe("#0F172A");
     expect(colors.neutral?.secondary).toBe("#475569");
@@ -135,9 +137,7 @@ describe("Story 1.2a — elevation tokens (DESIGN.md §Elevation & Depth)", () =
     );
   });
   it("elevation.topbar matches the topbar shadow", () => {
-    expect(shadows["elevation-topbar"]).toBe(
-      "0 1px 2px rgba(15, 23, 42, 0.04)",
-    );
+    expect(shadows["elevation-topbar"]).toBe("0 1px 2px rgba(15, 23, 42, 0.04)");
   });
   it("elevation.banner_critical matches the banner glow", () => {
     expect(shadows["elevation-banner-critical"]).toBe("0 0 24px #EF444433");
@@ -200,7 +200,11 @@ describe("Story 1.2a AC2 — severity pill contrast", () => {
   // with severity `text` colour). DESIGN.md defines the `text` token
   // *specifically* as "the readable label colour against the matching
   // `bg` (≥ 4.5:1)" — so all four must clear WCAG 2.1 AA.
-  const cases: ReadonlyArray<{ readonly severity: string; readonly fg: string; readonly bg: string }> = [
+  const cases: ReadonlyArray<{
+    readonly severity: string;
+    readonly fg: string;
+    readonly bg: string;
+  }> = [
     { severity: "healthy", fg: "#0F6B3A", bg: "#E8F6EE" },
     { severity: "warning", fg: "#92400E", bg: "#FFF3DA" },
     { severity: "critical", fg: "#7F1D1D", bg: "#FEE2E2" },
@@ -221,7 +225,14 @@ describe("Story 1.2a AC3 — card metrics", () => {
   // We pin the three values directly from the config; the .metric-card
   // utility in index.css is the consumer.
   it("padding 20px (density.card_padding)", () => {
-    expect(((config.theme?.extend?.padding as Record<string, unknown>)?.density as Record<string, string>)?.card).toBe("20px");
+    expect(
+      (
+        (config.theme?.extend?.padding as Record<string, unknown>)?.density as Record<
+          string,
+          string
+        >
+      )?.card,
+    ).toBe("20px");
   });
   it("radius 10px (radius.card)", () => {
     expect(radius.card).toBe("10px");
@@ -232,6 +243,13 @@ describe("Story 1.2a AC3 — card metrics", () => {
     );
   });
   it("row padding is 12px (density.row_padding)", () => {
-    expect(((config.theme?.extend?.padding as Record<string, unknown>)?.density as Record<string, string>)?.row).toBe("12px");
+    expect(
+      (
+        (config.theme?.extend?.padding as Record<string, unknown>)?.density as Record<
+          string,
+          string
+        >
+      )?.row,
+    ).toBe("12px");
   });
 });

@@ -102,10 +102,7 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
   };
 
   return (
-    <div
-      data-testid="login-shell"
-      className="flex min-h-screen flex-col lg:flex-row"
-    >
+    <div data-testid="login-shell" className="flex min-h-screen flex-col lg:flex-row">
       {/* Hero panel — hidden below 1024px. */}
       <aside
         data-testid="login-hero"
@@ -125,8 +122,8 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
             Real-time water-safety monitoring for primary schools.
           </p>
           <p className="max-w-md text-md leading-relaxed text-white/85">
-            Track sensor readings, triage incidents, and assign field
-            technicians from one calm, role-aware surface.
+            Track sensor readings, triage incidents, and assign field technicians from one calm,
+            role-aware surface.
           </p>
         </div>
         <p className="text-md text-white/70">Surakkha</p>
@@ -149,12 +146,8 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
           className="w-full max-w-sm space-y-5"
         >
           <header className="space-y-1">
-            <h1 className="text-2xl font-semibold text-neutral-body">
-              Sign in
-            </h1>
-            <p className="text-md text-neutral-secondary">
-              Use your work email and password.
-            </p>
+            <h1 className="text-2xl font-semibold text-neutral-body">Sign in</h1>
+            <p className="text-md text-neutral-secondary">Use your work email and password.</p>
           </header>
 
           <FormField label="Email" isRequired error={emailError ?? undefined}>
@@ -192,8 +185,7 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
             <p
               data-testid="login-submit-error"
               role="alert"
-              className="text-md"
-              style={{ color: "#B42318" /* severity.critical.text */ }}
+              className="text-md text-severity-critical-text"
             >
               {submitError}
             </p>
@@ -207,10 +199,6 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
           >
             {submitting ? "Signing in\u2026" : "Sign in"}
           </button>
-
-          <p className="text-md text-neutral-secondary">
-            Story 1.4 will wire this to the live authentication endpoint.
-          </p>
         </form>
       </main>
     </div>

@@ -88,6 +88,7 @@ const tailwindConfig = {
           sidebar: "#0F172A",
           sidebar_text: "#CBD5E1",
           sidebar_text_active: "#FFFFFF",
+          sidebar_active: "#1E293B",
           border: "#E2E8F0",
           body: "#0F172A",
           secondary: "#475569",
@@ -96,6 +97,11 @@ const tailwindConfig = {
         primary: {
           DEFAULT: "#1E5BB8",
           hover: "#1E40AF",
+          // DESIGN.md §Components → Sidebar: "nav icon tinted to #38BDF8"
+          // — brand-tinted active-state accent for nav rows + sidebar
+          // icons. Distinct from `primary.DEFAULT` so an inactive navy
+          // dot doesn't compete with the sidebar's dark surface.
+          active: "#38BDF8",
         },
       },
       // Custom color slot for `bg-primary_gradient` etc. — defined as a

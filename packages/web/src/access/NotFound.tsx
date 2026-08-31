@@ -23,13 +23,6 @@
  */
 import { Link } from "react-router-dom";
 
-const PAGE_BG = "#F5F7F9";
-const CARD_BG = "#FFFFFF";
-const BORDER = "#E2E8F0";
-const HEADLINE = "#0F172A";
-const SECONDARY = "#475569";
-const PRIMARY = "#1E5BB8";
-
 export interface NotFoundProps {
   readonly headline?: string;
   readonly message?: string;
@@ -47,31 +40,15 @@ export const NotFound = ({
     data-testid="not-found"
     role="status"
     aria-live="polite"
-    className="flex min-h-[60vh] items-center justify-center"
-    style={{ backgroundColor: PAGE_BG }}
+    className="flex min-h-[60vh] items-center justify-center bg-neutral-page"
   >
-    <article
-      data-testid="not-found-card"
-      className="max-w-md rounded-card border p-8 text-center"
-      style={{
-        backgroundColor: CARD_BG,
-        borderColor: BORDER,
-        boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
-      }}
-    >
-      <h1 className="text-xl font-semibold" style={{ color: HEADLINE }}>
-        {headline}
-      </h1>
-      <p className="mt-3 text-md" style={{ color: SECONDARY }}>
-        {message}
-      </p>
+    <article className="max-w-md rounded-card border border-neutral-border bg-neutral-surface p-8 text-center shadow-elevation-topbar">
+      <h1 className="text-xl font-semibold text-neutral-body">{headline}</h1>
+      <p className="mt-3 text-md text-neutral-secondary">{message}</p>
       <Link
         to={backHref}
         data-testid="not-found-back-link"
-        className="mt-6 inline-flex items-center gap-2 rounded-input px-4 py-2 text-md font-medium text-white no-underline focus:outline-none"
-        style={{
-          backgroundColor: PRIMARY,
-        }}
+        className="mt-6 inline-flex items-center gap-2 rounded-input bg-primary px-4 py-2 text-md font-medium text-white no-underline hover:bg-primary-hover focus:outline-none"
       >
         {backLabel}
       </Link>

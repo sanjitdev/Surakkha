@@ -50,6 +50,30 @@ import { SEEDED_TECHNICIAN_IDS } from "./seededTechnicians";
 const TECH_LABEL_TAIL_LENGTH = 8;
 
 /**
+ * Shared class string for every primary CTA in this file
+ * (Acknowledge / Assign / Submit Result / Reopen). The project uses
+ * `bg-primary` (the design-system indigo `#1E5BB8`) as the canonical
+ * CTA fill — the same colour as `LoginShell`'s Sign-in button. The
+ * disabled treatment (`bg-primary/60 cursor-not-allowed`) is the
+ * pattern `LoginShell` already uses.
+ *
+ * The `border-primary` pair is for parity with the previous slate
+ * styling (which used a 1px dark border); `bg-primary` is the same
+ * `#1E5BB8` so the border is invisible against the fill on light
+ * mode but survives in dark mode where the surface darkens. The pair
+ * reads as a single surface in both modes.
+ *
+ * Critique `/impeccable critique packages/web` (2026-08-31) P0
+ * finding: every action button in this file was using raw
+ * `border-slate-900 bg-slate-900 hover:bg-slate-700
+ * disabled:bg-slate-400` — Tailwind defaults, not project tokens.
+ * Extracting the constant keeps the four sites in lock-step so a
+ * future token rename touches one line.
+ */
+const ACTION_BUTTON_BASE =
+  "border-primary bg-primary hover:bg-primary-hover disabled:bg-primary/60 disabled:cursor-not-allowed";
+
+/**
  * Props for `<IncidentDetailActions />`.
  *
  * The three mutations are owned by the page; this component receives
@@ -161,16 +185,10 @@ export const IncidentDetailActions = ({
           onClick={onAcknowledge}
           className={[
             "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
-            // Slate palette: match the codebase's slate tokens
-            // (`text-slate-900` body, `border-slate-300` subtle border).
-            // Disabled state uses `disabled:bg-slate-400` so the
-            // button reads as visibly muted while the mutation is
-            // in flight — matches ThresholdsPage's deactivate affordance.
-            "border-slate-900 bg-slate-900 hover:bg-slate-700",
-            "disabled:bg-slate-400 disabled:cursor-not-allowed",
+            ACTION_BUTTON_BASE,
           ].join(" ")}
         >
-          {isAck ? "Acknowledging..." : "Acknowledge"}
+          {isAck ? "Acknowledging…" : "Acknowledge"}
         </button>
       ) : null}
       {canAssign ? <AssignForm isPending={isAssign} onAssign={onAssign} /> : null}
@@ -251,11 +269,10 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
           onClick={() => onAssign(selectedAssignee)}
           className={[
             "rounded-input border px-4 py-2 text-sm font-medium text-white",
-            "border-slate-900 bg-slate-900 hover:bg-slate-700",
-            "disabled:bg-slate-400 disabled:cursor-not-allowed",
+            ACTION_BUTTON_BASE,
           ].join(" ")}
         >
-          {isPending ? "Assigning..." : "Assign"}
+          {isPending ? "Assigning…" : "Assign"}
         </button>
       </div>
     </div>
@@ -279,6 +296,24 @@ const AssignForm = ({ isPending, onAssign }: AssignFormProps) => {
  * rendered radio order top-to-bottom.
  */
 const INSPECTION_OUTCOMES: readonly InspectionOutcome[] = ["SAFE", "UNSAFE", "MONITORING"];
+
+/**
+ * Human-language labels for the inspection outcome radios. The
+ * uppercase enum (`SAFE` / `UNSAFE` / `MONITORING`) is the wire shape;
+ * the visible label is the consequence the Operator sees on the
+ * dashboard when the Technician fires this choice. Critique Sam-
+ * persona finding (2026-08-31): a Technician at a school water tank
+ * at 11pm deserves to see "Marked unsafe" before clicking, not the
+ * raw enum.
+ *
+ * `code` is rendered in muted secondary text alongside the label so the
+ * enum value remains recognisable to anyone debugging the audit log.
+ */
+const OUTCOME_LABEL: Readonly<Record<InspectionOutcome, string>> = {
+  SAFE: "Marked safe",
+  UNSAFE: "Marked unsafe",
+  MONITORING: "Marked for monitoring",
+};
 
 /**
  * Inline Submit Result form — three radio inputs (one per outcome)
@@ -340,7 +375,10 @@ const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) 
               onChange={() => setSelectedOutcome(outcome)}
               className="h-4 w-4 disabled:cursor-not-allowed"
             />
-            <span>{outcome}</span>
+            {/* Visible label = human-language consequence; enum code
+                in muted text alongside for audit-log traceability. */}
+            <span>{OUTCOME_LABEL[outcome]}</span>
+            <span className="text-xs text-neutral-secondary">({outcome})</span>
           </label>
         ))}
       </div>
@@ -353,11 +391,10 @@ const SubmitResultForm = ({ isPending, onSubmitResult }: SubmitResultFormProps) 
         }}
         className={[
           "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
-          "border-slate-900 bg-slate-900 hover:bg-slate-700",
-          "disabled:bg-slate-400 disabled:cursor-not-allowed",
+          ACTION_BUTTON_BASE,
         ].join(" ")}
       >
-        {isPending ? "Submitting..." : "Submit result"}
+        {isPending ? "Submitting…" : "Submit result"}
       </button>
     </fieldset>
   );
@@ -456,11 +493,10 @@ const ReopenForm = ({ isPending, onReopen }: ReopenFormProps) => {
         }}
         className={[
           "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
-          "border-slate-900 bg-slate-900 hover:bg-slate-700",
-          "disabled:bg-slate-400 disabled:cursor-not-allowed",
+          ACTION_BUTTON_BASE,
         ].join(" ")}
       >
-        {isPending ? "Reopening..." : "Reopen"}
+        {isPending ? "Reopening…" : "Reopen"}
       </button>
     </fieldset>
   );

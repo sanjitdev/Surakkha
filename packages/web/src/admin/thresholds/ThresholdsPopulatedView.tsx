@@ -47,8 +47,7 @@ const RuleRowRenderer = ({
         type="button"
         data-testid={`thresholds-edit-${row.id}`}
         onClick={() => onEdit(row)}
-        className="mr-2 rounded-input border px-2 py-1 text-sm"
-        style={{ borderColor: "#E2E8F0" }}
+        className="mr-2 rounded-input border border-neutral-border px-2 py-1 text-sm"
       >
         Edit
       </button>
@@ -57,8 +56,7 @@ const RuleRowRenderer = ({
           type="button"
           data-testid={`thresholds-deactivate-${row.id}`}
           onClick={() => onDeactivate(row)}
-          className="rounded-input border px-2 py-1 text-sm"
-          style={{ borderColor: "#E2E8F0" }}
+          className="rounded-input border border-neutral-border px-2 py-1 text-sm"
         >
           Deactivate
         </button>
@@ -67,8 +65,7 @@ const RuleRowRenderer = ({
           type="button"
           data-testid={`thresholds-activate-${row.id}`}
           onClick={() => onActivate(row)}
-          className="rounded-input border px-2 py-1 text-sm"
-          style={{ borderColor: "#E2E8F0" }}
+          className="rounded-input border border-neutral-border px-2 py-1 text-sm"
         >
           Activate
         </button>
@@ -133,23 +130,14 @@ export const ThresholdsPopulatedView = ({
             type="button"
             data-testid="thresholds-new-rule"
             onClick={() => setCreating(true)}
-            className="rounded-input border px-4 py-2 text-md"
-            style={{
-              borderColor: "#0F172A",
-              color: "#FFFFFF",
-              backgroundColor: "#0F172A",
-            }}
+            className="rounded-input border border-primary bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
           >
             New Rule
           </button>
         </div>
       </header>
 
-      <table
-        data-testid="thresholds-table"
-        className="w-full border-collapse"
-        style={{ backgroundColor: "#FFFFFF" }}
-      >
+      <table data-testid="thresholds-table" className="w-full border-collapse bg-neutral-surface">
         <thead>
           <tr>
             <th className="border-b px-2 py-1 text-left">Device</th>
