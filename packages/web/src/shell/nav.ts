@@ -9,8 +9,8 @@
  * Source of truth: EXPERIENCE.md §Information Architecture (the 14-route
  * inventory + the three group tables).
  *
- * IMPORTANT: this list is the *visible* set. Role gating is the only
- * filter applied at the shell layer; Story 1.5's RBAC middleware enforces
+ * This list is the *visible* set. Role gating is the only filter
+ * applied at the shell layer; Story 1.5's RBAC middleware enforces
  * the same matrix server-side. Items hidden here are not reachable from
  * the sidebar — direct URL hits fall through to the RBAC denied state
  * (Story 1.8 / EXPERIENCE.md §RBAC denied).
@@ -67,16 +67,11 @@ export const NAV_GROUPS: readonly NavGroup[] = [
  * Filter a nav group by role. `null` roles means "any authenticated role"
  * and therefore always passes the filter.
  */
-export const filterNavGroup = (
-  group: NavGroup,
-  role: Role | null,
-): NavGroup => {
+export const filterNavGroup = (group: NavGroup, role: Role | null): NavGroup => {
   if (role === null) {
     return group;
   }
-  const items = group.items.filter(
-    (item) => item.roles === null || item.roles.includes(role),
-  );
+  const items = group.items.filter((item) => item.roles === null || item.roles.includes(role));
   return { label: group.label, items };
 };
 
@@ -85,10 +80,8 @@ export const filterNavGroup = (
  * to `items: []` (the sidebar renders an empty group rather than the
  * group label alone).
  */
-export const filterNav = (
-  groups: readonly NavGroup[],
-  role: Role | null,
-): readonly NavGroup[] => groups.map((g) => filterNavGroup(g, role));
+export const filterNav = (groups: readonly NavGroup[], role: Role | null): readonly NavGroup[] =>
+  groups.map((g) => filterNavGroup(g, role));
 
 /**
  * Look up the nav item that owns a given path. Used by the route
@@ -97,10 +90,7 @@ export const filterNav = (
  * in lockstep. Returns `null` when the path is not in the IA registry
  * (in which case the route gate does not deny).
  */
-export const findNavItemForPath = (
-  groups: readonly NavGroup[],
-  path: string,
-): NavItem | null => {
+export const findNavItemForPath = (groups: readonly NavGroup[], path: string): NavItem | null => {
   for (const group of groups) {
     for (const item of group.items) {
       if (item.to === path) return item;

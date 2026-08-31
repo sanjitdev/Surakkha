@@ -128,7 +128,7 @@ app.use(authenticate);
  * `mountAlertRouters` + `buildIncidentsRouterMount` calls below can
  * capture `io` directly. The TCP listener is bound inside `boot()`
  * (after `initializeRuleEngine` populates the rule cache); this
- * block just wires the Socket.IO server to the HTTP server.
+ * block wires the Socket.IO server to the HTTP server.
  *
  * Story 2.6 — declare the `/dashboard` namespace so the web's
  * `io(baseUrl + "/dashboard", ...)` handshake is accepted by the

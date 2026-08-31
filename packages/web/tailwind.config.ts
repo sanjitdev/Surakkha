@@ -201,9 +201,10 @@ const tailwindConfig = {
   plugins: [],
 } as const satisfies Config;
 
-/* eslint-disable no-restricted-syntax -- see header. This is Tailwind's
-   canonical config shape; the named binding trips the
-   `no-restricted-syntax` rule that wants a PascalCase or camelCase
-   identifier for default-exported bindings. Tailwind itself expects the
-   default-export identifier pattern, so we accept the hint here. */
+// Tailwind's canonical config shape requires a named export so the
+// downstream tool can detect it. We accept the hint that the binding
+// name `tailwindConfig` is neither PascalCase nor camelCase — the
+// rule's design intent is filename-derived naming, and this file is
+// the design-token source of truth (the convention is to keep the
+// named binding identical to the file's purpose).
 export default tailwindConfig;

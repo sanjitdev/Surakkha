@@ -293,7 +293,7 @@ export const evaluateRules = (
  * rejection; valid rows still load). Also exported for direct use
  * by any future site that needs the same guard.
  *
- * NOTE: this is a regular throwing function rather than an
+ * This is a regular throwing function rather than an
  * `asserts value is RuleRuleType` signature so it can be called on
  * a property-access expression (`row.ruleType`) without hitting
  * TypeScript's TS2775 constraint that every name in the call target

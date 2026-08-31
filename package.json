@@ -12,8 +12,9 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint && pnpm lint:rbac",
+    "lint": "pnpm -r lint && pnpm lint:rbac && pnpm lint:prose",
     "lint:rbac": "node scripts/lint-rbac-matrix.mjs",
+    "lint:prose": "node scripts/lint-prose.mjs",
     "lint:staged": "lint-staged",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -47,7 +48,11 @@
   },
   "lint-staged": {
     "*.{ts,tsx,mts,cts}": [
-      "eslint --no-fix --max-warnings 0 --no-warn-ignored"
+      "eslint --no-fix --max-warnings 0 --no-warn-ignored",
+      "node scripts/lint-prose.mjs"
+    ],
+    "*.md": [
+      "node scripts/lint-prose.mjs"
     ]
   }
 }

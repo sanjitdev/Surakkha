@@ -47,7 +47,7 @@ const formatHeading = (count: number): string =>
  *  `deviceLabel` is the device's human name (joined from the
  *  device roster cache, falls back to `Unnamed device` when the
  *  cache hasn't loaded — see `useSeverityBanner.deviceNameById`).
- *  UUID fallback would still surface the noise we just removed.
+ *  UUID fallback would still surface the noise this fix removed.
  */
 const formatSingleBody = (incident: IncidentPayload, deviceLabel: string): string =>
   `Latest: ${deviceLabel} \u00b7 ${incident.metric} \u00b7 ${incident.value}`;

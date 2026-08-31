@@ -11,7 +11,7 @@
  *   - `exp`: now + 8 hours (USER_ACCESS_TOKEN_TTL_SECONDS)
  *
  * `JWT_SECRET` is validated eagerly by `assertJwtSecret()` at the api
- * entry point; this module just reads from the same env var via
+ * entry point; this module reads from the same env var via
  * `getJwtSecret()` so a unit test can inject a deterministic secret.
  */
 import {
@@ -23,7 +23,6 @@ import {
 } from "@surakkha/shared/auth";
 import { type Role } from "@surakkha/shared/rbac";
 import jwt from "jsonwebtoken";
-
 
 export const JWT_ISSUER = "surakkha-api" as const;
 
@@ -73,9 +72,7 @@ export const issueAccessToken = (
     sub: input.userId,
     scope: input.scope ?? USER_TOKEN_DEFAULT_SCOPE,
   };
-  const payload = input.role === undefined
-    ? basePayload
-    : { ...basePayload, role: input.role };
+  const payload = input.role === undefined ? basePayload : { ...basePayload, role: input.role };
   const token = jwt.sign(payload, getSecret(), {
     algorithm: "HS256",
     expiresIn: USER_ACCESS_TOKEN_TTL_SECONDS,
@@ -91,15 +88,9 @@ export const issueAccessToken = (
  * revocation list.
  */
 export const issueRefreshToken = (userId: string): string =>
-  jwt.sign(
-    { sub: userId, kind: "refresh" },
-    getSecret(),
-    { algorithm: "HS256", expiresIn: "30d" },
-  );
+  jwt.sign({ sub: userId, kind: "refresh" }, getSecret(), { algorithm: "HS256", expiresIn: "30d" });
 
-export const verifyRefreshToken = (
-  token: string,
-): { readonly userId: string } | null => {
+export const verifyRefreshToken = (token: string): { readonly userId: string } | null => {
   try {
     const decoded = jwt.verify(token, getSecret(), { algorithms: ["HS256"] });
     if (
@@ -164,10 +155,7 @@ export type VerifyIngestResult =
   | { readonly kind: "scope_fail" }
   | { readonly kind: "sub_mismatch" };
 
-export const verifyIngestClaims = (
-  token: string,
-  expectedSub: string,
-): VerifyIngestResult => {
+export const verifyIngestClaims = (token: string, expectedSub: string): VerifyIngestResult => {
   let decoded: unknown;
   try {
     decoded = jwt.verify(token, getSecret(), {

@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 # Surakkha pre-commit hook (managed by husky).
-# Runs ESLint (--max-warnings 0) on staged TS/TSX/MTS/CTS files only.
+# Runs ESLint (--max-warnings 0) + prose-lint on staged source files only.
+#
+# Two checks, both run via `lint-staged`:
+#   - ESLint for structural issues (TS rules + React + a11y + import)
+#   - prose-lint for AI-slop signatures (hedge words, all-caps shouting)
 #
 # Per CONTRIBUTING.md, "pnpm lint must pass locally" is a merge-blocker.
 # This hook runs only against files in the user's current diff, so:

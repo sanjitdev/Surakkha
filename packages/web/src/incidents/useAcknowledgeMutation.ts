@@ -115,10 +115,10 @@ const HTTP_NETWORK_THROW = 0;
  * about the row; 5xx → server is broken, leave the row alone so
  * the operator can retry).
  *
- * NOTE: 401 is classified separately and explicitly EXCLUDED from
- * the row-invalidation branch — see `onError` below. A 401 means
- * the refresh token is exhausted and the operator must re-auth
- * before any retry can succeed; the row is presumed unchanged.
+ * 401 is classified separately and explicitly EXCLUDED from the
+ * row-invalidation branch — see `onError` below. A 401 means the
+ * refresh token is exhausted and the operator must re-auth before
+ * any retry can succeed; the row is presumed unchanged.
  */
 const HTTP_4XX_MIN = 400;
 const HTTP_4XX_MAX = 500;

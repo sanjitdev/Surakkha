@@ -25,16 +25,13 @@
  *   `groupBy({ by: ["deviceId"], _max: { serverReceivedAt: true } })`
  *   followed by a `findMany` for the matching rows. The simpler
  *   `findFirst({ orderBy: serverReceivedAt desc })` per device is
- *   N round-trips — we use the grouped query so the surface stays
- *   linear as devices scale.
+ *   N round-trips — the grouped query keeps the surface linear as
+ *   devices scale.
  *
  * The function is injectable via `LatestReadingDeps.listLatest` so
  * tests do not require a live Prisma + Postgres instance.
  */
-import {
-  type LatestReadingPayload,
-  type LatestReadingsResponse,
-} from "@surakkha/shared/dashboard";
+import { type LatestReadingPayload, type LatestReadingsResponse } from "@surakkha/shared/dashboard";
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 import express, { type Response, type Router } from "express";
 
@@ -101,13 +98,15 @@ export const buildLatestReadingsRouter = (deps: LatestReadingsDeps): Router => {
  * Lazy-imported so the unit-test suite can mount this router
  * without a real Prisma client.
  */
-export const buildPrismaLatestReadings = async (
-  resolveClient: () => Promise<{
-    readonly $queryRaw: (query: TemplateStringsArray) => Promise<unknown[]>;
-  } | null>,
-): Promise<() => Promise<readonly LatestReadingPayload[]>> => async () => {
-  const client = await resolveClient();
-  if (client === null) return [];
+export const buildPrismaLatestReadings =
+  async (
+    resolveClient: () => Promise<{
+      readonly $queryRaw: (query: TemplateStringsArray) => Promise<unknown[]>;
+    } | null>,
+  ): Promise<() => Promise<readonly LatestReadingPayload[]>> =>
+  async () => {
+    const client = await resolveClient();
+    if (client === null) return [];
     // Postgres DISTINCT ON keeps one row per device_id (the one with
     // the highest serverReceivedAt). Returns the joined Device.name
     // alongside the reading. The columns mirror the prisma
@@ -125,22 +124,22 @@ export const buildPrismaLatestReadings = async (
       JOIN "Device" d ON d."id" = r."deviceId"
      ORDER BY r."deviceId", r."serverReceivedAt" DESC
   `) as ReadonlyArray<{
-    readonly deviceId: string;
-    readonly name: string | null;
-    readonly ts: Date;
-    readonly serverReceivedAt: Date;
-    readonly metrics: TelemetryMetrics;
-    readonly flags: string[];
-  }>;
-  return rows.map((row) => ({
-    device_id: row.deviceId,
-    name: row.name,
-    ts: row.ts instanceof Date ? row.ts.getTime() : Number(row.ts),
-    server_received_at:
-      row.serverReceivedAt instanceof Date
-        ? row.serverReceivedAt.toISOString()
-        : new Date(row.serverReceivedAt).toISOString(),
-    metrics: row.metrics,
-    flags: row.flags ?? [],
-  }));
-};
+      readonly deviceId: string;
+      readonly name: string | null;
+      readonly ts: Date;
+      readonly serverReceivedAt: Date;
+      readonly metrics: TelemetryMetrics;
+      readonly flags: string[];
+    }>;
+    return rows.map((row) => ({
+      device_id: row.deviceId,
+      name: row.name,
+      ts: row.ts instanceof Date ? row.ts.getTime() : Number(row.ts),
+      server_received_at:
+        row.serverReceivedAt instanceof Date
+          ? row.serverReceivedAt.toISOString()
+          : new Date(row.serverReceivedAt).toISOString(),
+      metrics: row.metrics,
+      flags: row.flags ?? [],
+    }));
+  };

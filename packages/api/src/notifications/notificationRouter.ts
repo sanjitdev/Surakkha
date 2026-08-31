@@ -309,7 +309,7 @@ const ADMIN_NOTIFICATION_TAKE_LIMIT = 100;
  * `?severity=` (empty string) becomes `[""]` — the helper then
  * filters the empties out and `safeParse` does NOT throw on a
  * request with no chips selected (chip toggle off is a valid
- * state — it just means "all severities").
+ * state — meaning "all severities").
  */
 const adminQuerySchema = z.object({
   severity: z

@@ -20,7 +20,7 @@
  * wire shape. The Kanban UI's column projection lives in
  * `@surakkha/shared/incident` (`projectKanbanColumn(state, severity)`)
  * and is computed client-side at consumption time; this endpoint
- * just emits the raw rows sorted by opened_at DESC.
+ * emits the raw rows sorted by opened_at DESC.
  *
  * Story 2.6's `/api/incidents/recent` is unchanged — it remains the
  * dashboard's bounded preview (default limit=10, 24h window). The

@@ -15,7 +15,7 @@
  *     the KPI band and the map markers consume. The row never
  *     reads `Device.name` so there is no `offline` bucket here; a
  *     device whose latest reading lapsed past `OFFLINE_THRESHOLD_MS`
- *     simply does not get a row (the readings cache keeps the freshest
+ *     does not get a row (the readings cache keeps the freshest
  *     payload per device).
  *   - Critical rows carry the UX-DR-2 visual hierarchy: 4px critical
  *     left border + 3px critical inner border + 8px outer critical

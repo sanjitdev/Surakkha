@@ -5,7 +5,7 @@
  * surfaces this component when the api returns 404. Mirrors the
  * `RbacDenied` shape from `access/RbacDenied.tsx` so the two
  * empty-state pages share the same visual language; differs in
- * copy (no RBAC framing — the user is authenticated, just looking
+ * copy (no RBAC framing — the user is authenticated and is looking
  * for an entity that doesn't exist).
  *
  * Why a dedicated component (and not a re-use of `RbacDenied`):

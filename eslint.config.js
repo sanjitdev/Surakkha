@@ -61,14 +61,8 @@ const baseTsRules = {
   "no-param-reassign": ["error", { props: true }],
 
   // --- Size rules (AGENTS.md §1.1) ----------------------------------------
-  "max-lines": [
-    "warn",
-    { max: 500, skipComments: true, skipBlankLines: true },
-  ],
-  "max-lines-per-function": [
-    "warn",
-    { max: 200, skipComments: true, skipBlankLines: true },
-  ],
+  "max-lines": ["warn", { max: 500, skipComments: true, skipBlankLines: true }],
+  "max-lines-per-function": ["warn", { max: 200, skipComments: true, skipBlankLines: true }],
   "max-params": ["warn", { max: 3 }],
   "max-classes-per-file": ["error", { max: 1 }],
   complexity: ["warn", { max: 10 }],
@@ -79,10 +73,7 @@ const baseTsRules = {
   "no-magic-numbers": [
     "warn",
     {
-      ignore: [
-        -1, 0, 1, 2, 4, 5, 32, 64, 100, 200, 420, 768, 900, 1024, 1280,
-        1000, 2000, 5000,
-      ],
+      ignore: [-1, 0, 1, 2, 4, 5, 32, 64, 100, 200, 420, 768, 900, 1024, 1280, 1000, 2000, 5000],
       ignoreArrayIndexes: true,
       ignoreDefaultValues: true,
       ignoreClassFieldInitialValues: true,
@@ -251,6 +242,11 @@ export default [
       "_bmad/**",
       "_bmad-output/**/.working/**",
       "pnpm-lock.yaml",
+      // Node tooling scripts use `process` / `URL` / `node:fs` etc.
+      // They are linted by their own runner (e.g. `node scripts/lint-prose.mjs`)
+      // rather than ESLint's TS rule set, which would false-positive on every
+      // Node global.
+      "scripts/**",
     ],
   },
 
@@ -359,7 +355,8 @@ export default [
         "error",
         {
           selector: "Program > ExportDefaultDeclaration > Identifier",
-          message: "Default-exported identifiers must be PascalCase (component) or camelCase (utility). Check the file name.",
+          message:
+            "Default-exported identifiers must be PascalCase (component) or camelCase (utility). Check the file name.",
         },
       ],
     },
@@ -413,6 +410,24 @@ export default [
     },
   },
 
+  // 4b. JSX hex-literal guard for packages/web (separate block so it
+  // doesn't merge with the unicorn `no-restricted-syntax` array and
+  // confuse ESLint's unused-disable directive tracker).
+  {
+    files: ["packages/web/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "JSXAttribute[name.name='style'] ObjectExpression Property[key.name=/^(backgroundColor|color|borderColor)$/] Literal[value=/^#[0-9a-fA-F]{3,8}$/]",
+          message:
+            "Hex literal in JSX style prop bypasses the design-token system. Use a Tailwind class (bg-neutral-surface, text-severity-critical-value, border-neutral-border, etc.). If a gradient is required, use backgroundImage (Tailwind has no gradient utility).",
+        },
+      ],
+    },
+  },
+
   // 5. Node-specific rules for packages/api and packages/simulator.
   {
     files: ["packages/api/**/*.ts", "packages/simulator/**/*.ts"],
@@ -450,7 +465,11 @@ export default [
   //    Prevents one epic's source from importing types from another epic's
   //    directory. Cross-epic types MUST live in packages/shared.
   {
-    files: ["packages/api/src/**/*.ts", "packages/web/src/**/*.ts", "packages/simulator/src/**/*.ts"],
+    files: [
+      "packages/api/src/**/*.ts",
+      "packages/web/src/**/*.ts",
+      "packages/simulator/src/**/*.ts",
+    ],
     plugins: { import: importPlugin },
     rules: {
       "import/no-restricted-paths": [
@@ -532,7 +551,16 @@ export default [
 
   // 7. Tests: relax rules that fight test code.
   {
-    files: ["**/__tests__/**/*.ts", "**/__tests__/**/*.tsx", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/test/**/*.ts", "**/test/**/*.tsx"],
+    files: [
+      "**/__tests__/**/*.ts",
+      "**/__tests__/**/*.tsx",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/test/**/*.ts",
+      "**/test/**/*.tsx",
+    ],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",

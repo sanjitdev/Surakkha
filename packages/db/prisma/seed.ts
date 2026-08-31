@@ -28,8 +28,9 @@
  * `name` is a v1 placeholder derived from the device_id's last 4 hex
  * digits; the Story 2.3 school/facility metadata (the canonical human
  * label) is a later story that fills `School.label`. v1 only needs
- * something stable for the admin tab to render. We use last-4-hex
- * rather than last-1-hex so two UUIDs that share a trailing hex digit
+ * something stable for the admin tab to render. The seed uses
+ * last-4-hex rather than last-1-hex so two UUIDs that share a
+ * trailing hex digit
  * don't collide in the admin tab's row label.
  *
  * The seed reads `packages/simulator/src/devices.json` at runtime

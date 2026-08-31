@@ -12,7 +12,7 @@
  *     - log via `console.error` with the documented prefix
  *       `[rules] boot: hydrate failed`.
  *     - install `NOOP_HOOKS` via `setIngestHooks` so the api
- *       keeps serving HTTP + WS requests, just without rule
+ *       keeps serving HTTP + WS requests, without rule
  *       evaluation.
  *
  * Story 3.4 — boot guard:

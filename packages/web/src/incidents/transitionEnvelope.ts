@@ -61,7 +61,8 @@ const CONCURRENCY_MESSAGE = "Modified by another operator — refresh and retry"
 /**
  * Per-state human label — used by the typed-miss branch to
  * produce "Cannot acknowledge a {label} incident". Kept
- * lowercase so the template sentence reads naturally.
+ * lowercase so the template sentence reads as the rest of the
+ * banner copy does.
  */
 const STATE_HUMAN: Readonly<Record<IncidentState, string>> = {
   OPEN: "open",
@@ -77,8 +78,8 @@ const STATE_HUMAN: Readonly<Record<IncidentState, string>> = {
 /**
  * Per-verb present participle — used inside
  * `"Cannot ${verbLabel} a ${stateLabel} incident"`. `submit_result`
- * uses "submit a result for" (longer verb form) so the sentence
- * reads naturally; the others use the bare verb.
+ * uses "submit a result for" (longer verb form) to keep the
+ * sentence grammatical; the others use the bare verb.
  */
 const VERB_PRESENT: Readonly<Record<TransitionVerb, string>> = {
   acknowledge: "acknowledge",
