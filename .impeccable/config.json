@@ -1,3 +1,16 @@
 {
-  "buildPath": "code"
+  "buildPath": "code",
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      "border-l-4:severity-driven-accent",
+      "border-l-2:severity-driven-accent",
+      "border-l-3:severity-driven-accent",
+      "font-family: Inter:legibility-first-product-choice"
+    ],
+    "designSystem": {
+      "enabled": true
+    }
+  }
 }

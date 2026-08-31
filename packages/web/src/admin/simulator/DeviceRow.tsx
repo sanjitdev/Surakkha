@@ -27,11 +27,6 @@ import {
   useSwitchScenario,
 } from "./useSimulatorDevices";
 
-const BADGE_BG = "#E8F6EE";
-const BADGE_TEXT = "#0F6B3A";
-
-const PRIMARY = "#1E5BB8";
-
 export interface DeviceRowProps {
   readonly device: SimulatorDevice;
   readonly onError: (err: SwitchScenarioError) => void;
@@ -39,9 +34,7 @@ export interface DeviceRowProps {
 }
 
 export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
-  const [selected, setSelected] = useState<string>(
-    () => device.scenario ?? "Normal",
-  );
+  const [selected, setSelected] = useState<string>(() => device.scenario ?? "Normal");
   const [paused, setPaused] = useState(false);
   const mutation = useSwitchScenario();
 
@@ -106,24 +99,18 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
   return (
     <article
       data-testid={`simulator-row-${device.device_id}`}
-      className="rounded-card border p-4"
-      style={{
-        backgroundColor: "#FFFFFF",
-        borderColor: "#E2E8F0",
-      }}
+      className="rounded-card border border-neutral-border bg-neutral-surface p-4"
     >
       <header className="mb-3 flex items-center justify-between">
         <div>
           <h2
-            className="text-md font-semibold"
-            style={{ color: "#0F172A" }}
+            className="text-md font-semibold text-neutral-body"
             data-testid={`simulator-row-name-${device.device_id}`}
           >
             {device.name ?? "Unnamed device"}
           </h2>
           <p
-            className="truncate text-sm"
-            style={{ color: "#475569" }}
+            className="truncate text-sm text-neutral-secondary"
             data-testid={`simulator-row-id-${device.device_id}`}
             title={device.device_id}
           >
@@ -132,8 +119,7 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
         </div>
         <span
           data-testid={`simulator-row-scenario-${device.device_id}`}
-          className="rounded-pill px-3 py-1 text-sm font-medium"
-          style={{ backgroundColor: BADGE_BG, color: BADGE_TEXT }}
+          className="rounded-pill bg-severity-healthy-bg px-3 py-1 text-sm font-medium text-severity-healthy-text"
         >
           {device.scenario ?? "Unknown"}
         </span>
@@ -141,18 +127,13 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm">
-          <span style={{ color: "#475569" }}>Switch to scenario</span>
+          <span className="text-neutral-secondary">Switch to scenario</span>
           <select
             data-testid={`simulator-row-select-${device.device_id}`}
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
             disabled={isPending}
-            className="rounded-input border px-3 py-2 text-md"
-            style={{
-              borderColor: "#E2E8F0",
-              color: "#0F172A",
-              backgroundColor: "#FFFFFF",
-            }}
+            className="rounded-input border border-neutral-border bg-neutral-surface px-3 py-2 text-md text-neutral-body"
           >
             {SCENARIO_NAMES.map((name) => (
               <option key={name} value={name}>
@@ -168,8 +149,7 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
             data-testid={`simulator-row-switch-${device.device_id}`}
             onClick={() => submit({ scenario: selected })}
             disabled={isPending}
-            className="rounded-input px-4 py-2 text-md font-medium text-white"
-            style={{ backgroundColor: PRIMARY }}
+            className="min-h-[44px] rounded-input bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
           >
             {isPending ? "Switching…" : "Switch"}
           </button>
@@ -184,19 +164,17 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
               // callbacks are already wired by `submit`'s default
               // path — `overrides` here only adds the local-state
               // update on success.
-              submit({ paused: next }, {
-                onSuccess: () => {
-                  setPaused(next);
+              submit(
+                { paused: next },
+                {
+                  onSuccess: () => {
+                    setPaused(next);
+                  },
                 },
-              });
+              );
             }}
             disabled={isPending}
-            className="rounded-input border px-4 py-2 text-md"
-            style={{
-              borderColor: "#E2E8F0",
-              color: "#0F172A",
-              backgroundColor: "#FFFFFF",
-            }}
+            className="min-h-[44px] rounded-input border border-neutral-border bg-neutral-surface px-4 py-2 text-md text-neutral-body"
           >
             {paused ? "Resume" : "Pause"}
           </button>

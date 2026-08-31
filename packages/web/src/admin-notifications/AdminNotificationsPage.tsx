@@ -321,7 +321,7 @@ interface NotificationRowProps {
 const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) => {
   const acknowledgedLabel =
     row.acknowledgedAt === null
-      ? "—"
+      ? "Unread"
       : `${formatDate(row.acknowledgedAt)}${
           row.acknowledgedByUserId === null
             ? ""
@@ -367,7 +367,7 @@ const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) =>
           </span>
         </td>
         <td className="py-2 pr-4">
-          {row.incidentId === null ? "—" : row.incidentId.slice(0, ID_SHORT_PREFIX_LENGTH)}
+          {row.incidentId === null ? "n/a" : row.incidentId.slice(0, ID_SHORT_PREFIX_LENGTH)}
         </td>
         <td className="py-2 pr-4">{formatDate(row.createdAt)}</td>
         <td className="py-2 pr-4">{acknowledgedLabel}</td>

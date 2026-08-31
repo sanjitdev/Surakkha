@@ -103,19 +103,11 @@ const tailwindConfig = {
       // as a colour utility; consumers use it via `style={{ background:
       // 'linear-gradient(...)' }}` or the `bg-primary-gradient` class below.
       backgroundImage: {
-        "primary-gradient":
-          "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)",
+        "primary-gradient": "linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)",
       },
       // Type scale (DESIGN.md §Typography).
       fontFamily: {
-        sans: [
-          "Inter",
-          "system-ui",
-          "-apple-system",
-          "Segoe UI",
-          "Roboto",
-          "sans-serif",
-        ],
+        sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
       },
       fontSize: {
         // semantic scale from DESIGN.md §Typography
@@ -151,8 +143,7 @@ const tailwindConfig = {
       },
       // Elevation tokens (DESIGN.md §Elevation & Depth).
       boxShadow: {
-        "elevation-card":
-          "0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06)",
+        "elevation-card": "0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06)",
         "elevation-topbar": "0 1px 2px rgba(15, 23, 42, 0.04)",
         "elevation-banner-critical": "0 0 24px #EF444433",
       },
@@ -168,6 +159,17 @@ const tailwindConfig = {
       // Page horizontal padding per breakpoint (DESIGN.md §Layout & Spacing).
       maxWidth: {
         canvas: "1440px",
+      },
+      // WCAG 2.5.5 minimum touch target (44×44 px). Surfaced as a
+      // utility so dense toolbars can opt out via `min-h-touch`
+      // is replaced by `min-h-touch` (this token); see
+      // `packages/web/src/index.css` for the global
+      // `button`/`select` base rule. Audit P1 finding.
+      minHeight: {
+        touch: "44px",
+      },
+      minWidth: {
+        touch: "44px",
       },
     },
   },
