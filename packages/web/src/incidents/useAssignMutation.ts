@@ -11,11 +11,33 @@
  * `useIncidentDetailSocket` subscriber's next socket event — or a
  * re-fetch — reconciles state.
  *
+ * Idempotency-Key (api critique P1 #2): the request carries an
+ * `Idempotency-Key: <UUIDv4>` header generated via
+ * `newIdempotencyKey()` at the start of `mutationFn`. The api's
+ * `Idempotency-Key` middleware
+ * (`packages/api/src/middleware/idempotency.ts`) replays the cached
+ * response byte-for-byte when the same `(user_id, route, key)` tuple
+ * lands twice within 5 minutes — closing the persona-blocking
+ * "Rahim the Operator" double-tap surface on a flaky 3G uplink.
+ *
  * 4xx classification (the spec's "tagged" vs "retryable" toast lanes),
  * mirroring `useAcknowledgeMutation.ts` line-for-line with the
  * verb-specific copy swapped:
  *
- *   - 409 `invalid_state_transition`  → "Already assigned"
+ *   - 409 `invalid_state_transition`  → discriminated via the
+ *                                       canonical envelope in
+ *                                       `./transitionEnvelope`:
+ *                                       "Cannot assign a {state}
+ *                                       incident" for a typed
+ *                                       state-machine miss,
+ *                                       "Modified by another
+ *                                       operator — refresh and
+ *                                       retry" for
+ *                                       `concurrent_modification`,
+ *                                       or the per-verb fallback
+ *                                       "Already assigned" if
+ *                                       neither structured field is
+ *                                       present.
  *   - 400 (Zod body validation)        → "Invalid request"
  *   - 403                              → "Not authorized"
  *   - 404                              → "Incident not found"
@@ -57,7 +79,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../api/apiClient";
+import { newIdempotencyKey } from "../api/idempotencyKey";
 
+import {
+  invalidTransitionMessage,
+  parseTransitionEnvelope,
+  type TransitionVerb,
+} from "./transitionEnvelope";
 import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
 
 /**
@@ -114,33 +142,54 @@ export class AssignMutationError extends Error {
 }
 
 /**
+ * Verb name passed to `invalidTransitionMessage` for the
+ * assign-verb branch. Snake_case because the api emits
+ * `attempted: "assign"` (the schema validates against
+ * `ActionVerbSchema` at `packages/shared/src/incident.ts`).
+ */
+const VERB: TransitionVerb = "assign";
+
+/**
  * Classify the api's failure response into the operator-facing copy.
  * 400 / 401 / 409 / 403 / 404 get pinned copy (server-rejected). 401
  * is its own branch because the toast must reflect "session expired"
  * (a retry without re-auth can never succeed) instead of the generic
  * retryable line. All other 4xx + 5xx collapse to the retryable line
  * so the operator sees one consistent prompt for unknown failures.
+ *
+ * 409 is async because we have to read the response body (cloned)
+ * to feed `parseTransitionEnvelope` — the discriminator needs the
+ * `{ from, attempted, reason }` fields to name the actual reason
+ * (typed state-machine miss vs concurrent-modification race).
  */
-const classifyAssignError = (status: number): AssignMutationError => {
-  if (status === HTTP_CONFLICT) {
-    return new AssignMutationError(status, "Already assigned");
+const classifyAssignError = async (res: Response): Promise<AssignMutationError> => {
+  if (res.status === HTTP_CONFLICT) {
+    let envelope: ReturnType<typeof parseTransitionEnvelope> = null;
+    try {
+      envelope = parseTransitionEnvelope(await res.clone().json());
+    } catch {
+      envelope = null;
+    }
+    const message =
+      envelope !== null ? invalidTransitionMessage(VERB, envelope) : "Already assigned";
+    return new AssignMutationError(res.status, message);
   }
-  if (status === HTTP_BAD_REQUEST) {
-    return new AssignMutationError(status, "Invalid request");
+  if (res.status === HTTP_BAD_REQUEST) {
+    return new AssignMutationError(res.status, "Invalid request");
   }
-  if (status === HTTP_FORBIDDEN) {
-    return new AssignMutationError(status, "Not authorized");
+  if (res.status === HTTP_FORBIDDEN) {
+    return new AssignMutationError(res.status, "Not authorized");
   }
-  if (status === HTTP_NOT_FOUND) {
-    return new AssignMutationError(status, "Incident not found");
+  if (res.status === HTTP_NOT_FOUND) {
+    return new AssignMutationError(res.status, "Incident not found");
   }
-  if (status === HTTP_UNAUTHORIZED) {
+  if (res.status === HTTP_UNAUTHORIZED) {
     // 5xx-class UX: the row is presumed unchanged; the operator must
     // re-auth before any retry can succeed. The 4xx row-invalidation
     // branch in `onError` explicitly excludes 401.
-    return new AssignMutationError(status, "Session expired — please sign in again");
+    return new AssignMutationError(res.status, "Session expired — please sign in again");
   }
-  return new AssignMutationError(status, "Failed to assign. Try again.");
+  return new AssignMutationError(res.status, "Failed to assign. Try again.");
 };
 
 /**
@@ -188,6 +237,15 @@ export const useAssignMutation = (id: string) => {
   const queryClient = useQueryClient();
   return useMutation<void, AssignMutationError, { assigneeUserId: string }>({
     mutationFn: async ({ assigneeUserId }): Promise<void> => {
+      // Fresh UUIDv4 per `mutationFn` invocation. The api's
+      // idempotency middleware deduplicates the same
+      // `(user_id, route, key)` tuple within the 5-minute TTL
+      // window — so a single double-send from the same network
+      // handler replays the cached first response. Two separate
+      // `mutate()` clicks produce distinct UUIDs and pass through;
+      // the `disabled={isPending}` prop on the button is what
+      // protects against that path.
+      const idempotencyKey = newIdempotencyKey();
       // Catch synchronous throws from `apiFetch` (network errors
       // surface as a bare `Error` with no `.status`). Without this
       // guard, `onError`'s `err.status >= HTTP_4XX_MIN` check would
@@ -196,10 +254,11 @@ export const useAssignMutation = (id: string) => {
       try {
         const res = await apiFetch(`/api/incidents/${id}/assign`, {
           method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
           body: JSON.stringify({ assignee_user_id: assigneeUserId }),
         });
         if (!res.ok) {
-          throw classifyAssignError(res.status);
+          throw await classifyAssignError(res);
         }
       } catch (err) {
         // If the thrown value is already a tagged
@@ -208,10 +267,11 @@ export const useAssignMutation = (id: string) => {
         if (err instanceof AssignMutationError) {
           throw err;
         }
-        // Network throw / DNS failure / abort — classify as
-        // status 0 (network sentinel) so the `onError` range check
-        // treats it as "do not invalidate" (5xx-class UX).
-        throw classifyAssignError(HTTP_NETWORK_THROW);
+        // Network throw / DNS failure / abort — synthesize a
+        // network-status Response so the same classifier can produce
+        // the toast copy. Status 0 falls into the "do not
+        // invalidate" branch in `onError` (5xx-class UX).
+        throw await classifyAssignError(new Response(null, { status: HTTP_NETWORK_THROW }));
       }
       // The api returns 200 with a refreshed `IncidentPayload`; we
       // do NOT parse it here — the page's row query invalidation

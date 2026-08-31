@@ -8,9 +8,36 @@
  * existing `useIncidentDetailSocket` subscriber's next socket event
  * — or a re-fetch — reconciles state.
  *
+ * Idempotency-Key (api critique P1 #2): the request carries an
+ * `Idempotency-Key: <UUIDv4>` header generated via
+ * `newIdempotencyKey()` at the start of `mutationFn`. The api's
+ * `Idempotency-Key` middleware
+ * (`packages/api/src/middleware/idempotency.ts`) replays the cached
+ * response byte-for-byte when the same `(user_id, route, key)` tuple
+ * lands twice within 5 minutes — closing the persona-blocking
+ * "Rahim the Operator" double-tap surface on a flaky 3G uplink
+ * (network-level retry of the same request replays byte-for-byte
+ * instead of producing duplicate audit events). Two separate
+ * `mutate()` clicks produce distinct UUIDs and pass through; the
+ * `disabled={isPending}` prop on the action button is the
+ * per-tick UI guard for the second-click surface.
+ *
  * 4xx classification (the spec's "tagged" vs "retryable" toast lanes):
  *
- *   - 409 `invalid_state_transition`  → "Already acknowledged"
+ *   - 409 `invalid_state_transition`  → discriminated via the
+ *                                       canonical envelope in
+ *                                       `./transitionEnvelope`:
+ *                                       "Cannot acknowledge a
+ *                                       {state} incident" for a
+ *                                       typed state-machine miss,
+ *                                       "Modified by another
+ *                                       operator — refresh and
+ *                                       retry" for
+ *                                       `concurrent_modification`,
+ *                                       or the per-verb fallback
+ *                                       "Already acknowledged" if
+ *                                       neither structured field is
+ *                                       present.
  *   - 403                              → "Not authorized"
  *   - 404                              → "Incident not found"
  *   - 401 (token refresh failed)       → "Session expired — please sign
@@ -54,7 +81,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../api/apiClient";
+import { newIdempotencyKey } from "../api/idempotencyKey";
 
+import {
+  invalidTransitionMessage,
+  parseTransitionEnvelope,
+  type TransitionVerb,
+} from "./transitionEnvelope";
 import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
 
 /**
@@ -107,6 +140,14 @@ export class AcknowledgeMutationError extends Error {
 }
 
 /**
+ * Verb name passed to `invalidTransitionMessage` for the
+ * acknowledged-verb branch. Snake_case because the api emits
+ * `attempted: "acknowledge"` (and the schema validates against
+ * `ActionVerbSchema` at `packages/shared/src/incident.ts`).
+ */
+const VERB: TransitionVerb = "acknowledge";
+
+/**
  * Classify the api's failure response into the operator-facing copy.
  * 401 / 409 / 403 / 404 get pinned copy (server-rejected). 401 is its
  * own branch because the toast must reflect "session expired"
@@ -114,24 +155,37 @@ export class AcknowledgeMutationError extends Error {
  * retryable line. All other 4xx + 5xx collapse to the retryable
  * line so the operator sees one consistent prompt for unknown
  * failures.
+ *
+ * 409 is async because we have to read the response body (cloned)
+ * to feed `parseTransitionEnvelope` — the discriminator needs the
+ * `{ from, attempted, reason }` fields to name the actual reason
+ * (typed state-machine miss vs concurrent-modification race).
  */
-const classifyAcknowledgeError = (status: number): AcknowledgeMutationError => {
-  if (status === HTTP_CONFLICT) {
-    return new AcknowledgeMutationError(status, "Already acknowledged");
+const classifyAcknowledgeError = async (res: Response): Promise<AcknowledgeMutationError> => {
+  if (res.status === HTTP_CONFLICT) {
+    let envelope: ReturnType<typeof parseTransitionEnvelope> = null;
+    try {
+      envelope = parseTransitionEnvelope(await res.clone().json());
+    } catch {
+      envelope = null;
+    }
+    const message =
+      envelope !== null ? invalidTransitionMessage(VERB, envelope) : "Already acknowledged";
+    return new AcknowledgeMutationError(res.status, message);
   }
-  if (status === HTTP_FORBIDDEN) {
-    return new AcknowledgeMutationError(status, "Not authorized");
+  if (res.status === HTTP_FORBIDDEN) {
+    return new AcknowledgeMutationError(res.status, "Not authorized");
   }
-  if (status === HTTP_NOT_FOUND) {
-    return new AcknowledgeMutationError(status, "Incident not found");
+  if (res.status === HTTP_NOT_FOUND) {
+    return new AcknowledgeMutationError(res.status, "Incident not found");
   }
-  if (status === HTTP_UNAUTHORIZED) {
+  if (res.status === HTTP_UNAUTHORIZED) {
     // 5xx-class UX: the row is presumed unchanged; the operator must
     // re-auth before any retry can succeed. The 4xx row-invalidation
     // branch in `onError` explicitly excludes 401.
-    return new AcknowledgeMutationError(status, "Session expired — please sign in again");
+    return new AcknowledgeMutationError(res.status, "Session expired — please sign in again");
   }
-  return new AcknowledgeMutationError(status, "Failed to acknowledge. Try again.");
+  return new AcknowledgeMutationError(res.status, "Failed to acknowledge. Try again.");
 };
 
 /**
@@ -173,6 +227,16 @@ export const useAcknowledgeMutation = (id: string) => {
   const queryClient = useQueryClient();
   return useMutation<void, AcknowledgeMutationError, void>({
     mutationFn: async (): Promise<void> => {
+      // Fresh UUIDv4 per `mutationFn` invocation. The api's
+      // idempotency middleware deduplicates the same
+      // `(user_id, route, key)` tuple within the 5-minute TTL
+      // window — so a single double-send from the same network
+      // handler replays the cached first response. Two separate
+      // `mutate()` clicks produce distinct UUIDs and pass through;
+      // the `disabled={isPending}` prop on the button is what
+      // protects against that path. See module header for the
+      // Rahim double-tap rationale.
+      const idempotencyKey = newIdempotencyKey();
       // Catch synchronous throws from `apiFetch` (network errors
       // surface as a bare `Error` with no `.status`). Without this
       // guard, `onError`'s `err.status >= HTTP_4XX_MIN` check would
@@ -181,9 +245,10 @@ export const useAcknowledgeMutation = (id: string) => {
       try {
         const res = await apiFetch(`/api/incidents/${id}/acknowledge`, {
           method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
         });
         if (!res.ok) {
-          throw classifyAcknowledgeError(res.status);
+          throw await classifyAcknowledgeError(res);
         }
       } catch (err) {
         // If the thrown value is already a tagged
@@ -192,10 +257,11 @@ export const useAcknowledgeMutation = (id: string) => {
         if (err instanceof AcknowledgeMutationError) {
           throw err;
         }
-        // Network throw / DNS failure / abort — classify as
-        // status 0 (network sentinel) so the `onError` range check
-        // treats it as "do not invalidate" (5xx-class UX).
-        throw classifyAcknowledgeError(HTTP_NETWORK_THROW);
+        // Network throw / DNS failure / abort — synthesize a
+        // network-status Response so the same classifier can produce
+        // the toast copy. Status 0 falls into the "do not
+        // invalidate" branch in `onError` (5xx-class UX).
+        throw await classifyAcknowledgeError(new Response(null, { status: HTTP_NETWORK_THROW }));
       }
       // The api returns 200 with a refreshed `IncidentPayload`; we
       // do NOT parse it here — the page's row query invalidation

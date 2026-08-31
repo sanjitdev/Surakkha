@@ -539,8 +539,12 @@ describe("Story 4.4 — useIncidentDetailSocket mount/unmount cleanup", () => {
 //   AC "MUTATION_IN_FLIGHT"     — click twice in quick succession →
 //                                second click is a no-op (button
 //                                disabled during in-flight mutation).
-//   AC "CONFLICT_409"           — server returns 409 → error toast
-//                                "Already acknowledged".
+//   AC "CONFLICT_409"           — server returns 409 → canonical
+//                                envelope → error toast names the
+//                                current state via
+//                                `transitionEnvelope.ts`
+//                                ("Cannot acknowledge an
+//                                acknowledged incident").
 //   AC "FORBIDDEN_403"          — server returns 403 → error toast
 //                                "Not authorized".
 //   AC "NOT_FOUND_404"          — server returns 404 → error toast
@@ -707,8 +711,8 @@ describe("Story 4.5 — AC: MUTATION_IN_FLIGHT (button disabled, double-click is
   });
 });
 
-describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged' + row reconciles to ACKNOWLEDGED)", () => {
-  it("surfaces the 'Already acknowledged' error toast, invalidates the row, and the row reconciles to ACKNOWLEDGED on the next fetch", async () => {
+describe("Story 4.5 — AC: CONFLICT_409 (error toast names the current state via the canonical envelope + row reconciles to ACKNOWLEDGED)", () => {
+  it("surfaces the 'Cannot acknowledge an acknowledged incident' error toast, invalidates the row, and the row reconciles to ACKNOWLEDGED on the next fetch", async () => {
     let ackCallCount = 0;
     let rowFetchCount = 0;
     installFetch(async (url) => {
@@ -758,9 +762,14 @@ describe("Story 4.5 — AC: CONFLICT_409 (error toast 'Already acknowledged' + r
 
     fireEvent.click(screen.getByTestId("incident-detail-acknowledge-button"));
 
-    // Toast appears immediately.
+    // Toast appears immediately — the new canonical envelope
+    // discrimination surfaces the typed state-machine miss with the
+    // actual current state ("Cannot acknowledge an acknowledged
+    // incident") instead of the previous generic fallback copy.
     await waitFor(() => {
-      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already acknowledged");
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
+        "Cannot acknowledge an acknowledged incident",
+      );
     });
     expect(ackCallCount).toBe(1);
 
@@ -1058,8 +1067,11 @@ describe("Story 4.5 — AC: Viewer cannot see the Acknowledge button even on an 
 //                                form NOT rendered.
 //   AC "MUTATION_IN_FLIGHT"     — click Assign twice → second click no-op
 //                                (button disabled during in-flight mutation).
-//   AC "CONFLICT_409"           — server returns 409 → error toast
-//                                "Already assigned" → row reconciles.
+//   AC "CONFLICT_409"           — server returns 409 → canonical
+//                                envelope → error toast names the
+//                                current state ("Cannot assign an
+//                                in-progress incident") → row
+//                                reconciles.
 //   AC "SERVER_ERROR_500"       — server returns 500 → error toast
 //                                "Failed to assign. Try again." + button
 //                                re-enables.
@@ -1274,8 +1286,8 @@ describe("Story 4.6 — AC: MUTATION_IN_FLIGHT (Assign button disabled, double-c
   });
 });
 
-describe("Story 4.6 — AC: CONFLICT_409 (error toast 'Already assigned' + row reconciles to INSPECTING)", () => {
-  it("surfaces the 'Already assigned' error toast, invalidates the row, and the row reconciles to INSPECTING on the next fetch", async () => {
+describe("Story 4.6 — AC: CONFLICT_409 (error toast names the current state via the canonical envelope + row reconciles to INSPECTING)", () => {
+  it("surfaces the 'Cannot assign an in-progress incident' error toast, invalidates the row, and the row reconciles to INSPECTING on the next fetch", async () => {
     let assignCallCount = 0;
     let rowFetchCount = 0;
     installFetch(async (url) => {
@@ -1326,9 +1338,14 @@ describe("Story 4.6 — AC: CONFLICT_409 (error toast 'Already assigned' + row r
 
     pickAndAssign();
 
-    // Toast appears immediately.
+    // Toast appears immediately — the new canonical envelope
+    // discrimination surfaces the typed state-machine miss with the
+    // actual current state ("Cannot assign an in-progress
+    // incident") instead of the previous generic fallback copy.
     await waitFor(() => {
-      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already assigned");
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
+        "Cannot assign an in-progress incident",
+      );
     });
     expect(assignCallCount).toBe(1);
 
@@ -1674,9 +1691,12 @@ describe("Story 4.6 — AC: success toast leaves the DOM after TTL", () => {
 //   AC "MUTATION_IN_FLIGHT"        — click Submit twice → second click
 //                                   no-op (button disabled during
 //                                   in-flight mutation).
-//   AC "CONFLICT_409"              — server returns 409 → error toast
-//                                   "Already submitted" → row
-//                                   reconciles to post-INSPECTING state.
+//   AC "CONFLICT_409"              — server returns 409 → canonical
+//                                   envelope → error toast names the
+//                                   current state ("Cannot submit a
+//                                   result for a safe incident") →
+//                                   row reconciles to post-INSPECTING
+//                                   state.
 //   AC "SERVER_ERROR_500"          — server returns 500 → error toast
 //                                   "Failed to submit result. Try
 //                                   again." + button re-enables.
@@ -2017,8 +2037,8 @@ describe("Story 4.7 — AC: MUTATION_IN_FLIGHT (Submit button disabled, double-c
   });
 });
 
-describe("Story 4.7 — AC: CONFLICT_409 (error toast 'Already submitted' + row reconciles to SAFE)", () => {
-  it("surfaces the 'Already submitted' error toast, invalidates the row, and the row reconciles to SAFE on the next fetch", async () => {
+describe("Story 4.7 — AC: CONFLICT_409 (error toast names the current state via the canonical envelope + row reconciles to SAFE)", () => {
+  it("surfaces the 'Cannot submit a result for a safe incident' error toast, invalidates the row, and the row reconciles to SAFE on the next fetch", async () => {
     setViewerAsTechnician();
     let submitCallCount = 0;
     let rowFetchCount = 0;
@@ -2061,7 +2081,9 @@ describe("Story 4.7 — AC: CONFLICT_409 (error toast 'Already submitted' + row 
     pickOutcomeAndSubmit("SAFE");
 
     await waitFor(() => {
-      expect(screen.getByTestId("toast-region")).toHaveTextContent("Already submitted");
+      expect(screen.getByTestId("toast-region")).toHaveTextContent(
+        "Cannot submit a result for a safe incident",
+      );
     });
     expect(submitCallCount).toBe(1);
 
@@ -2383,9 +2405,15 @@ describe("Story 4.7 — AC: success toast leaves the DOM after TTL", () => {
 //                            on a non-RESOLVED row.
 //   AC REASON_TOO_SHORT    — Submit button is disabled while the
 //                            reason is < 10 chars.
-//   AC CONFLICT_409        — 409 from reopen surfaces error toast
-//                            "Cannot reopen — incident is not
-//                            RESOLVED" + row reconciles.
+//   AC CONFLICT_409        — 409 from reopen is discriminated via
+//                            the canonical envelope and surfaces a
+//                            typed state-machine miss ("Cannot
+//                            reopen an open incident") in the
+//                            toast + row reconciles. The previous
+//                            hardcoded "Cannot reopen — incident
+//                            is not RESOLVED" copy is now reserved
+//                            for envelopes missing the
+//                            `{ from, attempted }` fields.
 //   AC FORCED_CRITICAL     — After successful reopen, the row's
 //                            `data-severity` updates to "critical"
 //                            (the api forces critical on reopen).
@@ -2535,8 +2563,8 @@ describe("Story 4.11 — AC: reason < 10 chars disables the Submit button", () =
   });
 });
 
-describe("Story 4.11 — AC: CONFLICT_409 (error toast + row reconciles)", () => {
-  it("409 from reopen surfaces 'Cannot reopen — incident is not RESOLVED' toast", async () => {
+describe("Story 4.11 — AC: CONFLICT_409 (error toast names the current state via the canonical envelope)", () => {
+  it("409 from reopen surfaces 'Cannot reopen an open incident' toast via the canonical envelope", async () => {
     installFetch(async (url) => {
       if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
         return new Response(JSON.stringify(baseIncident({ state: "RESOLVED" })), { status: 200 });
@@ -2566,7 +2594,7 @@ describe("Story 4.11 — AC: CONFLICT_409 (error toast + row reconciles)", () =>
     fireEvent.click(screen.getByTestId("incident-detail-reopen-button"));
     await waitFor(() => {
       expect(screen.getByTestId("toast-region")).toHaveTextContent(
-        "Cannot reopen — incident is not RESOLVED",
+        "Cannot reopen an open incident",
       );
     });
   });

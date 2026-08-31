@@ -8,12 +8,35 @@
  * server-side for ≥ 10 chars); the mutation forwards it
  * verbatim.
  *
+ * Idempotency-Key (api critique P1 #2): the request carries an
+ * `Idempotency-Key: <UUIDv4>` header generated via
+ * `newIdempotencyKey()` at the start of `mutationFn`. The api's
+ * `Idempotency-Key` middleware
+ * (`packages/api/src/middleware/idempotency.ts`) replays the cached
+ * response byte-for-byte when the same `(user_id, route, key)` tuple
+ * lands twice within 5 minutes — closing the persona-blocking
+ * double-tap surface on a flaky uplink.
+ *
  * 4xx classification:
  *
  *   - 400 `validation_error`           → first server issues[].message
  *                                       (e.g. "String must contain at least 10 character(s)")
  *                                       or a generic fallback if the body is unparseable.
- *   - 409 `invalid_state_transition`  → "Cannot reopen — incident is not RESOLVED"
+ *   - 409 `invalid_state_transition`  → discriminated via the
+ *                                       canonical envelope in
+ *                                       `./transitionEnvelope`:
+ *                                       "Cannot reopen a {state}
+ *                                       incident" for a typed
+ *                                       state-machine miss,
+ *                                       "Modified by another
+ *                                       operator — refresh and
+ *                                       retry" for
+ *                                       `concurrent_modification`,
+ *                                       or the per-verb fallback
+ *                                       "Cannot reopen — incident
+ *                                       is not RESOLVED" if
+ *                                       neither structured field
+ *                                       is present.
  *   - 403                              → "Not authorized"
  *   - 404                              → "Incident not found"
  *   - 401 (token refresh failed)       → "Session expired — please sign in again"
@@ -39,7 +62,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../api/apiClient";
+import { newIdempotencyKey } from "../api/idempotencyKey";
 
+import {
+  invalidTransitionMessage,
+  parseTransitionEnvelope,
+  type TransitionVerb,
+} from "./transitionEnvelope";
 import { incidentDetailQueryKey } from "./useIncidentDetailSocket";
 
 const HTTP_UNAUTHORIZED = 401;
@@ -95,12 +124,35 @@ const firstIssueMessage = (body: unknown): string | null => {
 };
 
 /**
+ * Verb name passed to `invalidTransitionMessage` for the
+ * reopen-verb branch. Snake_case because the api emits
+ * `attempted: "reopen"` (the schema validates against
+ * `ActionVerbSchema` at `packages/shared/src/incident.ts`).
+ */
+const VERB: TransitionVerb = "reopen";
+
+/**
+ * Fallback copy for a 409 envelope whose body is missing the
+ * `{ from, attempted }` fields (a future schema bump or a buggy
+ * proxy). Mirrors the previous hardcoded copy so existing user
+ * expectations don't regress.
+ */
+const REOPEN_FALLBACK = "Cannot reopen — incident is not RESOLVED";
+
+/**
  * Classify a non-OK response into a `ReopenMutationError`. Reads
  * the response body (cloned — the original body is left for any
- * subsequent reader) so 400 `validation_error` responses surface
- * the first Zod issue's message verbatim. The mutationFn clones
- * the response BEFORE this classifier runs so the body's stream
- * is preserved.
+ * subsequent reader) so:
+ *
+ *   - 400 `validation_error` responses surface the first Zod
+ *     issue's message verbatim.
+ *   - 409 `invalid_state_transition` responses discriminate the
+ *     reason via the canonical envelope in `./transitionEnvelope`
+ *     — typed state-machine miss (named state) vs
+ *     `concurrent_modification` vs per-verb fallback.
+ *
+ * The `clone()` keeps the original body intact for any other
+ * reader.
  *
  * Network errors (status 0) fall through to the 5xx path.
  */
@@ -119,7 +171,14 @@ export const classifyReopenError = async (res: Response): Promise<ReopenMutation
     return new ReopenMutationError(status, message);
   }
   if (status === HTTP_CONFLICT) {
-    return new ReopenMutationError(status, "Cannot reopen — incident is not RESOLVED");
+    let envelope: ReturnType<typeof parseTransitionEnvelope> = null;
+    try {
+      envelope = parseTransitionEnvelope(await res.clone().json());
+    } catch {
+      envelope = null;
+    }
+    const message = envelope !== null ? invalidTransitionMessage(VERB, envelope) : REOPEN_FALLBACK;
+    return new ReopenMutationError(status, message);
   }
   if (status === HTTP_FORBIDDEN) {
     return new ReopenMutationError(status, "Not authorized");
@@ -137,9 +196,19 @@ export const useReopenMutation = (id: string) => {
   const queryClient = useQueryClient();
   return useMutation<void, ReopenMutationError, { reason: string }>({
     mutationFn: async ({ reason }): Promise<void> => {
+      // Fresh UUIDv4 per `mutationFn` invocation. The api's
+      // idempotency middleware deduplicates the same
+      // `(user_id, route, key)` tuple within the 5-minute TTL
+      // window — so a single double-send from the same network
+      // handler replays the cached first response. Two separate
+      // `mutate()` clicks produce distinct UUIDs and pass through;
+      // the `disabled={isPending}` prop on the button is what
+      // protects against that path.
+      const idempotencyKey = newIdempotencyKey();
       try {
         const res = await apiFetch(`/api/incidents/${id}/reopen`, {
           method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey },
           body: JSON.stringify({ reason }),
         });
         if (!res.ok) {
