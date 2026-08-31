@@ -34,17 +34,13 @@ import {
 import express, { type Request, type Response, type Router } from "express";
 import { z } from "zod";
 
-
 import { type AuditLogger } from "../audit";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_BAD_REQUEST, HTTP_OK, HTTP_UNAUTHORIZED } from "../httpStatus.js";
 import { markPublic } from "../middleware/authorize";
 
 import { issueAccessToken, issueRefreshToken, verifyRefreshToken } from "./jwt";
 import { findUserByEmail, findUserById, verifyPassword } from "./users";
-
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_UNAUTHORIZED = 401;
 
 const loginBodySchema = z.object({
   email: z.string().min(1),
@@ -69,7 +65,7 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
       const parsed = loginBodySchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: parsed.error.issues,
         });
         return;
@@ -81,13 +77,13 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
         // Do not write a login_failure audit on bad email — Story 1.4 AC
         // requires "no audit entry written on a wrong-password failure",
         // and we treat unknown email the same way (no enumeration leak).
-        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_credentials" });
+        res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_CREDENTIALS.value });
         return;
       }
 
       const passwordOk = await verifyPassword(user, password);
       if (!passwordOk) {
-        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_credentials" });
+        res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_CREDENTIALS.value });
         return;
       }
 
@@ -120,12 +116,12 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
     markPublic((req: Request, res: Response) => {
       const cookieValue = req.cookies?.[REFRESH_TOKEN_COOKIE];
       if (typeof cookieValue !== "string") {
-        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_refresh" });
+        res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_REFRESH.value });
         return;
       }
       const verified = verifyRefreshToken(cookieValue);
       if (verified === null) {
-        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_refresh" });
+        res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_REFRESH.value });
         return;
       }
 
@@ -136,7 +132,7 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
       // `authenticate`).
       const user = findUserById(verified.userId);
       if (user === null) {
-        res.status(HTTP_UNAUTHORIZED).json({ error: "invalid_refresh" });
+        res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_REFRESH.value });
         return;
       }
 

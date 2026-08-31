@@ -64,6 +64,8 @@ import { initializeRuleEngine } from "./boot/ruleEngine.js";
 import { createSocketIOServer, wireDashboardNamespace, wireIngestSocket } from "./boot/socketIO.js";
 import { buildDevicesRouter } from "./devices/router.js";
 import { buildDevicesRosterListReader } from "./devices/wiring.js";
+import { ERROR_CODES } from "./errors.js";
+import { HTTP_NOT_FOUND, HTTP_OK } from "./httpStatus.js";
 import { buildRecentIncidentsRouter } from "./incidents/recentRouter.js";
 import { buildRecentIncidentsListReader } from "./incidents/recentWiring.js";
 import { buildIncidentsRouterMount } from "./incidents/routerWiring.js";
@@ -74,8 +76,6 @@ import { buildLatestReadingsListReader } from "./readings/wiring.js";
 import { WriteAmplificationError } from "./rules/hooks.js";
 
 const DEFAULT_API_PORT = 3000;
-const HTTP_OK = 200;
-const HTTP_NOT_FOUND = 404;
 const PORT = Number(process.env["PORT"] ?? DEFAULT_API_PORT);
 
 // Fail-fast — must precede Express construction (Story 1.4 AC + FR-25).
@@ -212,7 +212,7 @@ mountAttachmentRouter({ app, audit, resolvePrismaClient: getPrisma });
 // that no router matched. See `__tests__/catchall-404-order.spec.ts`
 // for the ordering pin.
 app.use((_req: Request, res: Response) => {
-  res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+  res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
 });
 
 /**

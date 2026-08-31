@@ -72,6 +72,8 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_BAD_REQUEST, HTTP_INTERNAL_ERROR, HTTP_NOT_FOUND, HTTP_OK } from "../httpStatus.js";
 import { type BroadcastTarget } from "../ingest/frame.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
@@ -94,11 +96,6 @@ export const resolveAlertAcknowledgeRepository = (prisma: unknown): AlertAcknowl
     },
   };
 };
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_NOT_FOUND = 404;
-const HTTP_INTERNAL_ERROR = 500;
 
 /**
  * Minimal Alert delegate surface that the router needs from Prisma.
@@ -303,7 +300,7 @@ const buildAckResponseBody = (
   alertId: string,
   acknowledgedAt: Date,
   actorUserId: string,
-): AlertAcknowledgeResponse | { readonly error: "schema_drift" } => {
+): AlertAcknowledgeResponse | { readonly error: typeof ERROR_CODES.SCHEMA_DRIFT.value } => {
   const body: AlertAcknowledgeResponse = {
     alert_id: alertId,
     acknowledged_at: acknowledgedAt.toISOString(),
@@ -311,7 +308,7 @@ const buildAckResponseBody = (
   };
   const validated = AlertAcknowledgeResponseSchema.safeParse(body);
   if (!validated.success) {
-    return { error: "schema_drift" };
+    return { error: ERROR_CODES.SCHEMA_DRIFT.value };
   }
   return validated.data;
 };
@@ -356,7 +353,7 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
       const parsed = pathParamsSchema.safeParse(req.params);
       if (!parsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: parsed.error.issues,
         });
         return;
@@ -369,7 +366,7 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
       // for the strict-null-checks compiler.
       const actor = req.user?.id;
       if (actor === undefined) {
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
 
@@ -385,12 +382,12 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
         resolution = await resolveAckState(deps.prisma, update, alertId);
       } catch (err) {
         console.error("api/alerts/acknowledge: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
 
       if (resolution.kind === "not_found") {
-        res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+        res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
         return;
       }
       if (resolution.kind === "data_corruption") {
@@ -401,7 +398,7 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
         console.error(
           `[alerts] acknowledge: row ${alertId} has acknowledgedAt set but acknowledgedByUserId is null`,
         );
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const { firstAck, acknowledgedAt, deviceId, actorUserId } = resolution;
@@ -413,7 +410,7 @@ export const buildAlertAcknowledgeRouter = (deps: AlertAcknowledgeDeps): Router 
       const body = buildAckResponseBody(alertId, acknowledgedAt, actorUserId);
       if ("error" in body) {
         console.error(`[alerts] acknowledge: response schema drift alertId=${alertId}`);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
 

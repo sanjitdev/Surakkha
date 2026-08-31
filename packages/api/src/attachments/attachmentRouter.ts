@@ -43,18 +43,20 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import {
+  HTTP_BAD_REQUEST,
+  HTTP_CREATED,
+  HTTP_FORBIDDEN,
+  HTTP_INTERNAL_ERROR,
+  HTTP_NO_CONTENT,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+} from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import { type AttachmentRepository, type AttachmentRow } from "./attachmentRepository.js";
 import { attachmentRowToPayload } from "./attachmentRowToPayload.js";
-
-const HTTP_OK = 200;
-const HTTP_CREATED = 201;
-const HTTP_NO_CONTENT = 204;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_FORBIDDEN = 403;
-const HTTP_NOT_FOUND = 404;
-const HTTP_INTERNAL_ERROR = 500;
 
 const idPathSchema = z.object({
   id: z.string().uuid(),
@@ -113,7 +115,7 @@ const validateUrlOrRespond = (res: Response, url: string): Response | null => {
     const message =
       err instanceof InvalidUrlError ? err.message : "URL must be http:// or https://";
     return res.status(HTTP_BAD_REQUEST).json({
-      error: "invalid_payload",
+      error: ERROR_CODES.INVALID_PAYLOAD.value,
       issues: [{ path: ["url"], message }],
     });
   }
@@ -154,7 +156,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       },
     });
     return res.status(HTTP_FORBIDDEN).json({
-      error: "forbidden",
+      error: ERROR_CODES.FORBIDDEN.value,
       required_role: "Admin",
     });
   };
@@ -177,10 +179,10 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       incident = await deps.incidentFindUnique({ where: { id: incidentId } });
     } catch (err) {
       console.error("api/attachments: incidentFindUnique failed", err);
-      return res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+      return res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     }
     if (incident === null) {
-      return res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+      return res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
     }
     if (incident.assigneeUserId !== req.user.id) {
       deps.audit.emit({
@@ -195,7 +197,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         },
       });
       return res.status(HTTP_FORBIDDEN).json({
-        error: "forbidden",
+        error: ERROR_CODES.FORBIDDEN.value,
         required_role: "Technician",
       });
     }
@@ -234,7 +236,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       return null;
     } catch (err) {
       console.error("api/attachments: create failed", err);
-      return res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+      return res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     }
   };
 
@@ -251,7 +253,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       const idParsed = idPathSchema.safeParse(req.params);
       if (!idParsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: idParsed.error.issues,
         });
         return;
@@ -260,7 +262,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       const bodyParsed = createBodySchema.safeParse(req.body);
       if (!bodyParsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "invalid_payload",
+          error: ERROR_CODES.INVALID_PAYLOAD.value,
           issues: bodyParsed.error.issues,
         });
         return;
@@ -299,7 +301,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       const idParsed = idPathSchema.safeParse(req.params);
       if (!idParsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: idParsed.error.issues,
         });
         return;
@@ -315,7 +317,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         });
       } catch (err) {
         console.error("api/attachments: findMany failed", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const body = {
@@ -340,7 +342,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       const idParsed = attachmentIdPathSchema.safeParse(req.params);
       if (!idParsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: idParsed.error.issues,
         });
         return;
@@ -351,11 +353,11 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         row = await deps.repo.attachment.findUnique({ where: { id } });
       } catch (err) {
         console.error("api/attachments: findUnique failed", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       if (row === null) {
-        res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+        res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
         return;
       }
       // Per-row ownership check (Admin bypass + uploader check).
@@ -365,7 +367,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         await deps.repo.attachment.delete({ where: { id } });
       } catch (err) {
         console.error("api/attachments: delete failed", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       res.status(HTTP_NO_CONTENT).send();

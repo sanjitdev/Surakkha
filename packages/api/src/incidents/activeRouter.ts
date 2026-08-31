@@ -30,6 +30,8 @@ import { type IncidentPayload, type IncidentState } from "@surakkha/shared/incid
 import express, { type Response, type Router } from "express";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_INTERNAL_ERROR, HTTP_OK } from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
@@ -37,9 +39,6 @@ import {
   incidentRowToPayload,
   type IncidentStateRepository,
 } from "./incidentStateRepository.js";
-
-const HTTP_OK = 200;
-const HTTP_INTERNAL_ERROR = 500;
 
 /**
  * The set of states the active board surfaces. RESOLVED is excluded
@@ -99,7 +98,7 @@ export const buildActiveIncidentsRouter = (deps: ActiveIncidentsDeps): Router =>
       const userId = req.user?.id;
       if (role === "Technician" && userId === undefined) {
         console.error("api/incidents/active: Technician request missing user id");
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const techFilter = role === "Technician" ? { assigneeUserId: userId as string } : {};
@@ -111,7 +110,7 @@ export const buildActiveIncidentsRouter = (deps: ActiveIncidentsDeps): Router =>
         });
       } catch (err) {
         console.error("api/incidents/active: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const body: { incidents: IncidentPayload[] } = {

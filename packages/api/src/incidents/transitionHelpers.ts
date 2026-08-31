@@ -27,6 +27,16 @@ import { type Response } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import {
+  HTTP_BAD_REQUEST,
+  HTTP_CONFLICT,
+  HTTP_FORBIDDEN,
+  HTTP_INTERNAL_ERROR,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+  HTTP_UNAUTHORIZED,
+} from "../httpStatus.js";
 import { type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
@@ -39,14 +49,9 @@ import {
 } from "./incidentStateRepository.js";
 import { transition } from "./transitions.js";
 
-// HTTP status constants used across helpers.
-export const HTTP_OK = 200;
-export const HTTP_BAD_REQUEST = 400;
-export const HTTP_UNAUTHORIZED = 401;
-export const HTTP_FORBIDDEN = 403;
-export const HTTP_NOT_FOUND = 404;
-export const HTTP_CONFLICT = 409;
-export const HTTP_INTERNAL_ERROR = 500;
+// (HTTP status constants used in this file are imported directly from
+// `../httpStatus.js` above. The legacy re-export that lived here has
+// been retired — consumers should import from `../httpStatus.js`.)
 
 /**
  * Canonical 409 envelope for `invalid_state_transition` — closes
@@ -71,7 +76,7 @@ export const respondInvalidStateTransition = (
   body: { readonly from?: string; readonly attempted?: string; readonly reason?: string },
 ): void => {
   const envelope = InvalidStateTransitionEnvelopeSchema.parse({
-    error: "invalid_state_transition",
+    error: ERROR_CODES.INVALID_STATE_TRANSITION.value,
     ...body,
   });
   res.status(HTTP_CONFLICT).json(envelope);
@@ -235,7 +240,9 @@ export const prepareTransitionContext = async (
   // Path-param validation.
   const idParsed = idPathSchema.safeParse(req.params);
   if (!idParsed.success) {
-    res.status(HTTP_BAD_REQUEST).json({ error: "validation_error", issues: idParsed.error.issues });
+    res
+      .status(HTTP_BAD_REQUEST)
+      .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: idParsed.error.issues });
     return null;
   }
   const { id } = idParsed.data;
@@ -243,7 +250,9 @@ export const prepareTransitionContext = async (
   // Body validation (verb-specific shape).
   const bodyParsed = parseBody(verb, req.body);
   if (!bodyParsed.ok) {
-    res.status(HTTP_BAD_REQUEST).json({ error: "validation_error", issues: bodyParsed.issues });
+    res
+      .status(HTTP_BAD_REQUEST)
+      .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: bodyParsed.issues });
     return null;
   }
   const body = bodyParsed.body as Record<string, unknown> | undefined;
@@ -290,7 +299,9 @@ export const maybeReopenAdminDenied = (input: {
       reason: "not_admin",
     },
   });
-  input.res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Admin" });
+  input.res
+    .status(HTTP_FORBIDDEN)
+    .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: "Admin" });
   return true;
 };
 
@@ -498,11 +509,11 @@ export const loadOrRespond = async (input: LoadRowInput): Promise<IncidentRow | 
     row = await deps.repo.incident.findUnique({ where: { id } });
   } catch (err) {
     console.error(`api/incidents/${id}/${verb}: findUnique failed`, err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return null;
   }
   if (row === null) {
-    res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+    res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
     return null;
   }
   return row;
@@ -587,11 +598,13 @@ export const commitTransition = async (
       // between request validation and write. Surface as 400
       // not_found rather than 500.
       console.warn(`api/incidents/${id}/${verb}: P2003 FK violation (likely missing assignee)`);
-      res.status(HTTP_BAD_REQUEST).json({ error: "invalid_assignee", reason: "not_found" });
+      res
+        .status(HTTP_BAD_REQUEST)
+        .json({ error: ERROR_CODES.INVALID_ASSIGNEE.value, reason: ERROR_CODES.NOT_FOUND.value });
       return null;
     }
     console.error(`api/incidents/${id}/${verb}: applyTransition failed`, err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return null;
   }
 };
@@ -675,7 +688,7 @@ interface OwnershipCheckInput {
 export const runOwnershipCheck = async (input: OwnershipCheckInput): Promise<boolean> => {
   const { ownerId, req, res, audit } = input;
   if (req.user === undefined || req.user === null) {
-    res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+    res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
     return true;
   }
   if (ownerId === req.user.id) return false;
@@ -690,7 +703,9 @@ export const runOwnershipCheck = async (input: OwnershipCheckInput): Promise<boo
       reason: "not_assignee",
     },
   });
-  res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+  res
+    .status(HTTP_FORBIDDEN)
+    .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: "Technician" });
   return true;
 };
 

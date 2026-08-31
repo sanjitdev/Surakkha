@@ -35,12 +35,11 @@ import { type LatestReadingPayload, type LatestReadingsResponse } from "@surakkh
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 import express, { type Response, type Router } from "express";
 
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_INTERNAL_ERROR, HTTP_OK } from "../httpStatus.js";
 import { authorize } from "../middleware/authorize.js";
 
 import type { AuditLogger } from "../audit.js";
-
-const HTTP_OK = 200;
-const HTTP_INTERNAL_ERROR = 500;
 
 export interface LatestReadingsDeps {
   readonly audit: AuditLogger;
@@ -75,7 +74,7 @@ export const buildLatestReadingsRouter = (deps: LatestReadingsDeps): Router => {
         // query `isError` and the four regions render their empty
         // states per AC7. The structured logger captures the cause.
         console.error("api/readings/latest: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );

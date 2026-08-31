@@ -51,6 +51,14 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import {
+  HTTP_BAD_REQUEST,
+  HTTP_FORBIDDEN,
+  HTTP_INTERNAL_ERROR,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+} from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
@@ -60,12 +68,6 @@ import {
   type NotificationRow,
   notificationRowToPayload,
 } from "./notificationRepository.js";
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_NOT_FOUND = 404;
-const HTTP_INTERNAL_ERROR = 500;
-const HTTP_FORBIDDEN = 403;
 
 /**
  * The role values the read endpoint will accept as
@@ -116,7 +118,7 @@ const parsePathParams = (req: AuthorizedRequest, res: Response): string | null =
   const parsed = pathParamsSchema.safeParse(req.params);
   if (!parsed.success) {
     res.status(HTTP_BAD_REQUEST).json({
-      error: "validation_error",
+      error: ERROR_CODES.VALIDATION_ERROR.value,
       issues: parsed.error.issues,
     });
     return null;
@@ -160,7 +162,9 @@ const enforceCrossRoleRecipient = (args: {
       recipient_role: row.recipientRole,
     },
   });
-  res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: row.recipientRole });
+  res
+    .status(HTTP_FORBIDDEN)
+    .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: row.recipientRole });
   return true;
 };
 
@@ -187,13 +191,13 @@ const fetchRowForAck = async (args: {
   try {
     const row = await repo.notification.findUnique({ where: { id } });
     if (row === null) {
-      res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+      res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
       return { kind: "missing" };
     }
     return { kind: "ok", row };
   } catch (err) {
     console.error("api/notifications: findUnique failed", err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return { kind: "error" };
   }
 };
@@ -222,7 +226,7 @@ const applyAck = async (args: {
     return update.count;
   } catch (err) {
     console.error("api/notifications: updateMany failed", err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return null;
   }
 };
@@ -249,13 +253,13 @@ const refetchRow = async (args: {
       // our second one (vanishingly rare; structurally impossible
       // under the schema's `onDelete: SetNull` for `Incident` /
       // `Alert` FKs, but defensive). Surface 404.
-      res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+      res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
       return null;
     }
     return row;
   } catch (err) {
     console.error("api/notifications: post-update findUnique failed", err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return null;
   }
 };
@@ -372,7 +376,7 @@ const parseAdminQueryParams = (
   const parsed = adminQuerySchema.safeParse(query);
   if (!parsed.success) {
     res.status(HTTP_BAD_REQUEST).json({
-      error: "validation_error",
+      error: ERROR_CODES.VALIDATION_ERROR.value,
       issues: parsed.error.issues,
     });
     return { kind: "error" };
@@ -381,7 +385,7 @@ const parseAdminQueryParams = (
   const coercedSeverity = coerceSeverityArray(severity);
   if (!coercedSeverity.ok) {
     res.status(HTTP_BAD_REQUEST).json({
-      error: "validation_error",
+      error: ERROR_CODES.VALIDATION_ERROR.value,
       issues: [
         {
           code: "invalid_enum_value",
@@ -412,7 +416,7 @@ const parseAdminQueryParams = (
   if (since !== undefined && until !== undefined) {
     if (new Date(since).getTime() >= new Date(until).getTime()) {
       res.status(HTTP_BAD_REQUEST).json({
-        error: "invalid_range",
+        error: ERROR_CODES.INVALID_RANGE.value,
         message: "`since` must be strictly less than `until`",
       });
       return { kind: "error" };
@@ -446,7 +450,7 @@ const fetchAdminRows = async (args: {
     return { kind: "ok", rows };
   } catch (err) {
     console.error("api/notifications/admin/list: prisma error", err);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return { kind: "error" };
   }
 };
@@ -484,7 +488,7 @@ const buildAdminEnvelope = (
     // Structural drift between `adminNotificationRowToPayload`
     // and the `AdminNotificationPayloadSchema`. Log + 500.
     console.error("api/notifications/admin/list: envelope failed shape validation", parsed.error);
-    res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+    res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
     return { kind: "error" };
   }
   return { kind: "ok", envelope };
@@ -572,7 +576,7 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
         // roles in `VALID_RECIPIENT_ROLES`. If a future role slips
         // through, surface 500 rather than passing an unknown
         // value to the Prisma enum filter.
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const recipientRole: NotificationRecipientRole = role;
@@ -586,7 +590,7 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
         });
       } catch (err) {
         console.error("api/notifications: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const body = {
@@ -617,7 +621,7 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
         // `authorize()` short-circuits unauthenticated requests with
         // 401 before this handler runs. The defensive null-check is
         // belt-and-braces for strict-null-checks.
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
 

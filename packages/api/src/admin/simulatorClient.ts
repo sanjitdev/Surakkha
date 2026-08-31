@@ -26,12 +26,13 @@
  */
 import { type ScenarioName } from "@surakkha/shared/simulator";
 
+import { HTTP_FORBIDDEN } from "../httpStatus.js";
+
 /** Default per-call timeout — matches the spec's 5 s SLA. */
 export const SIMULATOR_CLIENT_TIMEOUT_MS = 5_000;
 
 const SECRET_HEADER = "X-Simulator-Secret";
 const CONTENT_TYPE_JSON = "application/json";
-const HTTP_FORBIDDEN = 403;
 
 export interface SimulatorClientDeps {
   /** Base URL of the simulator control server (e.g. `http://localhost:4001`). */
@@ -70,9 +71,7 @@ export type SimulatorSwitchResult =
  * otherwise be concatenated blindly into the outbound URL. Returns
  * `null` on any failure.
  */
-export const validateSimulatorBaseUrl = (
-  raw: string,
-): string | null => {
+export const validateSimulatorBaseUrl = (raw: string): string | null => {
   try {
     const parsed = new URL(raw);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

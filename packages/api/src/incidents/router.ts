@@ -66,6 +66,14 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import {
+  HTTP_BAD_REQUEST,
+  HTTP_FORBIDDEN,
+  HTTP_INTERNAL_ERROR,
+  HTTP_NOT_FOUND,
+  HTTP_OK,
+} from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 import { idempotency, IdempotencyStore } from "../middleware/idempotency.js";
 
@@ -77,11 +85,6 @@ import {
   type IncidentStateRepository,
 } from "./incidentStateRepository.js";
 import {
-  HTTP_BAD_REQUEST,
-  HTTP_FORBIDDEN,
-  HTTP_INTERNAL_ERROR,
-  HTTP_NOT_FOUND,
-  HTTP_OK,
   type PrepareCtxInput,
   prepareTransitionContext,
   respondSuccess,
@@ -259,7 +262,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
       if (!idParsed.success) {
         res
           .status(HTTP_BAD_REQUEST)
-          .json({ error: "validation_error", issues: idParsed.error.issues });
+          .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: idParsed.error.issues });
         return;
       }
       const { id } = idParsed.data;
@@ -268,11 +271,11 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
         row = await deps.repo.incident.findUnique({ where: { id } });
       } catch (err) {
         console.error(`api/incidents/${id}: findUnique failed`, err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       if (row === null) {
-        res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+        res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
         return;
       }
       // Technician-only-mine ownership check.
@@ -292,7 +295,9 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
             reason: "not_assignee",
           },
         });
-        res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+        res
+          .status(HTTP_FORBIDDEN)
+          .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: "Technician" });
         return;
       }
       const payload: IncidentPayload = incidentRowToPayload(row);
@@ -319,7 +324,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
       if (!idParsed.success) {
         res
           .status(HTTP_BAD_REQUEST)
-          .json({ error: "validation_error", issues: idParsed.error.issues });
+          .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: idParsed.error.issues });
         return;
       }
       const { id } = idParsed.data;
@@ -328,11 +333,11 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
         row = await deps.repo.incident.findUnique({ where: { id } });
       } catch (err) {
         console.error("api/incidents/:id/events: findUnique failed", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       if (row === null) {
-        res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+        res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
         return;
       }
       // Technician-only-mine ownership check (same shape as the
@@ -351,7 +356,9 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
             reason: "not_assignee",
           },
         });
-        res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+        res
+          .status(HTTP_FORBIDDEN)
+          .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: "Technician" });
         return;
       }
       let events: IncidentEventRow[];
@@ -362,7 +369,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
         });
       } catch (err) {
         console.error("api/incidents/:id/events: findMany failed", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       const body: { events: IncidentEventPayload[] } = {

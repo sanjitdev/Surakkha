@@ -56,12 +56,9 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_BAD_REQUEST, HTTP_INTERNAL_ERROR, HTTP_NOT_FOUND, HTTP_OK } from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_NOT_FOUND = 404;
-const HTTP_INTERNAL_ERROR = 500;
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -301,7 +298,7 @@ const supersedeRule = async (
     readonly id: string;
     readonly body: Extract<RulePatchRequest, { supersede: true }>;
   },
-): Promise<RuleSupersedeResponse | { readonly error: "not_found" }> => {
+): Promise<RuleSupersedeResponse | { readonly error: typeof ERROR_CODES.NOT_FOUND.value }> => {
   const result = await repo.$transaction(async (tx) => {
     const old = await tx.rule.findUnique({
       where: { id: args.id },
@@ -337,7 +334,7 @@ const supersedeRule = async (
     });
     return { old: updated, new: created };
   });
-  if (result === null) return { error: "not_found" };
+  if (result === null) return { error: ERROR_CODES.NOT_FOUND.value };
   return result;
 };
 
@@ -348,12 +345,12 @@ const supersedeRule = async (
 const deactivateRule = async (
   repo: ThresholdsRepository,
   id: string,
-): Promise<RuleRow | { readonly error: "not_found" }> => {
+): Promise<RuleRow | { readonly error: typeof ERROR_CODES.NOT_FOUND.value }> => {
   const existing = await repo.rule.findUnique({
     where: { id },
     select: ruleSelectShape,
   });
-  if (existing === null) return { error: "not_found" };
+  if (existing === null) return { error: ERROR_CODES.NOT_FOUND.value };
   return repo.rule.update({
     where: { id },
     data: { isActive: false },
@@ -369,12 +366,12 @@ const deactivateRule = async (
 const activateRule = async (
   repo: ThresholdsRepository,
   id: string,
-): Promise<RuleRow | { readonly error: "not_found" }> => {
+): Promise<RuleRow | { readonly error: typeof ERROR_CODES.NOT_FOUND.value }> => {
   const existing = await repo.rule.findUnique({
     where: { id },
     select: ruleSelectShape,
   });
-  if (existing === null) return { error: "not_found" };
+  if (existing === null) return { error: ERROR_CODES.NOT_FOUND.value };
   return repo.rule.update({
     where: { id },
     data: { isActive: true },
@@ -387,7 +384,9 @@ const activateRule = async (
  * helper so the route handlers stay under the complexity ceiling.
  */
 const sendValidationError = (res: Response, parsed: { error: { issues: unknown } }): void => {
-  res.status(HTTP_BAD_REQUEST).json({ error: "validation_error", issues: parsed.error.issues });
+  res
+    .status(HTTP_BAD_REQUEST)
+    .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: parsed.error.issues });
 };
 
 /**
@@ -420,7 +419,7 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
         res.status(HTTP_OK).json(list);
       } catch (err) {
         console.error("api/admin/thresholds/list: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );
@@ -439,7 +438,7 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
       }
       const actor = req.user?.id;
       if (actor === undefined) {
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }
       try {
@@ -450,7 +449,7 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
         res.status(HTTP_OK).json(created);
       } catch (err) {
         console.error("api/admin/thresholds/create: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );
@@ -479,7 +478,7 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
         if ("supersede" in body && body.supersede === true) {
           const result = await supersedeRule(deps.repo, { id, body });
           if ("error" in result) {
-            res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+            res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
             return;
           }
           res.status(HTTP_OK).json(result);
@@ -487,13 +486,13 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
         }
         const deactivated = await deactivateRule(deps.repo, id);
         if ("error" in deactivated) {
-          res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+          res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
           return;
         }
         res.status(HTTP_OK).json(deactivated);
       } catch (err) {
         console.error("api/admin/thresholds/patch: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );
@@ -515,13 +514,13 @@ export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
       try {
         const activated = await activateRule(deps.repo, idParsed.data.id);
         if ("error" in activated) {
-          res.status(HTTP_NOT_FOUND).json({ error: "not_found" });
+          res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
           return;
         }
         res.status(HTTP_OK).json(activated);
       } catch (err) {
         console.error("api/admin/thresholds/activate: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );

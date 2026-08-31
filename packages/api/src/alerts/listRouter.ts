@@ -62,6 +62,8 @@ import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_BAD_REQUEST, HTTP_INTERNAL_ERROR, HTTP_OK } from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import {
@@ -71,10 +73,6 @@ import {
   buildNextCursor,
   decodeCursor,
 } from "./list.js";
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_INTERNAL_ERROR = 500;
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
@@ -333,7 +331,7 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
       const parsed = querySchema.safeParse(req.query);
       if (!parsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
-          error: "validation_error",
+          error: ERROR_CODES.VALIDATION_ERROR.value,
           issues: parsed.error.issues,
         });
         return;
@@ -352,7 +350,7 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
           // validates the `{ t, i }` shape.
           console.warn("[alerts] list cursor decode failed", err);
           res.status(HTTP_BAD_REQUEST).json({
-            error: "validation_error",
+            error: ERROR_CODES.VALIDATION_ERROR.value,
             issues: [
               {
                 code: "invalid_cursor",
@@ -469,7 +467,7 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
         const validated = AlertListResponseSchema.safeParse(body);
         if (!validated.success) {
           console.error("[alerts] list: response schema drift", validated.error);
-          res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+          res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
           return;
         }
         res.status(HTTP_OK).json(validated.data);
@@ -478,7 +476,7 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
         // any read failure; surface 500 so TanStack Query marks the
         // query `isError`.
         console.error("api/alerts: prisma error", err);
-        res.status(HTTP_INTERNAL_ERROR).json({ error: "internal_error" });
+        res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
     },
   );

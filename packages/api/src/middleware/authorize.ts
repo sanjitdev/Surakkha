@@ -51,11 +51,10 @@ import { type Action, isAllowed, type Resource, type Role } from "@surakkha/shar
 import { type AuditLogger } from "../audit";
 import { verifyAccessToken } from "../auth/jwt";
 import { findUserById } from "../auth/users";
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_FORBIDDEN, HTTP_UNAUTHORIZED } from "../httpStatus.js";
 
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-
-const HTTP_UNAUTHORIZED = 401;
-const HTTP_FORBIDDEN = 403;
 
 /** Minimal user shape attached to the request by authenticate(). */
 export interface AuthenticatedUser {
@@ -106,13 +105,13 @@ export const authenticate: RequestHandler = (
       next();
       return;
     }
-    res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+    res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
     return;
   }
 
   const claims = verifyAccessToken(token);
   if (claims === null) {
-    res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+    res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
     return;
   }
 
@@ -120,7 +119,7 @@ export const authenticate: RequestHandler = (
   if (user === null) {
     // The token is signed but the subject does not match a known
     // user. Treat as 401 — structurally valid, semantically orphaned.
-    res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+    res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
     return;
   }
 
@@ -200,7 +199,7 @@ export const authorize = (opts: AuthorizeOptions, audit: AuditLogger): RequestHa
   return (req: Request, res: Response, next: NextFunction): void => {
     const areq = asAuthorized(req);
     if (areq.user === undefined || areq.user === null) {
-      res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+      res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
       return;
     }
 
@@ -236,7 +235,9 @@ export const authorize = (opts: AuthorizeOptions, audit: AuditLogger): RequestHa
         required_role: required,
       },
     });
-    res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: required });
+    res
+      .status(HTTP_FORBIDDEN)
+      .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: required });
   };
 };
 
@@ -253,7 +254,7 @@ export const requireOwner =
   (req: Request, res: Response, next: NextFunction): void => {
     const areq = asAuthorized(req);
     if (areq.user === undefined || areq.user === null) {
-      res.status(HTTP_UNAUTHORIZED).json({ error: "unauthorized" });
+      res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.UNAUTHORIZED.value });
       return;
     }
     if (ownerId === undefined) {
@@ -276,5 +277,7 @@ export const requireOwner =
         reason: "not_assignee",
       },
     });
-    res.status(HTTP_FORBIDDEN).json({ error: "forbidden", required_role: "Technician" });
+    res
+      .status(HTTP_FORBIDDEN)
+      .json({ error: ERROR_CODES.FORBIDDEN.value, required_role: "Technician" });
   };

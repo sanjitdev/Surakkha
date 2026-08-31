@@ -38,21 +38,17 @@
  *     as `Idempotency-Key`. Until that ships, transition routes see no
  *     `Idempotency-Key` header and pass through unchanged.
  */
+import { ERROR_CODES } from "../errors.js";
+import { HTTP_BAD_REQUEST, HTTP_STATUS_MAX_CACHEABLE } from "../httpStatus.js";
+
 import { type AuthorizedRequest } from "./authorize";
 
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 const IDEMPOTENCY_TTL_MS = 300_000; // 5 minutes
 
-// HTTP 500 is the upper bound (exclusive) of status codes we cache.
-// 2xx and 4xx are cached so retries replay byte-for-byte; 5xx is
-// excluded so transient failures don't poison the cache.
-const HTTP_STATUS_MAX_CACHEABLE = 500;
-
 // RFC 4122 UUID v4 — `4` in the version nibble, [89ab] in the variant nibble.
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const HTTP_BAD_REQUEST = 400;
 
 interface CachedResponse {
   readonly status: number;
@@ -118,7 +114,7 @@ export const idempotency =
     }
 
     if (!UUID_V4_RE.test(header)) {
-      res.status(HTTP_BAD_REQUEST).json({ error: "invalid_idempotency_key" });
+      res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_IDEMPOTENCY_KEY.value });
       return;
     }
 

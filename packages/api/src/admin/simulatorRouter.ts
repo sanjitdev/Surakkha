@@ -26,14 +26,20 @@
  *       control server. On success, writes an `AuditLog` row via the
  *       structured logger.
  */
-import {
-  SCENARIO_NAMES,
-  type ScenarioName,
-} from "@surakkha/shared/simulator";
+import { SCENARIO_NAMES, type ScenarioName } from "@surakkha/shared/simulator";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
 import { type AuditLogger } from "../audit";
+import { ERROR_CODES } from "../errors.js";
+import {
+  HTTP_BAD_GATEWAY,
+  HTTP_BAD_REQUEST,
+  HTTP_CONFLICT,
+  HTTP_FORBIDDEN,
+  HTTP_OK,
+  HTTP_SERVICE_UNAVAILABLE,
+} from "../httpStatus.js";
 import { authorize, type AuthorizedRequest, markPublic } from "../middleware/authorize";
 
 import {
@@ -41,14 +47,6 @@ import {
   type SimulatorClientDeps,
   type SimulatorSwitchResult,
 } from "./simulatorClient.js";
-
-
-const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
-const HTTP_FORBIDDEN = 403;
-const HTTP_SERVICE_UNAVAILABLE = 503;
-const HTTP_BAD_GATEWAY = 502;
-const HTTP_CONFLICT = 409;
 
 /**
  * Body shape for POST /admin/simulator/:device_id/scenario.
@@ -69,16 +67,11 @@ const scenarioSwitchBodySchema = z
     paused: z.boolean().optional(),
   })
   .strict()
-  .refine(
-    (b) =>
-      b.scenario !== undefined || b.paused !== undefined,
-    {
-      message: "must include scenario or paused",
-    },
-  );
+  .refine((b) => b.scenario !== undefined || b.paused !== undefined, {
+    message: "must include scenario or paused",
+  });
 
-const UUID_V4_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 
@@ -129,8 +122,7 @@ const resolveSimulatorConfig = (): ResolvedSimulatorConfig | null => {
   const secret = process.env["SIMULATOR_SECRET"];
   if (secret === undefined || secret === "") return null;
   if (secret.length < SIMULATOR_SECRET_MIN_LENGTH) return null;
-  const baseUrl =
-    process.env["SIMULATOR_URL"] ?? "http://localhost:4001";
+  const baseUrl = process.env["SIMULATOR_URL"] ?? "http://localhost:4001";
   return { baseUrl, secret };
 };
 
@@ -163,25 +155,22 @@ export interface SimulatorRouterDeps {
  * knows. Module-scoped so the route handler can stay under the
  * eslint complexity ceiling.
  */
-const renderSwitchResult = (
-  result: SimulatorSwitchResult,
-  res: Response,
-): void => {
+const renderSwitchResult = (result: SimulatorSwitchResult, res: Response): void => {
   if (result.ok) {
     res.status(HTTP_OK).json(result.data);
     return;
   }
   if (result.error.kind === "secret_mismatch") {
-    res.status(HTTP_FORBIDDEN).json({ error: "secret_mismatch" });
+    res.status(HTTP_FORBIDDEN).json({ error: ERROR_CODES.SECRET_MISMATCH.value });
     return;
   }
   if (result.error.kind === "unreachable") {
-    res.status(HTTP_BAD_GATEWAY).json({ error: "simulator_unreachable" });
+    res.status(HTTP_BAD_GATEWAY).json({ error: ERROR_CODES.SIMULATOR_UNREACHABLE.value });
     return;
   }
   // unknown: simulator rejected the request shape or crashed.
   res.status(HTTP_BAD_GATEWAY).json({
-    error: "simulator_unreachable",
+    error: ERROR_CODES.SIMULATOR_UNREACHABLE.value,
     upstream: result.error,
   });
 };
@@ -209,12 +198,8 @@ const validateScenarioRequest = (
   | { readonly ok: true; readonly deviceId: string; readonly body: ScenarioSwitchBody }
   | { readonly ok: false } => {
   const deviceId = req.params["device_id"];
-  if (
-    deviceId === undefined ||
-    typeof deviceId !== "string" ||
-    !UUID_V4_REGEX.test(deviceId)
-  ) {
-    res.status(HTTP_BAD_REQUEST).json({ error: "invalid_device_id" });
+  if (deviceId === undefined || typeof deviceId !== "string" || !UUID_V4_REGEX.test(deviceId)) {
+    res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_DEVICE_ID.value });
     return { ok: false };
   }
 
@@ -222,7 +207,7 @@ const validateScenarioRequest = (
   if (!parsed.success) {
     res
       .status(HTTP_BAD_REQUEST)
-      .json({ error: "validation_error", issues: parsed.error.issues });
+      .json({ error: ERROR_CODES.VALIDATION_ERROR.value, issues: parsed.error.issues });
     return { ok: false };
   }
   const body = parsed.data;
@@ -233,11 +218,8 @@ const validateScenarioRequest = (
   // 400 invalid_scenario for any unknown name, regardless of
   // accompanying fields). The `paused` field is accepted by the
   // schema as long as it's a boolean.
-  if (
-    body.scenario !== undefined &&
-    !SCENARIO_SET.has(body.scenario as ScenarioName)
-  ) {
-    res.status(HTTP_BAD_REQUEST).json({ error: "invalid_scenario" });
+  if (body.scenario !== undefined && !SCENARIO_SET.has(body.scenario as ScenarioName)) {
+    res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_SCENARIO.value });
     return { ok: false };
   }
   return { ok: true, deviceId, body };
@@ -347,9 +329,7 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
 
       const cfg = resolveSimulatorConfig();
       if (cfg === null) {
-        res
-          .status(HTTP_SERVICE_UNAVAILABLE)
-          .json({ disabled: true, reason: "missing" });
+        res.status(HTTP_SERVICE_UNAVAILABLE).json({ disabled: true, reason: "missing" });
         return;
       }
 
@@ -366,7 +346,7 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
         // counter is unaffected — a burst of three concurrent POSTs
         // leaves depth = 2, not 3. The `finally` block on accepted
         // requests clears the map once depth drains to 0.
-        res.status(HTTP_CONFLICT).json({ error: "switch_in_progress" });
+        res.status(HTTP_CONFLICT).json({ error: ERROR_CODES.SWITCH_IN_PROGRESS.value });
         return;
       }
       pendingDepth.set(deviceId, depth);
