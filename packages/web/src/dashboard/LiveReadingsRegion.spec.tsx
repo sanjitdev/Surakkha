@@ -34,23 +34,10 @@
  * spec exercises the region via a synthetic props surface rather
  * than spinning up the full query client + socket.
  */
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  type LatestReadingPayload,
-} from "@surakkha/shared/dashboard";
+import { type LatestReadingPayload } from "@surakkha/shared/dashboard";
 
 import { LiveReadingsRegion } from "./LiveReadingsRegion";
 
@@ -119,31 +106,17 @@ describe("Story 2.8 — AC1: one row per device, four columns, monospace value",
 
     renderRegion(readings);
 
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_B}`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_C}`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_D}`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_E}`),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-${DEVICE_F}`),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_B}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_C}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_D}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_E}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`dashboard-live-readings-row-${DEVICE_F}`)).toBeInTheDocument();
     expect(screen.getByTestId("dashboard-live-readings-table")).toBeInTheDocument();
   });
 
   it("renders the four column headers", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     expect(screen.getByRole("columnheader", { name: "Device" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Metric" })).toBeInTheDocument();
@@ -152,9 +125,7 @@ describe("Story 2.8 — AC1: one row per device, four columns, monospace value",
   });
 
   it("renders the value cell with a monospace class", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     const metricCell = row.querySelector('[role="cell"]:nth-child(2)');
@@ -174,8 +145,8 @@ describe("Story 2.8 — AC1: one row per device, four columns, monospace value",
     renderRegion(readings);
 
     const table = screen.getByTestId("dashboard-live-readings-table");
-    const rows = Array.from(table.querySelectorAll('[role="row"]')).filter(
-      (node) => node.getAttribute("data-testid")?.startsWith("dashboard-live-readings-row-"),
+    const rows = Array.from(table.querySelectorAll('[role="row"]')).filter((node) =>
+      node.getAttribute("data-testid")?.startsWith("dashboard-live-readings-row-"),
     );
     const order = rows.map((r) => r.getAttribute("data-device-id"));
     expect(order).toEqual([DEVICE_C, DEVICE_A, DEVICE_B]);
@@ -196,8 +167,8 @@ describe("Story 2.8 — AC1: one row per device, four columns, monospace value",
     renderRegion(readings);
 
     const table = screen.getByTestId("dashboard-live-readings-table");
-    const rows = Array.from(table.querySelectorAll('[role="row"]')).filter(
-      (node) => node.getAttribute("data-testid")?.startsWith("dashboard-live-readings-row-"),
+    const rows = Array.from(table.querySelectorAll('[role="row"]')).filter((node) =>
+      node.getAttribute("data-testid")?.startsWith("dashboard-live-readings-row-"),
     );
     const order = rows.map((r) => r.getAttribute("data-device-id"));
     // All healthy → tiebreaker on `device_id.localeCompare` produces
@@ -208,20 +179,16 @@ describe("Story 2.8 — AC1: one row per device, four columns, monospace value",
 
 describe("Story 2.8 — AC2: critical-row visual hierarchy + aria-live", () => {
   it("critical row carries the 4px / 3px / 8px border hierarchy", () => {
-    renderRegion([
-      baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     expect(row.className).toContain("border-l-4");
     expect(row.className).toContain("border-severity-critical-value");
-    expect(row.className).toContain("shadow-[0_0_8px_#EF444433]");
+    expect(row.className).toContain("shadow-elevation-row-critical");
   });
 
   it("critical row severity cell uses aria-live=polite", () => {
-    renderRegion([
-      baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     // aria-live rides the severity CELL, not the row, so screen-reader
@@ -233,9 +200,7 @@ describe("Story 2.8 — AC2: critical-row visual hierarchy + aria-live", () => {
   });
 
   it("non-critical rows do NOT carry the critical hierarchy or aria-live", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     expect(row.className).not.toContain("border-l-4");
@@ -247,9 +212,7 @@ describe("Story 2.8 — AC2: critical-row visual hierarchy + aria-live", () => {
   });
 
   it("severity dot uses bg-severity-critical-value for critical rows and renders the redundant glyph", () => {
-    renderRegion([
-      baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, CRITICAL_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     const cell = row.querySelector('[aria-label="critical severity"]');
@@ -261,9 +224,7 @@ describe("Story 2.8 — AC2: critical-row visual hierarchy + aria-live", () => {
   });
 
   it("healthy rows render the healthy glyph", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     const cell = row.querySelector('[aria-label="healthy severity"]');
     // U+2713 "check" — the smallest glyph that distinguishes
@@ -274,9 +235,7 @@ describe("Story 2.8 — AC2: critical-row visual hierarchy + aria-live", () => {
 
 describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
   it("the row does NOT pulse on first render", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     expect(row.className).not.toContain("animate-live-pulse");
@@ -289,12 +248,7 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
     // keyframe on every cache invalidation even when the reading
     // payload didn't advance — operators would see every row pulse
     // on every socket event. This test pins the idempotency.
-    const reading = baseReading(
-      DEVICE_A,
-      HEALTHY_METRICS,
-      "School A",
-      "2026-08-24T10:00:00.000Z",
-    );
+    const reading = baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z");
 
     const { rerender } = renderRegion([reading]);
     const row = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
@@ -308,12 +262,7 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
   });
 
   it("advancing server_received_at applies animate-live-pulse to the affected row", async () => {
-    const first = baseReading(
-      DEVICE_A,
-      HEALTHY_METRICS,
-      "School A",
-      "2026-08-24T10:00:00.000Z",
-    );
+    const first = baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z");
     const updated: LatestReadingPayload = {
       ...first,
       server_received_at: "2026-08-24T10:00:01.000Z",
@@ -321,17 +270,13 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
     };
 
     const { rerender } = renderRegion([first]);
-    const rowBefore = screen.getByTestId(
-      `dashboard-live-readings-row-${DEVICE_A}`,
-    );
+    const rowBefore = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
     expect(rowBefore.className).not.toContain("animate-live-pulse");
 
     rerender(<LiveReadingsRegion readings={[updated]} />);
 
     await waitFor(() => {
-      const rowAfter = screen.getByTestId(
-        `dashboard-live-readings-row-${DEVICE_A}`,
-      );
+      const rowAfter = screen.getByTestId(`dashboard-live-readings-row-${DEVICE_A}`);
       expect(rowAfter.classList.contains("animate-live-pulse")).toBe(true);
     });
   });
@@ -347,9 +292,9 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
 
     renderRegion([fresh]);
 
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`),
-    ).toHaveTextContent("just now");
+    expect(screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`)).toHaveTextContent(
+      "just now",
+    );
   });
 
   it("the age cell shows '<n>s ago' for a few-seconds-old reading", () => {
@@ -361,9 +306,9 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
 
     renderRegion([reading]);
 
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`),
-    ).toHaveTextContent(/\d+s ago/);
+    expect(screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`)).toHaveTextContent(
+      /\d+s ago/,
+    );
   });
 
   it("the age cell resets from '<n>s ago' to 'just now' on a fresh reading", async () => {
@@ -385,24 +330,22 @@ describe("Story 2.8 — AC3: live-update pulse + age reset", () => {
     };
 
     const { rerender } = renderRegion([stale]);
-    expect(
-      screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`),
-    ).toHaveTextContent(/\d+s ago/);
+    expect(screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`)).toHaveTextContent(
+      /\d+s ago/,
+    );
 
     rerender(<LiveReadingsRegion readings={[freshReading]} />);
     await waitFor(() => {
-      expect(
-        screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`),
-      ).toHaveTextContent("just now");
+      expect(screen.getByTestId(`dashboard-live-readings-row-age-${DEVICE_A}`)).toHaveTextContent(
+        "just now",
+      );
     });
   });
 });
 
 describe("Story 2.8 — AC4: read-only surface (no sort, no buttons)", () => {
   it("renders the table with no sort control", () => {
-    renderRegion([
-      baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z"),
-    ]);
+    renderRegion([baseReading(DEVICE_A, HEALTHY_METRICS, "School A", "2026-08-24T10:00:00.000Z")]);
 
     // The region ships a header + the table; there is no <button>
     // for sort, no toggleable affordance. The header copy is the

@@ -37,7 +37,7 @@
  * without spinning up a query client.
  */
 import { type IncidentPayload } from "@surakkha/shared/incident";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../api/apiClient";
 
@@ -90,6 +90,21 @@ const WINDOW_24H_MS = WINDOW_24H_HOURS * MS_PER_HOUR;
  * a named constant, so this constant is the single source of truth
  * within the banner module only. */
 const HTTP_FORBIDDEN = 403;
+
+/** Device roster query key — owned by `useDashboardDevices` (Story
+ * 2.7). The banner reads this cache passively (no competing
+ * `queryFn`) so the map + dashboard devices query stay the
+ * canonical fetcher. The cache-key identity pin lives at
+ * `SeverityBanner.spec.tsx` so a drift breaks the test rig, not
+ * the production banner.
+ */
+const DEVICES_CACHE_KEY = ["devices"] as const;
+
+/** Fallback label when a device name is unavailable in the device
+ * roster cache (either the cache is empty because the dashboard
+ * hasn't mounted, or the row's `device_id` is unknown). Mirrors
+ * `MapView.tsx`'s popup fallback string. */
+const UNNAMED_DEVICE = "Unnamed device";
 
 interface ActiveIncidentsEnvelope {
   readonly incidents: readonly IncidentPayload[];
@@ -179,6 +194,7 @@ const bannerQueryFn = async (): Promise<ActiveIncidentsEnvelope> => {
  * (none today).
  */
 export const useSeverityBanner = () => {
+  const queryClient = useQueryClient();
   const query = useQuery<ActiveIncidentsEnvelope>({
     queryKey: [...SEVERITY_BANNER_QUERY_KEY],
     queryFn: bannerQueryFn,
@@ -186,7 +202,22 @@ export const useSeverityBanner = () => {
   });
   const unsafeIncidents = filterUnsafeWithin24h(query.data?.incidents ?? []);
   const criticalCount = unsafeIncidents.length;
-  return { unsafeIncidents, criticalCount, query };
+
+  // Passive reader of the `["devices"]` cache. Falls back to the
+  // UUID when the device roster hasn't loaded yet — banner copy
+  // never BLOCKS on the dashboard's devices fetch (UX-DR-3 "calm
+  // surfaces don't introduce new dependencies" — a banner visible
+  // on every page shouldn't make the operator wait for the
+  // dashboard's devices cold-load to surface a name).
+  const deviceNameById = (deviceId: string): string => {
+    const cached = queryClient.getQueryData<{
+      devices: ReadonlyArray<{ id: string; name: string | null }>;
+    }>(DEVICES_CACHE_KEY);
+    const match = cached?.devices.find((d) => d.id === deviceId);
+    return match?.name ?? UNNAMED_DEVICE;
+  };
+
+  return { unsafeIncidents, criticalCount, query, deviceNameById };
 };
 
 /**

@@ -218,26 +218,78 @@ describe("Story 4.8 — SeverityBanner pure filter", () => {
 
 describe("Story 4.8 — SeverityBanner rendering", () => {
   it("HAPPY_PATH_1: 1 UNSAFE row → banner with singular heading + body + critical styling", async () => {
-    const { restoreFetch } = renderBanner({
-      envelope: {
-        incidents: [baseIncident({ metric: "tds_ppm", value: 312 })],
+    // Pre-seed the `["devices"]` cache so the banner joins the
+    // incident row to the device roster and surfaces the human
+    // name (mirrors Kanban's pattern). When the cache is empty
+    // (e.g. dashboard hasn't mounted yet), the banner falls back
+    // to "Unnamed device" — covered by the next test.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
       },
+    });
+    queryClient.setQueryData([...SEVERITY_BANNER_QUERY_KEY_EXPORT], {
+      incidents: [baseIncident({ metric: "tds_ppm", value: 312 })],
+    });
+    queryClient.setQueryData(["devices"], {
+      devices: [{ id: DEVICE_A, name: "Mirpur Primary — Tank 3" }],
+    });
+    const ORIGINAL_FETCH = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ incidents: [] }), { status: 200 }),
+      )) as unknown as typeof fetch;
+    try {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/dashboard"]}>
+            <CurrentRoleProvider initialRole="Operator">
+              <AppShell>
+                <div>canvas content</div>
+              </AppShell>
+            </CurrentRoleProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("severity-banner")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("severity-banner-heading").textContent).toBe("1 unsafe incident");
+      // Body format contract: "Latest: <human device name> ·
+      // <metric> · <value>". The device UUID must NOT appear in the
+      // body — pinning the Alex-persona fix (a UUID at the highest-
+      // stakes moment of the Operator's day erodes trust).
+      const body = screen.getByTestId("severity-banner-body").textContent ?? "";
+      expect(body).toContain("Mirpur Primary");
+      expect(body).toContain("tds_ppm");
+      expect(body).toContain("312");
+      expect(body).not.toContain(DEVICE_A);
+      const banner = screen.getByTestId("severity-banner");
+      expect(banner.className).toContain("border-severity-critical-value");
+      expect(banner.className).toContain("bg-severity-critical-bg");
+      expect(banner.getAttribute("role")).toBe("alert");
+      expect(screen.getByTestId("severity-banner-body").getAttribute("aria-live")).toBe("polite");
+    } finally {
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
+  });
+
+  it("DEVICE_NAME_FALLBACK: empty devices cache → body shows 'Unnamed device' (NOT the UUID)", async () => {
+    // The banner must NOT block on the dashboard's devices fetch
+    // (UX-DR-3: calm surfaces don't introduce new dependencies).
+    // When the device cache is empty the banner falls back to the
+    // literal "Unnamed device" — the UUID must still NOT leak into
+    // the rendered copy.
+    const { restoreFetch } = renderBanner({
+      envelope: { incidents: [baseIncident()] },
     });
     await waitFor(() => {
       expect(screen.getByTestId("severity-banner")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("severity-banner-heading").textContent).toBe("1 unsafe incident");
-    expect(screen.getByTestId("severity-banner-body").textContent).toContain("tds_ppm");
-    expect(screen.getByTestId("severity-banner-body").textContent).toContain("312");
-    // Body format contract: "Latest: <device> · <metric> · <value>".
-    // Pins the order — a future refactor that reorders or drops the
-    // device_id would surface here.
-    expect(screen.getByTestId("severity-banner-body").textContent).toContain(DEVICE_A);
-    const banner = screen.getByTestId("severity-banner");
-    expect(banner.className).toContain("border-severity-critical-value");
-    expect(banner.className).toContain("bg-severity-critical-bg");
-    expect(banner.getAttribute("role")).toBe("alert");
-    expect(screen.getByTestId("severity-banner-body").getAttribute("aria-live")).toBe("polite");
+    const body = screen.getByTestId("severity-banner-body").textContent ?? "";
+    expect(body).toContain("Unnamed device");
+    expect(body).not.toContain(DEVICE_A);
     restoreFetch();
   });
 

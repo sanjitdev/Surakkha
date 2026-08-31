@@ -109,7 +109,58 @@ const IncidentDetailSkeleton = () => (
 const formatDateOrDash = (iso: string | null): string =>
   iso === null ? "—" : new Date(iso).toISOString().slice(0, ISO_DATE_PREFIX_LENGTH);
 
-const formatActorOrAnonymous = (id: string | null): string => (id === null ? "anonymous" : id);
+/**
+ * Format an actor for the audit-timeline prose. The legacy helper
+ * rendered the raw UUID, which read as noise ("Assigned to
+ * f4a1c2b3 by 7d8e9f0a…") to the Operator. Critique 2026-08-31
+ * valley finding: UUIDs erode trust at the highest-stakes row of
+ * the Operator's day.
+ *
+ * Resolution: when the actor is the viewer, render "you" (the
+ * common case — the Operator's own actions). When the actor is
+ * null, render "anonymous" (legacy fallback — system events).
+ * Otherwise render "another {role}" inferred from the verb, since
+ * the state machine implies the actor role:
+ *   - `submit_result` → Technician (only Technicians submit
+ *     inspection results; a non-Technician's submit_result is a
+ *     403 the api never produces, so the inference is safe).
+ *   - `acknowledge` / `assign` / `resolve` / `reopen` /
+ *     `invalid_transition_attempt` → Operator or Admin (both
+ *     roles hold these verbs; the prose reads "another operator"
+ *     because 95% of these come from the Operator).
+ *
+ * Without a per-user role lookup on the wire, the per-event
+ * timeline can't disambiguate "another operator" from "an Admin".
+ * Story 5.x surfaces `display_name` + role from the user roster
+ * and this helper is the seam that consumes it.
+ */
+const ACTOR_LABEL_BY_VERB: Record<string, string> = {
+  acknowledge: "another operator",
+  assign: "another operator",
+  submit_result: "a Technician",
+  resolve: "another operator",
+  reopen: "another operator",
+  invalid_transition_attempt: "another operator",
+};
+const formatActorOrAnonymous = (
+  id: string | null,
+  verb: string,
+  viewerUserId: string | null,
+): string => {
+  if (id === null) return "anonymous";
+  if (id === viewerUserId) return "you";
+  return ACTOR_LABEL_BY_VERB[verb] ?? "another operator";
+};
+
+/** Assignee surface — assignees are always Technicians (the only
+ *  role the state machine accepts for INSPECTING ownership).
+ *  Same `you`/`anonymous` semantics as the timeline helper but the
+ *  "another" fallback is always "a Technician". */
+const formatAssigneeLabel = (id: string | null, viewerUserId: string | null): string => {
+  if (id === null) return "unassigned";
+  if (id === viewerUserId) return "you";
+  return "a Technician";
+};
 
 const ISO_DATE_PREFIX_LENGTH = 10;
 
@@ -211,9 +262,12 @@ const formatInvalidTransitionSummary = (
   return `Rejected: ${attemptedText} from ${fromText} is not a valid transition.`;
 };
 
-const formatTimelineEventSummary = (event: IncidentEventPayload): string => {
+const formatTimelineEventSummary = (
+  event: IncidentEventPayload,
+  viewerUserId: string | null,
+): string => {
   const { payload } = event;
-  const actor = formatActorOrAnonymous(event.actor_user_id);
+  const actor = formatActorOrAnonymous(event.actor_user_id, event.type, viewerUserId);
   switch (event.type) {
     case "acknowledge":
       return formatAcknowledgeSummary(actor);
@@ -461,7 +515,7 @@ const IncidentDetailBody = ({
       </dd>
       <dt className="text-neutral-secondary">Assignee</dt>
       <dd data-testid="incident-detail-assignee" className="font-mono text-neutral-body">
-        {formatActorOrAnonymous(incident.assignee_user_id)}
+        {formatAssigneeLabel(incident.assignee_user_id, viewerUserId)}
       </dd>
       <dt className="text-neutral-secondary">Acknowledged at</dt>
       <dd data-testid="incident-detail-acknowledged-at" className="text-neutral-body">
@@ -510,7 +564,7 @@ const IncidentDetailBody = ({
                   data-testid={`incident-detail-event-${event.id}-summary`}
                   className="text-neutral-body"
                 >
-                  {formatTimelineEventSummary(event)}
+                  {formatTimelineEventSummary(event, viewerUserId)}
                 </p>
                 <time
                   dateTime={event.created_at}
@@ -523,7 +577,7 @@ const IncidentDetailBody = ({
               <p className="mt-1 text-xs text-neutral-secondary">
                 <span data-testid={`incident-detail-event-${event.id}-type`}>{event.type}</span>
                 {" · "}
-                <span>{formatActorOrAnonymous(event.actor_user_id)}</span>
+                <span>{formatActorOrAnonymous(event.actor_user_id, event.type, viewerUserId)}</span>
               </p>
             </li>
           ))}

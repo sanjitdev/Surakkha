@@ -86,12 +86,11 @@ const formatAge = (serverReceivedAt: string, now: number): string => {
 
 /**
  * Critical-row border + glow hierarchy (UX-DR-2 + DESIGN.md
- * §Components: LiveReadingRow). 4px critical left border, 3px calm
- * inner border, 8px outer critical glow. We reuse the literal
- * `boxShadow.elevation-banner-critical` value (already in
- * `tailwind.config.ts:157` as `0 0 24px #EF444433`) and shrink the
- * spread to 8 px via an arbitrary class so the glow sits in the row's
- * own bounding box, not the entire surface.
+ * §Components: LiveReadingRow). 4px critical left border, 1px
+ * calm inner border, row-scale critical glow via the
+ * `shadow-elevation-row-critical` token (8px spread — the banner
+ * variant spreads 24px which is too wide for a single row's
+ * bounding box).
  *
  * IMPORTANT: these class strings are LITERAL — they must not be
  * built via template-literal interpolation. Tailwind's JIT content
@@ -101,17 +100,14 @@ const formatAge = (serverReceivedAt: string, now: number): string => {
  * review VG-1.
  */
 const CRITICAL_BORDER_CLASS =
-  "border-l-4 border-severity-critical-value border-r border-t border-b border-severity-critical-value shadow-[0_0_8px_#EF444433]";
+  "border-l-4 border-severity-critical-value border-r border-t border-b border-severity-critical-value shadow-elevation-row-critical";
 
 /**
  * Map severity → severity label. Mirrors the Epic 2 §UX label
  * surface. `warning` is reserved (Epic 3 rule engine) but rendered
  * here so the contract is forward-compatible.
  */
-const SEVERITY_LABEL: Record<
-  ReturnType<typeof placeholderSeverity>,
-  string
-> = {
+const SEVERITY_LABEL: Record<ReturnType<typeof placeholderSeverity>, string> = {
   healthy: "Healthy",
   warning: "Warning",
   critical: "Critical",
@@ -136,13 +132,9 @@ const SEVERITY_LABEL: Record<
 const formatMetricCell = (
   reading: LatestReadingPayload,
 ): { readonly key: string; readonly value: string } => {
-  const breach =
-    placeholderSeverity(reading) === "critical"
-      ? breachedMetric(reading)
-      : null;
+  const breach = placeholderSeverity(reading) === "critical" ? breachedMetric(reading) : null;
   const metricKey = breach !== null ? breach.key : ("ph" as const);
-  const rawValue =
-    breach !== null ? breach.value : reading.metrics[metricKey];
+  const rawValue = breach !== null ? breach.value : reading.metrics[metricKey];
   const valueText = Number.isFinite(rawValue)
     ? rawValue.toFixed(metricPrecision(metricKey))
     : "\u2014";
@@ -168,8 +160,7 @@ const METRIC_PRECISION: Record<string, number> = {
   water_level_cm: 0,
 };
 
-const metricPrecision = (key: string): number =>
-  METRIC_PRECISION[key] ?? 1;
+const metricPrecision = (key: string): number => METRIC_PRECISION[key] ?? 1;
 
 export const LiveReadingsRow = ({ reading }: LiveReadingsRowProps) => {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -234,9 +225,7 @@ export const LiveReadingsRow = ({ reading }: LiveReadingsRowProps) => {
       data-device-id={reading.device_id}
       data-severity={severity}
       className={`flex items-center gap-4 px-3 py-2 text-sm ${
-        isCritical
-          ? CRITICAL_BORDER_CLASS
-          : "border border-neutral-border"
+        isCritical ? CRITICAL_BORDER_CLASS : "border border-neutral-border"
       } bg-neutral-surface text-neutral-body`}
     >
       <div role="cell" className="flex-1 min-w-0">

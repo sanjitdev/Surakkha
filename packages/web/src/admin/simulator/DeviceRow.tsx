@@ -149,7 +149,7 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
             data-testid={`simulator-row-switch-${device.device_id}`}
             onClick={() => submit({ scenario: selected })}
             disabled={isPending}
-            className="min-h-[44px] rounded-input bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
+            className="min-h-touch rounded-input bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
           >
             {isPending ? "Switching…" : "Switch"}
           </button>
@@ -174,7 +174,7 @@ export const DeviceRow = ({ device, onError, onSuccess }: DeviceRowProps) => {
               );
             }}
             disabled={isPending}
-            className="min-h-[44px] rounded-input border border-neutral-border bg-neutral-surface px-4 py-2 text-md text-neutral-body"
+            className="min-h-touch rounded-input border border-neutral-border bg-neutral-surface px-4 py-2 text-md text-neutral-body"
           >
             {paused ? "Resume" : "Pause"}
           </button>

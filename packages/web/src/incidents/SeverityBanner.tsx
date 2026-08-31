@@ -43,9 +43,14 @@ import { useSeverityBanner } from "./useSeverityBanner";
 const formatHeading = (count: number): string =>
   count === 1 ? "1 unsafe incident" : `${count} unsafe incidents`;
 
-/** Body line for a single-incident banner — device preview. */
-const formatSingleBody = (incident: IncidentPayload): string =>
-  `Latest: ${incident.device_id} \u00b7 ${incident.metric} \u00b7 ${incident.value}`;
+/** Body line for a single-incident banner — device preview.
+ *  `deviceLabel` is the device's human name (joined from the
+ *  device roster cache, falls back to `Unnamed device` when the
+ *  cache hasn't loaded — see `useSeverityBanner.deviceNameById`).
+ *  UUID fallback would still surface the noise we just removed.
+ */
+const formatSingleBody = (incident: IncidentPayload, deviceLabel: string): string =>
+  `Latest: ${deviceLabel} \u00b7 ${incident.metric} \u00b7 ${incident.value}`;
 
 export const SeverityBanner = () => {
   const { criticalCount } = useSeverityBanner();
@@ -86,12 +91,12 @@ const SeverityBannerBody = ({ count }: { readonly count: number }) => {
   // both calls hit the same cached projection. We re-read here so
   // the body can show the most-recent incident's preview without
   // threading it through props from the parent.
-  const { unsafeIncidents } = useSeverityBanner();
+  const { unsafeIncidents, deviceNameById } = useSeverityBanner();
 
   if (count === 1) {
     const incident = unsafeIncidents[0];
     if (incident === undefined) return null;
-    return <>{formatSingleBody(incident)}</>;
+    return <>{formatSingleBody(incident, deviceNameById(incident.device_id))}</>;
   }
 
   return (

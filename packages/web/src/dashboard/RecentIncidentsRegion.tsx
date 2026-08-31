@@ -1,20 +1,18 @@
 /**
- * `RecentIncidentsRegion` — Story 2.6.
+ * `RecentIncidentsRegion` — Story 2.6 (canonical surface for the
+ * dashboard's right-rail Recent Incidents feed).
  *
- * Read-only preview of the Recent Incidents feed. Story 4.4 expands
- * this into the full Epic-4 card affordance (device + severity +
- * metric + value + opened-at + primary action); this story ships the
- * static empty-state copy per AC4 plus a calm list rendering so a
- * populated feed is observable end-to-end without a workflow action.
+ * The earlier "Read-only preview" badge was retired after Story 4.4
+ * shipped the full card affordance (device + severity + metric +
+ * value + opened-at + primary action) on the Kanban surface — this
+ * dashboard region is now a calm summary, not a development marker.
  *
  * Per AC4 the empty-state copy is exactly "No incidents in the last
  * 24 hours." and is never animated or flashing. Per AC6 the region
- * renders no action buttons — the Recent Incidents surface is
- * read-only in Story 2.6.
+ * renders no action buttons — the Recent Incidents surface is a
+ * summary view that links out to the Kanban for actions.
  */
-import {
-  type RecentIncidentsResponse,
-} from "@surakkha/shared/dashboard";
+import { type RecentIncidentsResponse } from "@surakkha/shared/dashboard";
 
 interface RecentIncidentsRegionProps {
   readonly incidents: RecentIncidentsResponse["incidents"];
@@ -35,11 +33,8 @@ export const RecentIncidentsRegion = ({ incidents }: RecentIncidentsRegionProps)
       aria-label="Recent Incidents"
       className="rounded-card border border-neutral-border bg-neutral-surface p-density-card"
     >
-      <header className="flex items-center justify-between">
+      <header>
         <h2 className="text-md font-semibold text-neutral-body">Recent Incidents</h2>
-        <span className="text-xs text-neutral-secondary">
-          Read-only preview
-        </span>
       </header>
       {isEmpty ? (
         <p
@@ -49,10 +44,7 @@ export const RecentIncidentsRegion = ({ incidents }: RecentIncidentsRegionProps)
           No incidents in the last 24 hours.
         </p>
       ) : (
-        <ul
-          data-testid="dashboard-recent-incidents-list"
-          className="mt-3 flex flex-col gap-2"
-        >
+        <ul data-testid="dashboard-recent-incidents-list" className="mt-3 flex flex-col gap-2">
           {incidents.map((i) => (
             <li
               key={i.id}

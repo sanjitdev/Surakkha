@@ -152,6 +152,13 @@ const tailwindConfig = {
         "elevation-card": "0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06)",
         "elevation-topbar": "0 1px 2px rgba(15, 23, 42, 0.04)",
         "elevation-banner-critical": "0 0 24px #EF444433",
+        // Row-scale critical glow. The banner variant spreads
+        // 24px which is too wide for a single row's bounding box;
+        // LiveReadingsRow's critical tint uses this 8px variant
+        // instead. Severity colour is the same literal (#EF444433)
+        // so the visual signal is consistent across surfaces —
+        // only the spread differs by use-case.
+        "elevation-row-critical": "0 0 8px #EF444433",
       },
       // Motion durations (DESIGN.md §Elevation & Depth, §Components). Each
       // resolves to a `duration-*` utility. The CSS keyframes live in

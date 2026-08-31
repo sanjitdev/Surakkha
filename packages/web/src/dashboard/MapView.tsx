@@ -70,8 +70,19 @@ const PIN_ANCHOR_OFFSET = 7;
 const DHAKA_LAT = 23.78;
 const DHAKA_LNG = 90.41;
 const DEFAULT_ZOOM = 11;
-const MIN_OFFLINE_MINUTES = 1;
+// Coarser-unit thresholds for offline-pupup copy. Below 60 minutes
+// we render `Nm ago`; from 1 hour to 24h we render `Nh ago`;
+// beyond 24h we render `Nd ago`. Critique 2026-08-31 valley
+// finding: a 10-day offline device was reading "1m ago" because
+// `Math.max(1, …)` clamped the minute count without changing
+// units — trust-eroding. The thresholds below are pinned so a
+// future drift (e.g. switching back to minute-only) breaks the
+// spec assertion rather than the operator's trust.
 const MINUTES_PER_MS = 60_000;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
+const HOUR_THRESHOLD_MS = MINUTES_PER_HOUR * MINUTES_PER_MS;
+const DAY_THRESHOLD_MS = HOURS_PER_DAY * HOUR_THRESHOLD_MS;
 
 /**
  * Severity → Tailwind `fill` token lookup. Mirrors
@@ -109,6 +120,26 @@ const buildIconHtml = (severity: MapSeverity): string => {
 };
 
 /**
+ * Format the popup's offline-state body line. Coarser-unit
+ * thresholds (see constants above): days → hours → minutes.
+ * Returns `null` for malformed `last_reading_at` timestamps so
+ * the caller can fall back to the bare "Offline" line.
+ */
+const formatOfflineAgeLabel = (lastReadingAt: string): string | null => {
+  const lastSeenMs = new Date(lastReadingAt).getTime();
+  if (!Number.isFinite(lastSeenMs)) return null;
+  const elapsedMs = Date.now() - lastSeenMs;
+  if (elapsedMs >= DAY_THRESHOLD_MS) {
+    return `${Math.round(elapsedMs / DAY_THRESHOLD_MS)}d ago`;
+  }
+  if (elapsedMs >= HOUR_THRESHOLD_MS) {
+    return `${Math.round(elapsedMs / HOUR_THRESHOLD_MS)}h ago`;
+  }
+  const minutes = Math.max(1, Math.round(elapsedMs / MINUTES_PER_MS));
+  return `${minutes}m ago`;
+};
+
+/**
  * Format the popup HTML — device name, breached metric + value,
  * severity dot, link to `/devices/{device_id}`. The popup is
  * dismissible with Escape (Leaflet default).
@@ -126,17 +157,11 @@ const buildPopupHtml = (args: {
     if (device.last_reading_at === null) {
       bodyLine = `<p class="text-xs text-neutral-secondary">No reading yet</p>`;
     } else {
-      const lastSeen = new Date(device.last_reading_at);
-      const lastSeenMs = lastSeen.getTime();
-      // Guard malformed timestamps so a corrupt `last_reading_at`
-      // never surfaces as "NaNm ago" in the operator's popup.
-      const minutes = Number.isFinite(lastSeenMs)
-        ? Math.max(MIN_OFFLINE_MINUTES, Math.round((Date.now() - lastSeenMs) / MINUTES_PER_MS))
-        : null;
+      const ageLabel = formatOfflineAgeLabel(device.last_reading_at);
       bodyLine =
-        minutes === null
+        ageLabel === null
           ? `<p class="text-xs text-neutral-secondary">Offline</p>`
-          : `<p class="text-xs text-neutral-secondary">Offline \u2014 last seen ${minutes}m ago</p>`;
+          : `<p class="text-xs text-neutral-secondary">Offline \u2014 last seen ${ageLabel}</p>`;
     }
   } else if (breach === null) {
     bodyLine = `<p class="text-xs text-neutral-secondary">All metrics in range</p>`;

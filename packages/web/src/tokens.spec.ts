@@ -142,6 +142,12 @@ describe("Story 1.2a — elevation tokens (DESIGN.md §Elevation & Depth)", () =
   it("elevation.banner_critical matches the banner glow", () => {
     expect(shadows["elevation-banner-critical"]).toBe("0 0 24px #EF444433");
   });
+  it("elevation.row_critical matches the row-scale critical glow", () => {
+    // Story 2.8 — LiveReadingsRow's critical tint uses an 8px spread
+    // (vs the banner's 24px) so the glow sits inside the row's
+    // bounding box. Same severity colour, smaller spread.
+    expect(shadows["elevation-row-critical"]).toBe("0 0 8px #EF444433");
+  });
 });
 
 describe("Story 1.2a — motion durations (DESIGN.md §Elevation & Depth)", () => {

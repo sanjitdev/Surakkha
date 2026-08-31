@@ -2774,7 +2774,7 @@ describe("/impeccable clarify — audit timeline typed renderer", () => {
       },
     ]);
     expect(screen.getByTestId(`incident-detail-event-${E.ACK}-summary`)).toHaveTextContent(
-      `Acknowledged by ${ACTOR}.`,
+      "Acknowledged by another operator.",
     );
     // The old <pre> tag MUST NOT be emitted — operators never see JSON.
     expect(screen.queryByTestId(`incident-detail-event-${E.ACK}-payload`)).toBeNull();
@@ -2796,7 +2796,7 @@ describe("/impeccable clarify — audit timeline typed renderer", () => {
       },
     ]);
     expect(screen.getByTestId(`incident-detail-event-${E.ASSIGN}-summary`)).toHaveTextContent(
-      `Assigned to ${TECHS} by ${ACTOR}.`,
+      `Assigned to ${TECHS} by another operator.`,
     );
   });
 
@@ -2860,7 +2860,7 @@ describe("/impeccable clarify — audit timeline typed renderer", () => {
       },
     ]);
     expect(screen.getByTestId(`incident-detail-event-${E.REOPEN}-summary`)).toHaveTextContent(
-      `Reopened by ${ACTOR} — "Misclassified — device still failing".`,
+      `Reopened by another operator — "Misclassified — device still failing".`,
     );
   });
 

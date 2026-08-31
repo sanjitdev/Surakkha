@@ -242,6 +242,15 @@ export const AdminNotificationsPage = ({
           // narrower result, gets the broadest). Disable the
           // button with a tooltip until a future story ships the
           // custom date inputs.
+          //
+          // Critique 2026-08-31 finding: a tooltip alone is invisible
+          // to screen readers and to anyone using keyboard nav
+          // (hover-only). The button now ALSO carries
+          // `aria-describedby="range-custom-coming-soon"` pointing
+          // at the description rendered inside the button group;
+          // when focus lands on the disabled button the AT
+          // announces "Custom — coming soon" without requiring a
+          // hover. WCAG 1.3.1 (info & relationships).
           const isStub = p === "custom";
           return (
             <button
@@ -250,6 +259,7 @@ export const AdminNotificationsPage = ({
               aria-pressed={preset === p}
               onClick={() => setPreset(p)}
               disabled={isStub}
+              aria-describedby={isStub ? "range-custom-coming-soon" : undefined}
               title={isStub ? "Custom date range inputs are deferred to a future story" : undefined}
               data-testid={`range-${p}`}
               className={`rounded-md border px-3 py-1 text-sm ${
@@ -268,6 +278,14 @@ export const AdminNotificationsPage = ({
             </button>
           );
         })}
+        {/* Visually-hidden description consumed by the disabled
+            Custom button's `aria-describedby`. sr-only utility is
+            standard a11y pattern; placed adjacent to the buttons so
+            the AT picks it up when focus lands on the button. */}
+        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-describedby` (ARIA spec). */}
+        <span id="range-custom-coming-soon" className="sr-only">
+          Custom date range inputs are deferred to a future story.
+        </span>
       </section>
 
       {query.isLoading ? (
