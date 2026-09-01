@@ -102,6 +102,59 @@ describe("Story 1.6 — RbacDenied semantic contract", () => {
   });
 });
 
+describe("Story 6.11 — RbacDenied role-aware back-link (Riley persona)", () => {
+  beforeEach(() => setViewport(1280));
+  afterEach(() => cleanup());
+
+  const renderWithRole = (viewerRole: "Admin" | "Operator" | "Technician" | "Viewer" | null) =>
+    render(
+      <MemoryRouter initialEntries={["/audit"]}>
+        <RbacDenied viewerRole={viewerRole} />
+      </MemoryRouter>,
+    );
+
+  // Per EXPERIENCE.md §Personas — Technicians live on /devices; everyone
+  // else lands on /dashboard. The role-aware back-link is the
+  // affordance the Viewer persona lost previously when they hit
+  // /admin/* and got dumped on /dashboard.
+  it("routes a Technician to /devices (their key-journey surface)", () => {
+    renderWithRole("Technician");
+    const link = screen.getByTestId("rbac-denied-back-link");
+    expect(link.getAttribute("href")).toBe("/devices");
+    expect(link.textContent).toBe("Back to devices");
+  });
+
+  it.each(["Admin", "Operator", "Viewer"] as const)(
+    "routes %s to /dashboard (overview surface)",
+    (role) => {
+      renderWithRole(role);
+      const link = screen.getByTestId("rbac-denied-back-link");
+      expect(link.getAttribute("href")).toBe("/dashboard");
+      expect(link.textContent).toBe("Back to dashboard");
+    },
+  );
+
+  it("falls back to /dashboard when viewerRole is null (legacy callers)", () => {
+    renderWithRole(null);
+    const link = screen.getByTestId("rbac-denied-back-link");
+    expect(link.getAttribute("href")).toBe("/dashboard");
+    expect(link.textContent).toBe("Back to dashboard");
+  });
+
+  it("respects explicit backHref override even when viewerRole is provided", () => {
+    // Kanban / IncidentDetail overrides win over the role-aware
+    // default — the seam is the explicit-prop escape hatch.
+    render(
+      <MemoryRouter initialEntries={["/audit"]}>
+        <RbacDenied viewerRole="Technician" backHref="/incidents" backLabel="Back to incidents" />
+      </MemoryRouter>,
+    );
+    const link = screen.getByTestId("rbac-denied-back-link");
+    expect(link.getAttribute("href")).toBe("/incidents");
+    expect(link.textContent).toBe("Back to incidents");
+  });
+});
+
 describe("Story 1.6 — Viewer sidebar DOM (AC1)", () => {
   beforeEach(() => setViewport(1280));
   afterEach(() => cleanup());

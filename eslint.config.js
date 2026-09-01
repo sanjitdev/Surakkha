@@ -524,9 +524,23 @@ export default [
       },
     },
     rules: {
-      "tailwindcss/enforces-shorthand": "warn",
-      "tailwindcss/enforces-negative-arbitrary-values": "warn",
-      "tailwindcss/no-unnecessary-arbitrary-value": "warn",
+      // Story 6.10 — promoted from `warn` after one sprint on warn
+      // (the gate ran cleanly; no new violations since 03a0915).
+      // These three are the structural rules that catch the
+      // "blind copy-paste from shadcn docs" tells:
+      //   - enforces-shorthand: h-N w-N → size-N
+      //   - enforces-negative-arbitrary-values: -mt-[5px] → -mt-1.5
+      //   - no-unnecessary-arbitrary-value: mt-[8px] (already a token) → mt-2
+      // The remaining four are deliberately off (see the 03a0915
+      // commit message for the per-rule triage: classnames-order
+      // and no-custom-classname were both false-positive-heavy
+      // against our severity.* / neutral.* / primary.* namespacing;
+      // no-arbitrary-value is incompatible with the shadow-[...] /
+      // arbitrary hex escape hatches in legacy code; no-contradicting
+      // -classname has high false-positive rate under clsx composition).
+      "tailwindcss/enforces-shorthand": "error",
+      "tailwindcss/enforces-negative-arbitrary-values": "error",
+      "tailwindcss/no-unnecessary-arbitrary-value": "error",
       "tailwindcss/classnames-order": "off",
       "tailwindcss/no-custom-classname": "off",
       "tailwindcss/no-arbitrary-value": "off",

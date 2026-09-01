@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import { RoleSchema } from "./rbac.js";
+import { UUID_V4_REGEX } from "./schemas.js";
 
 export const JwtAudienceSchema = z.enum(["device", "simulator", "user"]);
 export type JwtAudience = z.infer<typeof JwtAudienceSchema>;
@@ -103,9 +104,9 @@ export const DEVICE_TOKEN_TTL_SECONDS = 86400;
  * instead of producing a token that the verifier will reject later.
  */
 const assertUuidV4 = (sub: string): void => {
-  // Version nibble = `4`, variant nibble = `[89ab]`.
-  const UUID_V4_REGEX =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  // Version nibble = `4`, variant nibble = `[89ab]`. The regex
+  // lives in `./schemas.js` so every consumer (this file, the api
+  // routers, the simulator) sees one literal.
   if (!UUID_V4_REGEX.test(sub)) {
     throw new Error(`simulator/device claim template: sub must be a UUIDv4 (got ${sub})`);
   }

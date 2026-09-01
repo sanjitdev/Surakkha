@@ -38,6 +38,7 @@
  */
 import { type AttachmentPayload } from "@surakkha/shared/attachment";
 import { detectMimeFromURL, FALLBACK_MIME } from "@surakkha/shared/mimeAutoDetect";
+import { idPathSchema } from "@surakkha/shared/schemas";
 import { InvalidUrlError, validateHttpUrl } from "@surakkha/shared/urlValidation";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
@@ -57,14 +58,6 @@ import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
 import { type AttachmentRepository, type AttachmentRow } from "./attachmentRepository.js";
 import { attachmentRowToPayload } from "./attachmentRowToPayload.js";
-
-const idPathSchema = z.object({
-  id: z.string().uuid(),
-});
-
-const attachmentIdPathSchema = z.object({
-  id: z.string().uuid(),
-});
 
 const MIME_OVERRIDE_REGEX = /^[a-z]+\/[a-z0-9.+-]+$/i;
 
@@ -190,7 +183,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         userId: req.user.id,
         outcome: "failure",
         context: {
-          subject: "Technician",
+          subject: req.user.role,
           action: "create",
           resource: "Attachment",
           reason: "not_assignee",
@@ -339,7 +332,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     "/api/attachments/:id",
     authorize({ action: "delete", resource: "Attachment" }, deps.audit),
     async (req: AuthorizedRequest, res: Response) => {
-      const idParsed = attachmentIdPathSchema.safeParse(req.params);
+      const idParsed = idPathSchema.safeParse(req.params);
       if (!idParsed.success) {
         res.status(HTTP_BAD_REQUEST).json({
           error: ERROR_CODES.VALIDATION_ERROR.value,

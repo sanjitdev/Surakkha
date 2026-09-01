@@ -52,6 +52,7 @@ import {
   RuleRowSchema,
   type RuleSupersedeResponse,
 } from "@surakkha/shared";
+import { idPathSchema as sharedIdPathSchema } from "@surakkha/shared/schemas";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
@@ -178,7 +179,7 @@ export interface ThresholdsRouterDeps {
  * Parse the `:id` URL path parameter. UUIDv4 only — a malformed id
  * returns 400 BEFORE any DB lookup.
  */
-const idPathSchema = z.object({ id: z.string().uuid() });
+const idPathSchema = sharedIdPathSchema;
 
 /**
  * Parse the `GET` query string. The cursor + limit + activeOnly

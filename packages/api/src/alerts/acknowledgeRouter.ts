@@ -68,6 +68,7 @@ import {
   type AlertAcknowledgeResponse,
   AlertAcknowledgeResponseSchema,
 } from "@surakkha/shared";
+import { UuidSchema } from "@surakkha/shared/schemas";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
@@ -153,7 +154,7 @@ export interface AlertAcknowledgeDeps {
  * malformed path never reaches the DB.
  */
 const pathParamsSchema = z.object({
-  alert_id: z.string().uuid(),
+  alert_id: UuidSchema,
 });
 
 /**
