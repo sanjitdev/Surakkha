@@ -6,21 +6,16 @@
     "ignoreValues": [
       {
         "rule": "side-tab",
-        "value": "border-l-4",
-        "files": ["packages/web/src/**"],
-        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
-      },
-      {
-        "rule": "side-tab",
-        "value": "border-l-2",
-        "files": ["packages/web/src/**"],
-        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
-      },
-      {
-        "rule": "side-tab",
-        "value": "border-l-3",
-        "files": ["packages/web/src/**"],
-        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern"
+        "value": "*",
+        "files": [
+          "packages/web/src/components/KpiStat.tsx",
+          "packages/web/src/components/KpiStat.spec.tsx",
+          "packages/web/src/dashboard/LiveReadingsRegion.tsx",
+          "packages/web/src/dashboard/LiveReadingsRegion.spec.tsx",
+          "packages/web/src/dashboard/LiveReadingsRow.tsx",
+          "packages/web/src/notifications/NotificationBell.tsx"
+        ],
+        "reason": "severity-driven accent stripe — tokens drive color, not generic side-tab pattern. Wildcard value used because `side-tab` is not in the detector's `directValueRules` set, so the value never extracts; the file scope IS what suppresses. Scoped to the 6 files that ship the severity-stripe pattern (KpiStat, LiveReadings, NotificationBell) so any NEW side-tab outside this list still fails the gate."
       },
       {
         "rule": "overused-font",

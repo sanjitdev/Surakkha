@@ -235,6 +235,40 @@ When asked to implement a story:
 If you cannot complete a step, do not submit the work. Surface the
 blocker to the user.
 
+### 4.1 The design hook (impeccable)
+
+This repo ships the [`/impeccable`](https://github.com/impeccable-dev/impeccable)
+Claude Code skill. The hook fires on every UI-file edit and surfaces
+AI-slop findings (hex literals bypassing the token layer, gradient
+text, side-tab patterns, over-used fonts) as `[impeccable@1]`
+reminders. The hook is **advisory only**; findings do not block
+writes or commits.
+
+Scope is `packages/web` only — `packages/api/**` and
+`packages/shared/**` are in `.impeccable/config.json#detector.ignoreFiles`
+because the detector targets rendered HTML/CSS, not server-emitted
+JSON.
+
+**CI gate**: `pnpm lint` chains `lint:impeccable` after `lint:prose`.
+The detector exits non-zero on any finding. The current allow-list
+(severity-stripe accent borders on the six files that ship them;
+the `Inter` font family per `DESIGN.md §Typography`) lives in
+`.impeccable/config.json#detector.ignoreValues` and is read by the
+detector automatically. To add a new allow-list entry:
+
+```sh
+node .claude/skills/impeccable/scripts/hook-admin.mjs ignore-value <rule> "<value>" --reason "<who decided: evidence>"
+```
+
+Every entry must carry an evidence trail in `--reason`. The
+allow-list is reviewed each `/impeccable critique` run.
+
+**On every story that touches the web surface**: before opening the
+PR, run `/impeccable critique packages/web` and triage findings.
+The artifacts live in `.impeccable/critique/` (committed); the
+reading order is the artifact filename (chronological). P0/P1
+findings are PR-blocking; P2/P3 are follow-up tasks.
+
 ---
 
 ## 5. Anti-patterns (do not do these)
