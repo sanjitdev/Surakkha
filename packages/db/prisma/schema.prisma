@@ -29,40 +29,46 @@ datasource db {
 // simulator's local `devices.json`. Both columns are nullable to keep the
 // forward migration safe for any rows already in the table.
 model Device {
-  id             String              @id
-  lastSeenAt     DateTime?
+  id                String              @id
+  lastSeenAt        DateTime?
   // Story 2.5: human-readable label (e.g. "DHAKA-SCHOOL-023") + the
   // currently assigned scenario. Nullable so an existing row that
   // predates Story 2.5 (only `id` + `lastSeenAt`) survives the
   // forward migration without a manual backfill step.
-  name           String?
-  scenario       String?
+  name              String?
+  scenario          String?
   // Story 2.7: geographic coordinates for the operator dashboard's
   // Leaflet map (`/api/devices` joins Device.lat / Device.lng into
   // the map's marker roster). Nullable so the forward migration is
   // safe for any rows that predate Story 2.7; the seed backfills the
   // six canonical device rows idempotently.
-  lat            Float?
-  lng            Float?
+  lat               Float?
+  lng               Float?
   // F-P8: Reading rows owned by this Device. ON DELETE CASCADE
   // matches the FK constraint in the migration; a removed Device
   // does not leave orphan Reading rows behind.
-  readings       Reading[]           @relation("DeviceReadings")
+  readings          Reading[]           @relation("DeviceReadings")
   // Story 2.6: Incident rows owned by this Device. Same FK cascade
   // contract as `readings`; Story 4.2 may add additional incident
   // tables (IncidentEvent, IncidentAssignment) that branch off this
   // same DeviceId.
-  incidents      Incident[]          @relation("DeviceIncidents")
+  incidents         Incident[]          @relation("DeviceIncidents")
   // Story 3.1: Rule rows scoped to this Device (NULL = global rule).
   // Same cascade contract as `readings` / `incidents`; Story 3.7's
   // admin tab edits rules via the `DeviceRules` relation.
-  rules          Rule[]              @relation("DeviceRules")
+  rules             Rule[]              @relation("DeviceRules")
   // Story 3.4: Alert rows owned by this Device. ON DELETE CASCADE
   // collapses the Device → Alert chain on a device remove.
-  alerts         Alert[]             @relation("DeviceAlerts")
+  alerts            Alert[]             @relation("DeviceAlerts")
   // Story 3.4: RuleDebounceState rows owned by this Device. Same
   // cascade contract; no ghost timers on device re-add.
-  debounceStates RuleDebounceState[] @relation("DeviceRuleDebounceStates")
+  debounceStates    RuleDebounceState[] @relation("DeviceRuleDebounceStates")
+  // Story 5.4: ReadingAggregate rows owned by this Device. FK is
+  // ON DELETE SET NULL (per spec Boundaries & Constraints) — a
+  // deleted Device must NOT cascade-delete historical aggregates
+  // (regulators may still want them); the FK row goes null and the
+  // aggregate stays.
+  readingAggregates ReadingAggregate[]  @relation("DeviceReadingAggregates")
 }
 
 // Reading — Story 2.2 (architecture §3.2 step 7 + §5).
@@ -92,6 +98,64 @@ model Reading {
 
   @@index([deviceId, ts])
   @@index([deviceId, seq])
+}
+
+// ReadingAggregate — Story 5.4.
+//
+// Durable half of the retention story. Raw `Reading` rows accumulate
+// forever; after 30 days they are never read by any surface (the
+// operator page only renders the last 24h, the CSV export caps at
+// 30 days). They are wasted disk + index bloat on a per-device index
+// that grows monotonically. This table holds 5-minute
+// mean/min/max/sample_count buckets, one row per `(deviceId,
+// bucketStart, metric)`. Story 5.5's hourly retention cron is the
+// write target (via `upsert` on the compound unique key for
+// idempotent overlap-safe retries); this story ships the column
+// shape only.
+//
+// Columns:
+//   - `id` (UUIDv4, server-generated).
+//   - `deviceId` (FK SET NULL → Device — a deleted Device must NOT
+//      cascade-delete historical aggregates; the FK row goes null
+//      and the aggregate stays).
+//   - `bucketStart` (TIMESTAMP(3)) — the floor of the source
+//      `Reading.ts` to the nearest 5 minutes, computed by the 5.5
+//      cron (NOT by 5.4 — 5.4 ships the column shape only).
+//   - `metric` (free TEXT — the closed enum
+//      `{"tds","turbidity","ph","temperature","battery","signal"}`
+//      lives at the Zod layer
+//      `packages/shared/src/reading-aggregate.ts`; storing as TEXT
+//      avoids a Prisma enum migration every time a metric is added,
+//      same precedent as `AuditLog.resource`).
+//   - `mean` / `min` / `max` (DOUBLE PRECISION) — bucket statistics.
+//   - `sampleCount` (INTEGER) — number of raw `Reading` rows that
+//      collapsed into this bucket (drives "was the bucket full?"
+//      gap detection).
+//
+// Indexes:
+//   - `@@unique([deviceId, bucketStart, metric])` — the compound
+//      upsert key for Story 5.5's cron (`ON CONFLICT (...) DO UPDATE`
+//      for idempotent overlap-safe retries); the constraint is the
+//      load-bearing invariant.
+//   - `@@index([deviceId, bucketStart])` — the (future) range-scan
+//      read pattern (admin / chart query).
+model ReadingAggregate {
+  id          String   @id @default(uuid())
+  deviceId    String
+  bucketStart DateTime
+  metric      String
+  mean        Float
+  min         Float
+  max         Float
+  sampleCount Int
+
+  // ON DELETE SET NULL — a removed Device MUST NOT wipe historical
+  // aggregates (regulator-facing retention requirement); the FK
+  // row goes null and the aggregate stays.
+  device Device? @relation("DeviceReadingAggregates", fields: [deviceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([deviceId, bucketStart, metric])
+  @@index([deviceId, bucketStart])
 }
 
 // Incident — Story 2.6 placeholder expanded in Story 4.2.

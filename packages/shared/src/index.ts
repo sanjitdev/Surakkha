@@ -11,6 +11,7 @@ export * from "./events.js";
 export * from "./incident.js";
 export * from "./notification.js";
 export * from "./audit.js";
+export * from "./reading-aggregate.js";
 export * from "./rbac.js";
 export * from "./logger.js";
 export * from "./simulator.js";

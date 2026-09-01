@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-08-30T22:00:00.000Z
+last_updated: 2026-09-01T17:00:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -122,7 +122,7 @@ development_status:
   5-1-admin-notifications-read-view: done
   5-2-csv-export-of-30-days-of-readings: review
   5-3-audit-log-surface-at-audit: review
-  5-4-readingaggregate-table: backlog
+  5-4-readingaggregate-table: in-progress
   5-5-hourly-retention-cron: backlog
   5-6-negative-tests-for-the-audit-log: backlog
 
