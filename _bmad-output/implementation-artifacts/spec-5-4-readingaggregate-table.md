@@ -2,7 +2,7 @@
 title: "Story 5.4 — ReadingAggregate Table"
 type: "feature"
 created: "2026-09-01"
-status: "in-progress"
+status: "done"
 review_loop_iteration: 0
 baseline_commit: "782a445d6ef99bb2532c9e9df002fc0addf6bc8f"
 context: []
@@ -113,3 +113,38 @@ context: []
 **Manual checks (if no CLI):**
 
 - Open `packages/db/prisma/schema.prisma` and confirm `ReadingAggregate` is the only NEW model block (no other drift). Confirm `Device` got the `readingAggregates ReadingAggregate[]` back-relation.
+
+## Suggested Review Order
+
+<!-- Ordered by concern, not file. Read top-down to grasp intent, then narrow into details. -->
+
+### 1. Schema shape (the durable contract)
+
+- [schema.prisma:142](../../packages/db/prisma/schema.prisma#L142) — `model ReadingAggregate`: 8-column shape; the compound unique + range-scan index side-by-side pin the upsert + range-read contract.
+- [schema.prisma:157](../../packages/db/prisma/schema.prisma#L157) — `@@unique([deviceId, bucketStart, metric])`: load-bearing for Story 5.5's idempotent `ON CONFLICT DO UPDATE` cron.
+- [schema.prisma:153](../../packages/db/prisma/schema.prisma#L153) — `onDelete: SetNull` FK to Device: removed Device must NOT wipe historical aggregates (regulator retention).
+- [schema.prisma:71](../../packages/db/prisma/schema.prisma#L71) — `readingAggregates` back-relation on Device: completes the relation; non-null deviceId + nullable relation is the correct Prisma pattern.
+
+### 2. Migration SQL (the on-disk shape)
+
+- [migration.sql:44](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L44) — `CREATE TABLE "ReadingAggregate"`: 8-column declaration with explicit `DEFAULT` + nullability.
+- [migration.sql:58](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L58) — `CREATE UNIQUE INDEX`: the upsert-target invariant in SQL form.
+- [migration.sql:70](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L70) — `FOREIGN KEY ... ON DELETE SET NULL`: mirrors the schema.prisma comment.
+
+### 3. Wire contract (the closed enum at the shared seam)
+
+- [reading-aggregate.ts:54](../../packages/shared/src/reading-aggregate.ts#L54) — `ReadingAggregateMetricSchema` Zod enum: closed vocabulary for any future reader; matches the `audit.ts` sibling precedent.
+
+### 4. Repository seam (the typed adapter)
+
+- [readingAggregateRepository.ts:122](../../packages/api/src/readings/readingAggregateRepository.ts#L122) — `resolveReadingAggregateRepository(prisma)`: interface-driven adapter with the structural cast, mirrors `auditLogRepository.ts`.
+- [readingAggregateRepository.ts:216](../../packages/api/src/readings/readingAggregateRepository.ts#L216) — `toPrismaWhere`: AND-s the per-filter helpers into a single Prisma `where`; the wire-contract seam.
+- [readingAggregateRepository.ts:161](../../packages/api/src/readings/readingAggregateRepository.ts#L161) — `clampLimit`: caller-side guard short-circuits before Prisma; caps at 1000 to mirror 5.3.
+
+### 5. Test rig (the helper-seam coverage)
+
+- [readingAggregateRepository.spec.ts:1](../../packages/api/src/readings/readingAggregateRepository.spec.ts#L1) — preamble: mirrors `auditLogRepository.spec.ts`; pins the helper-chain behavior at the wire-contract boundary.
+
+### 6. Tracking (the workflow ledger)
+
+- [sprint-status.yaml](../sprint-status.yaml) — `5-4-readingaggregate-table: in-progress`; epic-5 already `in-progress` so no epic lift.
