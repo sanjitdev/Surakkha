@@ -112,7 +112,10 @@ describe("api catch-all 404 — must be mounted after every router", () => {
   it("returns the same { error: 'not_found' } shape as the pre-Story 0 stub", () => {
     // Pin the wire contract: the Docker healthcheck + the web app's
     // `Failed to load` surface both check for `error === "not_found"`.
+    // Source pins the constant reference (`ERROR_CODES.NOT_FOUND.value`
+    // resolves to `"not_found"` per `src/errors.ts`); the runtime
+    // response body is identical to the pre-Story 0 stub.
     const source = readIndex();
-    expect(source).toMatch(/error: "not_found"/);
+    expect(source).toMatch(/ERROR_CODES\.NOT_FOUND\.value/);
   });
 });

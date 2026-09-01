@@ -350,6 +350,16 @@ const applyOpenTransition = async (
       value: metricValue,
       opened_at: transition.openedAt.toISOString(),
       alert_id: resolvedAlertId,
+      // Patch (code review 2026-08-27 #15): parity with
+      // `IncidentStateChangedEventSchema`. The auto-create path is
+      // system-driven (rule engine, not an operator), so this is
+      // always null in v1 — but pinning the field shape keeps the
+      // socket-emit record uniform across the lifecycle and future-
+      // proofs a manual-create path. Missing this field surfaces as
+      // `IncidentOpenedEventSchema` parse drift — the
+      // `incident:opened` emit is silently dropped on
+      // device/incident rooms.
+      actor_user_id: null,
     };
     const parsedIncident = IncidentOpenedEventSchema.safeParse(incidentPayload);
     if (parsedIncident.success) {
