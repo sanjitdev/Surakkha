@@ -29,6 +29,7 @@
  * only structural number, and that one IS named.
  */
 /* eslint-disable no-magic-numbers */
+import { BASELINE_METRICS } from "@surakkha/shared/simulator";
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 
 /** Closed enum of scenario names — pinned by spec. */
@@ -116,12 +117,8 @@ export const scenarioRisingTDS = (
   return {
     kind: "metrics",
     metrics: {
-      ph: 7.2,
+      ...BASELINE_METRICS,
       tds_ppm: clamp(tds, 0, 5_000),
-      turbidity_ntu: 0.4,
-      temp_c: 27,
-      chlorine_ppm: 0.6,
-      water_level_cm: 80,
     },
   };
 };
@@ -143,7 +140,7 @@ export const scenarioTurbiditySpike = (
   // Linear decay from `spike` (200) at t=holdTicks to `baseline`
   // (0.4) at t=holdTicks + decayTicks - 1, with `(decayTicks - 1)`
   // equal intervals between them. So 10 decay ticks (10..19 inclusive)
-// = 10 ticks, 9 intervals, 22.18 NTU drop per tick. t=19 lands
+  // = 10 ticks, 9 intervals, 22.18 NTU drop per tick. t=19 lands
   // exactly at baseline 0.4. Cycle period 60.
   const baseline = 0.4;
   const turbidity =
@@ -155,12 +152,8 @@ export const scenarioTurbiditySpike = (
   return {
     kind: "metrics",
     metrics: {
-      ph: 7.2,
-      tds_ppm: 180,
+      ...BASELINE_METRICS,
       turbidity_ntu: clamp(turbidity, 0, 1_000),
-      temp_c: 27,
-      chlorine_ppm: 0.6,
-      water_level_cm: 80,
     },
   };
 };
@@ -179,19 +172,12 @@ export const scenarioChlorineDrop = (
   const t = tickCount % period;
   const startCl = 0.8;
   const endCl = 0.1;
-  const chlorine =
-    t < decayTicks
-      ? startCl - ((startCl - endCl) * t) / decayTicks
-      : endCl;
+  const chlorine = t < decayTicks ? startCl - ((startCl - endCl) * t) / decayTicks : endCl;
   return {
     kind: "metrics",
     metrics: {
-      ph: 7.2,
-      tds_ppm: 180,
-      turbidity_ntu: 0.4,
-      temp_c: 27,
+      ...BASELINE_METRICS,
       chlorine_ppm: clamp(chlorine, 0, 5),
-      water_level_cm: 80,
     },
   };
 };
@@ -286,9 +272,7 @@ export const runScenario = (
       return scenarioRandomFailure(state, tickCount);
     default: {
       const exhaustive: never = scenario;
-      throw new Error(
-        `simulator: unknown scenario ${exhaustive as string}`,
-      );
+      throw new Error(`simulator: unknown scenario ${exhaustive as string}`);
     }
   }
 };

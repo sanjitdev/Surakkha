@@ -38,6 +38,8 @@
  *     as `Idempotency-Key`. Until that ships, transition routes see no
  *     `Idempotency-Key` header and pass through unchanged.
  */
+import { isUuidV4 } from "@surakkha/shared";
+
 import { ERROR_CODES } from "../errors.js";
 import { HTTP_BAD_REQUEST, HTTP_STATUS_MAX_CACHEABLE } from "../httpStatus.js";
 
@@ -46,9 +48,6 @@ import { type AuthorizedRequest } from "./authorize";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 const IDEMPOTENCY_TTL_MS = 300_000; // 5 minutes
-
-// RFC 4122 UUID v4 — `4` in the version nibble, [89ab] in the variant nibble.
-const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface CachedResponse {
   readonly status: number;
@@ -113,7 +112,7 @@ export const idempotency =
       return;
     }
 
-    if (!UUID_V4_RE.test(header)) {
+    if (!isUuidV4(header)) {
       res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_IDEMPOTENCY_KEY.value });
       return;
     }

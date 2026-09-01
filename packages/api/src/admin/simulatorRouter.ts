@@ -26,6 +26,7 @@
  *       control server. On success, writes an `AuditLog` row via the
  *       structured logger.
  */
+import { isUuidV4 } from "@surakkha/shared";
 import { SCENARIO_NAMES, type ScenarioName } from "@surakkha/shared/simulator";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
@@ -70,8 +71,6 @@ const scenarioSwitchBodySchema = z
   .refine((b) => b.scenario !== undefined || b.paused !== undefined, {
     message: "must include scenario or paused",
   });
-
-const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 
@@ -198,7 +197,7 @@ const validateScenarioRequest = (
   | { readonly ok: true; readonly deviceId: string; readonly body: ScenarioSwitchBody }
   | { readonly ok: false } => {
   const deviceId = req.params["device_id"];
-  if (deviceId === undefined || typeof deviceId !== "string" || !UUID_V4_REGEX.test(deviceId)) {
+  if (deviceId === undefined || typeof deviceId !== "string" || !isUuidV4(deviceId)) {
     res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_DEVICE_ID.value });
     return { ok: false };
   }

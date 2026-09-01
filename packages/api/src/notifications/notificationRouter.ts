@@ -47,6 +47,7 @@ import {
   type NotificationSeverity,
   NotificationSeveritySchema,
 } from "@surakkha/shared/notification";
+import { idPathSchema } from "@surakkha/shared/schemas";
 import express, { type Response, type Router } from "express";
 import { z } from "zod";
 
@@ -100,9 +101,7 @@ const NOTIFICATION_TAKE_LIMIT = 50;
  * the row PK (UUIDv4). Non-UUID values are rejected at parse time
  * (400) so a malformed path never reaches the DB.
  */
-const pathParamsSchema = z.object({
-  id: z.string().uuid(),
-});
+const pathParamsSchema = idPathSchema;
 
 /**
  * Parse the `:id` path parameter with `pathParamsSchema`. On

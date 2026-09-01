@@ -20,23 +20,13 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isUuidV4 } from "@surakkha/shared";
 import { createLogger } from "@surakkha/shared/logger";
 
-import {
-  setClientsRegistry,
-  startControlServer,
-} from "./control/server.js";
-import {
-  assertJwtSecretOrExit,
-  mintSimulatorTokensForDevices,
-} from "./jwt.js";
+import { setClientsRegistry, startControlServer } from "./control/server.js";
+import { assertJwtSecretOrExit, mintSimulatorTokensForDevices } from "./jwt.js";
 import { SCENARIO_NAMES, type ScenarioName } from "./scenarios.js";
-import {
-  BUFFER_CAP,
-  MIN_TICK_INTERVAL_MS,
-  WsClient,
-  type WsClientOptions,
-} from "./wsClient.js";
+import { BUFFER_CAP, MIN_TICK_INTERVAL_MS, WsClient, type WsClientOptions } from "./wsClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -46,9 +36,6 @@ const logger = createLogger({ name: "surakkha-simulator", level: "info" });
 // `readFileSync(__dirname + ...)` keeps the file load deterministic
 // regardless of CWD; tests pass a custom path via `loadDevicesFile`.
 const DEVICES_FILE_PATH = resolve(__dirname, "devices.json");
-
-const UUID_V4_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface DevicesFileShape {
   readonly tick_interval_ms: number;
@@ -156,21 +143,16 @@ const validateDevices = (
     const e = entry as Record<string, unknown>;
     const deviceIdRaw: unknown = e["device_id"];
     const scenarioRaw: unknown = e["scenario"];
-    if (typeof deviceIdRaw !== "string" || !UUID_V4_REGEX.test(deviceIdRaw)) {
+    if (!isUuidV4(deviceIdRaw)) {
       failFast(
         `simulator: devices.json devices[${index}].device_id must be a UUIDv4 (got ${String(deviceIdRaw)})`,
       );
     }
     const deviceId = deviceIdRaw as string;
     if (seen.has(deviceId)) {
-      failFast(
-        `simulator: devices.json devices[${index}].device_id "${deviceId}" is a duplicate`,
-      );
+      failFast(`simulator: devices.json devices[${index}].device_id "${deviceId}" is a duplicate`);
     }
-    if (
-      typeof scenarioRaw !== "string" ||
-      !SCENARIO_NAMES.includes(scenarioRaw as ScenarioName)
-    ) {
+    if (typeof scenarioRaw !== "string" || !SCENARIO_NAMES.includes(scenarioRaw as ScenarioName)) {
       failFast(
         `simulator: devices.json devices[${index}].scenario "${String(scenarioRaw)}" is not in SCENARIO_NAMES (${SCENARIO_NAMES.join(", ")})`,
       );
@@ -331,10 +313,7 @@ export const boot = (): void => {
     try {
       const handle = await startControlServer();
       closeControlServer = handle.close;
-      logger.info(
-        { port: handle.port },
-        "simulator: control server listening",
-      );
+      logger.info({ port: handle.port }, "simulator: control server listening");
     } catch (err: unknown) {
       const errObj = err as { code?: string; message?: string };
       if (errObj.code === "EADDRINUSE") {
@@ -350,10 +329,7 @@ export const boot = (): void => {
         // eslint-disable-next-line no-restricted-properties
         process.exit(1);
       }
-      logger.warn(
-        { err },
-        "simulator: control server failed to start",
-      );
+      logger.warn({ err }, "simulator: control server failed to start");
     }
   })();
 
@@ -370,10 +346,7 @@ export const boot = (): void => {
     // (e.g. boot-time failure left it in a half-open state).
     if (closeControlServer !== null) {
       void closeControlServer().catch((err: unknown) => {
-        logger.warn(
-          { err },
-          "simulator: control server close threw",
-        );
+        logger.warn({ err }, "simulator: control server close threw");
       });
     }
     logger.info("simulator: shutdown complete");

@@ -62,8 +62,8 @@ import {
   type IncidentPayload,
 } from "@surakkha/shared/incident";
 import { type Action } from "@surakkha/shared/rbac";
+import { idPathSchema as sharedIdPathSchema } from "@surakkha/shared/schemas";
 import express, { type Response, type Router } from "express";
-import { z } from "zod";
 
 import { type AuditLogger } from "../audit.js";
 import { ERROR_CODES } from "../errors.js";
@@ -92,9 +92,7 @@ import {
   type TransitionContext,
 } from "./transitionHelpers.js";
 
-const idPathSchema = z.object({
-  id: z.string().uuid(),
-});
+const idPathSchema = sharedIdPathSchema;
 
 /**
  * Dependencies the router needs from the surrounding app. Slim
@@ -289,7 +287,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
           userId: req.user.id,
           outcome: "failure",
           context: {
-            subject: "Technician",
+            subject: req.user.role,
             action: "read",
             resource: "Incident",
             reason: "not_assignee",
@@ -350,7 +348,7 @@ export const buildIncidentsRouter = (deps: IncidentsRouterDeps): Router => {
           userId: req.user.id,
           outcome: "failure",
           context: {
-            subject: "Technician",
+            subject: req.user.role,
             action: "read",
             resource: "Incident",
             reason: "not_assignee",

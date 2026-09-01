@@ -17,6 +17,7 @@
  * (`device:<device_id>`) and is NEVER trusted from the JWT `sub`
  * alone — the WS handler always compares the two.
  */
+import { isUuidV4 } from "@surakkha/shared";
 import { type Server as IoServer } from "socket.io";
 
 import { verifyIngestClaims } from "../auth/jwt";
@@ -56,9 +57,6 @@ interface MinimalSocket {
   readonly disconnect: (close?: boolean) => unknown;
   readonly data: Record<string, unknown>;
 }
-
-const uuidV4Pattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Extract the device_id from the connection handshake. The wire
@@ -122,17 +120,16 @@ export const buildIngestServer = (
   const { io } = deps;
   const { prisma } = deps;
 
-  const broadcast: BroadcastTarget =
-    deps.broadcastOverride ?? {
-      to(room: string) {
-        return {
-          emit(event: string, payload: unknown): unknown {
-            io.to(room).emit(event, payload);
-            return undefined;
-          },
-        };
-      },
-    };
+  const broadcast: BroadcastTarget = deps.broadcastOverride ?? {
+    to(room: string) {
+      return {
+        emit(event: string, payload: unknown): unknown {
+          io.to(room).emit(event, payload);
+          return undefined;
+        },
+      };
+    },
+  };
 
   return async (rawSocket: unknown): Promise<void> => {
     const socket = rawSocket as MinimalSocket;
@@ -140,7 +137,7 @@ export const buildIngestServer = (
     const token = extractToken(socket);
 
     // Missing device_id, malformed UUID, or missing token → 4401.
-    if (urlDeviceId === "" || !uuidV4Pattern.test(urlDeviceId) || token === null) {
+    if (urlDeviceId === "" || !isUuidV4(urlDeviceId) || token === null) {
       socket.emit("unauthenticated");
       socket.disconnect(true);
       return;

@@ -70,6 +70,10 @@
     "./error-envelope": {
       "types": "./dist/error-envelope.d.ts",
       "import": "./dist/error-envelope.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js"
     }
   },
   "scripts": {

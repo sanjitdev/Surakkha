@@ -38,3 +38,27 @@ export type ScenarioName = (typeof SCENARIO_NAMES)[number];
  * error rather than being silently dropped.
  */
 export const ScenarioNameSchema = z.enum(SCENARIO_NAMES);
+
+/**
+ * Simulator firmware version — surfaced in telemetry frame metadata.
+ * The api logs a `console.warn` if a frame arrives with a newer
+ * `fw_version` than this constant so on-call engineers know when a
+ * device fleet has rolled forward.
+ */
+export const SIMULATOR_FW_VERSION = "1.4.0" as const;
+
+/**
+ * Baseline metrics for the "Normal" scenario (and the first 5 ticks
+ * of the "Offline" scenario, which emits Normal-shape values during
+ * the grace window per architecture §6.1). All three call sites in
+ * `packages/simulator/src/scenarios.ts` repeat the same six-tuple;
+ * lifting it here removes the magic-number drift.
+ */
+export const BASELINE_METRICS = {
+  ph: 7.2,
+  tds_ppm: 180,
+  turbidity_ntu: 0.4,
+  temp_c: 27,
+  chlorine_ppm: 0.6,
+  water_level_cm: 80,
+} as const;
