@@ -63,6 +63,11 @@ const readSchema = (): string => readFileSync(SCHEMA_PATH, "utf8");
  * substring so the AC field + index assertions operate on the model
  * scope, not the entire file. Mirrors the audit precedent at
  * `audit-log.schema.spec.ts:66-82`.
+ *
+ * Prisma has no nested braces inside a model body today, but the
+ * raw-text brace-counter below SKIPS `// ...` and `/* ... *\/`
+ * regions so a future comment containing `{` or `}` cannot corrupt
+ * the depth counter (Story 5.4 review pass 2 — finding T2-NEW-1).
  */
 const extractModelBody = (schema: string, modelName: string): string => {
   const header = `model ${modelName} {`;
@@ -72,6 +77,20 @@ const extractModelBody = (schema: string, modelName: string): string => {
   let depth = 1;
   let end = afterHeader;
   for (let i = afterHeader; i < schema.length && depth > 0; i += 1) {
+    // Skip `// line comments` to end of line.
+    if (schema[i] === "/" && schema[i + 1] === "/") {
+      const nl = schema.indexOf("\n", i);
+      if (nl === -1) break;
+      i = nl;
+      continue;
+    }
+    // Skip `/* block comments */`.
+    if (schema[i] === "/" && schema[i + 1] === "*") {
+      const close = schema.indexOf("*/", i + 2);
+      if (close === -1) break;
+      i = close + 1;
+      continue;
+    }
     if (schema[i] === "{") depth += 1;
     else if (schema[i] === "}") depth -= 1;
     if (depth === 0) {
@@ -121,10 +140,14 @@ describe("Story 5.4 — ReadingAggregate schema pin", () => {
 
   it("uses Float for mean/min/max and Int for sampleCount", () => {
     const body = extractModelBody(readSchema(), "ReadingAggregate");
-    expect(body).toMatch(/mean\s+Float\b/);
-    expect(body).toMatch(/min\s+Float\b/);
-    expect(body).toMatch(/max\s+Float\b/);
-    expect(body).toMatch(/sampleCount\s+Int\b/);
+    // `(?!\\?)` is a negative lookahead — pins the column as non-nullable
+    // (`Float` not `Float?`). Story 5.4 review pass 2 (finding T2-NEW-4):
+    // the bare `Float\b` regex matched both forms; the migration SQL
+    // pins NOT NULL separately, but this tightens the schema spec too.
+    expect(body).toMatch(/mean\s+Float(?!\?)/);
+    expect(body).toMatch(/min\s+Float(?!\?)/);
+    expect(body).toMatch(/max\s+Float(?!\?)/);
+    expect(body).toMatch(/sampleCount\s+Int(?!\?)/);
   });
 
   it("has @@unique([deviceId, bucketStart, metric]) for the 5.5 upsert cron", () => {

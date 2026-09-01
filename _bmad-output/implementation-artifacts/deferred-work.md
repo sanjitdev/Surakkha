@@ -228,3 +228,16 @@
 - **F-5.4-D12** — `metricWhere` accepts free string despite "closed-enum" comment (`readingAggregateRepository.ts:184-188`). No router in 5.4; closed-enum validation lives at the future router boundary.
 - **F-5.4-D13** — AC2 (`P2002`) has no executable coverage (`spec-5-4-readingaggregate-table.md:95`). AC2 is asserted at the SQL shape level (unique index exists); live `prisma.readingAggregate.create()` duplicate-insert test requires a live DB; deferred to 5.5 writer-side tests.
 - **F-5.4-D14** — AC1 migration-on-fresh-DB has no automated verification (`spec-5-4-readingaggregate-table.md:94`). `prisma migrate dev` runs locally; CI is a TODO stub (out of 5.4 scope).
+
+## Deferred from: code review pass 2 of spec-5-4-readingaggregate-table (2026-09-01)
+
+<!-- 4 reviewer layers re-executed on the post-fix state. Triage: 3 patch + 7 defer + 12 dismiss.
+     All 7 defer items below overlap with the existing F-5.4-D1..D14 ledger; no new defects surfaced. -->
+
+- **F-5.4-D15** — Spec narrative drift: `Schema Unique` I/O Matrix row doesn't mention `NULLS NOT DISTINCT` (`spec-5-4-readingaggregate-table.md:62`). Doc clarification only; SQL + migration spec test pin the invariant.
+- **F-5.4-D16** — `ReadingAggregateFilters.metric` typed as `string` not `ReadingAggregateMetric` (`readingAggregateRepository.ts:649`). Already captured as F-5.4-D12; router-boundary concern by spec design.
+- **F-5.4-D17** — Concurrent modification race between `Promise.all` findMany+count (`readingAggregateRepository.ts:744-756`). Already captured as F-5.4-D9; `Promise.all` narrows but cannot eliminate the window.
+- **F-5.4-D18** — `metricWhere` accepts any non-empty string; closed-enum invariant only at Zod layer (`readingAggregateRepository.ts:803-806`). Already captured as F-5.4-D8/D12; matches `AuditLogResourceSchema` precedent.
+- **F-5.4-D19** — `metricWhere` test duplicates the shared-spec `it.each` (drift hazard) (`readingAggregateRepository.spec.ts:327-337`). Mirrors 5.3 audit precedent; project-wide change, not 5.4 scope.
+- **F-5.4-D20** — No pagination cursor; `findMany` interface takes pre-clamped `take` (`readingAggregateRepository.ts:97-109`). Already captured as F-5.4-D4/D11; future admin router owns the wiring.
+- **F-5.4-D21** — `clampLimit` `+Infinity` short-circuit branch untested (`readingAggregateRepository.spec.ts:415-417`). `NaN` test pins the `Number.isFinite` branch; `+Infinity` follows the same code path; adding 1 more test is low-value.

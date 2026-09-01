@@ -168,7 +168,7 @@ context: []
 - [x] [Review][Patch] **Add `packages/db/__tests__/reading-aggregate.schema.spec.ts` + `reading-aggregate.migration.spec.ts`** — DONE. Schema spec: 9 tests pin field order, `String?` deviceId, `String` metric, Float/Int types, `@@unique`+`@@index`, SetNull FK, Device back-relation, migration folder pattern. Migration spec: 4 tests pin CREATE TABLE shape (with `TEXT,` nullable deviceId), `NULLS NOT DISTINCT` UNIQUE INDEX, range-scan INDEX, FK `ON DELETE SET NULL ON UPDATE CASCADE`.
 - [x] [Review][Patch] **Update stale spec line citations** [`spec-5-4-readingaggregate-table.md:27, 39, 71, 131-132`] — DONE. `epics.md:1622` reframed to "user-story AC line (camelCase convention)"; `schema.prisma:554` → `:631` (5.3's own insert shifted it); `migration.sql:58` → `:66` (the NULLS NOT DISTINCT comment block added 8 lines); `migration.sql:70` → `:77`.
 
-### Deferred (12)
+### Deferred (14)
 
 - [x] [Review][Defer] **Redundant `@@index([deviceId, bucketStart])` vs `@@unique([deviceId, bucketStart, metric])` leading prefix** [`packages/db/prisma/schema.prisma:158`] — deferred, pre-existing — Postgres can range-scan the unique index; both are kept to mirror 5.3 AuditLog precedent; index-tuning pass can drop later.
 - [x] [Review][Defer] **`bucketStart` is `TIMESTAMP(3)` timezone-naive** [`packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql:47`] — deferred, pre-existing — DST ambiguity is locked in by the 5.4 schema choice; 5.5 cron writes in UTC anyway; column-type migration to `Timestamptz` is a future story.
@@ -184,3 +184,40 @@ context: []
 - [x] [Review][Defer] **`metricWhere` accepts free string (closed-enum comment lies)** [`packages/api/src/readings/readingAggregateRepository.ts:184-188`] — deferred, pre-existing — no router in 5.4; closed-enum validation lives at the future router boundary.
 - [x] [Review][Defer] **AC2 (`P2002`) has no test coverage** [`spec-5-4-readingaggregate-table.md:95`] — deferred, pre-existing — AC2 is asserted at the SQL shape level (unique index exists); live `prisma.readingAggregate.create()` duplicate-insert test requires a live DB; deferred to 5.5 writer-side tests.
 - [x] [Review][Defer] **AC1 migration-on-fresh-DB has no automated test** [`spec-5-4-readingaggregate-table.md:94`] — deferred, pre-existing — `prisma migrate dev` runs locally; CI is a TODO stub (out of 5.4 scope).
+
+---
+
+## Review Pass 2 — 2026-09-01
+
+<!-- Re-running bmad-code-review on the post-fix state. 4 reviewer layers
+     re-executed on the same diff; findings triaged into 3 patches + 7 defers
+     + 12 dismiss. Spec header counter bug caught (Patches section still says
+     "Deferred (12)" but body has 14 entries). -->
+
+### Patches (3 — APPLIED 2026-09-01)
+
+- [x] [Review][Patch] **`extractModelBody` brace-counter is fragile against `// comments` containing braces** [`packages/db/__tests__/reading-aggregate.schema.spec.ts:67-83`] — APPLIED. Helper now skips `// ...` and `/* ... */` regions. Mirrors the same fix needed in 5.3's precedent.
+- [x] [Review][Patch] **Spec header counter drift: "Deferred (12)" but body has 14 entries** [`spec-5-4-readingaggregate-table.md:171`] — APPLIED. Now reads "Deferred (14)".
+- [x] [Review][Patch] **`Float\b` regex matches `Float?` — nullability not pinned at the schema layer** [`packages/db/__tests__/reading-aggregate.schema.spec.ts:124-127`] — APPLIED. Regex now uses `Float(?!\?)` (negative lookahead). Migration SQL still pins `NOT NULL` separately; schema spec now also load-bearing.
+
+### Deferred (7)
+
+- [x] [Review][Defer] **Spec narrative drift: `Schema Unique` I/O Matrix row doesn't mention `NULLS NOT DISTINCT`** [`spec-5-4-readingaggregate-table.md:62`] — deferred — the SQL + migration spec test pin the invariant; behavioral correctness preserved; doc clarification only.
+- [x] [Review][Defer] **`ReadingAggregateFilters.metric` typed as `string` not `ReadingAggregateMetric`** [`packages/api/src/readings/readingAggregateRepository.ts:649`] — deferred, pre-existing — already captured as F-5.4-D12; router-boundary concern by spec design.
+- [x] [Review][Defer] **Concurrent modification race between `Promise.all` findMany+count** [`packages/api/src/readings/readingAggregateRepository.ts:744-756`] — deferred, pre-existing — already captured as F-5.4-D9; `Promise.all` narrows but cannot eliminate the window.
+- [x] [Review][Defer] **`metricWhere` accepts any non-empty string; closed-enum invariant only at Zod layer** [`packages/api/src/readings/readingAggregateRepository.ts:803-806`] — deferred, pre-existing — already captured as F-5.4-D8/D12; matches `AuditLogResourceSchema` precedent.
+- [x] [Review][Defer] **`metricWhere` test duplicates the shared-spec `it.each` (drift hazard)** [`packages/api/src/readings/readingAggregateRepository.spec.ts:327-337`] — deferred, pre-existing — mirrors 5.3 audit precedent; refactoring to a shared fixture is a project-wide change, not 5.4 scope.
+- [x] [Review][Defer] **No pagination cursor; `findMany` interface takes pre-clamped `take`** [`packages/api/src/readings/readingAggregateRepository.ts:97-109`] — deferred, pre-existing — already captured as F-5.4-D4/D11; future admin router owns the wiring.
+- [x] [Review][Defer] **`clampLimit` `+Infinity` short-circuit branch untested** [`packages/api/src/readings/readingAggregateRepository.spec.ts:415-417`] — deferred, pre-existing — `NaN` test pins the `Number.isFinite` branch; `+Infinity` follows the same code path; adding 1 more test is low-value.
+
+### Dismissed (12)
+
+<!-- 12 items classified as noise / false positives / already-deferred, including:
+     test tautologies (ALL_METRICS.length === 6 asserting on its own local array),
+     Device-model whitespace churn (cosmetic),
+     spec line-number citation drift across sections (point-in-time citations always drift),
+     Promise.all test not strictly pinning concurrent issuance (already noted in the test's
+     own comment, plus the F-5.4-D9 + Promise.all-refactor pair is the actual improvement),
+     spec narrative contradictions (rhetorical strawman; rationale already clarifies),
+     review_loop_iteration: 0 despite the review pass (header counter drift; metadata-only),
+     bucket-of-doc-drift items already captured as F-5.4-D13/D14. -->
