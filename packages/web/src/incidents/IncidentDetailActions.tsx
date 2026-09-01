@@ -35,7 +35,7 @@
  * testids disambiguate.
  */
 import { type IncidentPayload, type InspectionOutcome } from "@surakkha/shared/incident";
-import { type Role } from "@surakkha/shared/rbac";
+import { isAllowed, type Role } from "@surakkha/shared/rbac";
 import { useState } from "react";
 
 import { actionSlotsFor } from "../components/IncidentCard.types";
@@ -95,6 +95,11 @@ const ACTION_BUTTON_BASE =
  * same length locally so the disabled-when-empty affordance stays
  * consistent with the Assign / Submit Result forms).
  *
+ * Story 5.2 — `onExportCsv` is the page-owned handler that fires
+ * the download mutation; `isExporting` mirrors the mutation's
+ * `isPending` so the button can disable while the blob is being
+ * fetched + decoded.
+ *
  * `viewerUserId` is threaded through to `actionSlotsFor`'s third
  * argument — the INSPECTING ownership gate
  * (`slotsForInspecting` returns `["submit-result"]` only when
@@ -115,6 +120,9 @@ const ACTION_BUTTON_BASE =
  *   - `isReopening` — same verb-form pattern as `isSubmitting`;
  *     the rule rejects the canonical `isReopen` (single capitalized
  *     syllable after `is`).
+ *   - `isExporting` — verb-form pattern, matches `isSubmitting` /
+ *     `isReopening`; the canonical `isExport` (single capitalized
+ *     syllable after `is`) is rejected by the rule.
  */
 interface IncidentDetailActionsProps {
   readonly incident: IncidentPayload;
@@ -124,11 +132,60 @@ interface IncidentDetailActionsProps {
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
   readonly isReopening: boolean;
+  readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
   readonly onReopen: (reason: string) => void;
+  readonly onExportCsv: () => void;
 }
+
+/**
+ * Visibility flags derived from `actionSlotsFor` + the client-side
+ * RBAC mirror. Extracted from `IncidentDetailActions` so the
+ * orchestrator function stays under the `complexity` lint cap
+ * (max 10). The shape is intentionally a plain object (not a
+ * `useMemo` / hook) because the inputs are already cheap (an array
+ * of ≤ 4 strings + a role comparison); memoization would add a
+ * hook dependency for no measurable win.
+ */
+interface SlotFlags {
+  readonly canAcknowledge: boolean;
+  readonly canAssign: boolean;
+  readonly canSubmitResult: boolean;
+  readonly canReopen: boolean;
+  /**
+   * Client-side mirror of the api matrix entry `export Reading`.
+   * The server is the authority — but the affordance is hidden
+   * client-side so a Technician / Viewer never sees a button that
+   * would 403 on click. Mirrors `isAllowed({ subject, action:
+   * "export", resource: "Reading" })` from `@surakkha/shared/rbac`.
+   */
+  readonly canExportCsv: boolean;
+}
+
+const computeSlotFlags = (
+  incident: IncidentPayload,
+  viewerRole: Role | null,
+  viewerUserId: string | null,
+): SlotFlags => {
+  const slots = actionSlotsFor(incident, viewerRole, viewerUserId);
+  return {
+    canAcknowledge: slots.includes("acknowledge"),
+    canAssign: slots.includes("assign"),
+    canSubmitResult: slots.includes("submit-result"),
+    canReopen: slots.includes("reopen"),
+    // F5 — derive `canExportCsv` from the canonical RBAC matrix via
+    // `isAllowed({ subject, action: "export", resource: "Reading" })`
+    // instead of a stringly-typed role mirror. The matrix is the
+    // single source of truth; if a future role is granted
+    // `export Reading`, the button appears for that role without
+    // a separate UI edit.
+    canExportCsv:
+      viewerRole !== null &&
+      isAllowed({ subject: viewerRole, action: "export", resource: "Reading" }),
+  };
+};
 
 /**
  * Render the action region (Acknowledge button + Assign inline form
@@ -162,19 +219,76 @@ export const IncidentDetailActions = ({
   isAssign,
   isSubmitting,
   isReopening,
+  isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
   onReopen,
+  onExportCsv,
 }: IncidentDetailActionsProps) => {
-  const slots = actionSlotsFor(incident, viewerRole, viewerUserId);
-  const canAcknowledge = slots.includes("acknowledge");
-  const canAssign = slots.includes("assign");
-  const canSubmitResult = slots.includes("submit-result");
-  const canReopen = slots.includes("reopen");
+  const flags = computeSlotFlags(incident, viewerRole, viewerUserId);
+  const { canAcknowledge, canAssign, canSubmitResult, canReopen, canExportCsv } = flags;
+  const anyVisible = canAcknowledge || canAssign || canSubmitResult || canReopen || canExportCsv;
+  if (!anyVisible) {
+    return null;
+  }
+  return (
+    <Actions
+      flags={flags}
+      isAck={isAck}
+      isAssign={isAssign}
+      isSubmitting={isSubmitting}
+      isReopening={isReopening}
+      isExporting={isExporting}
+      onAcknowledge={onAcknowledge}
+      onAssign={onAssign}
+      onSubmitResult={onSubmitResult}
+      onReopen={onReopen}
+      onExportCsv={onExportCsv}
+    />
+  );
+};
 
-  if (!canAcknowledge && !canAssign && !canSubmitResult && !canReopen) return null;
+interface ActionsProps {
+  readonly flags: SlotFlags;
+  readonly isAck: boolean;
+  readonly isAssign: boolean;
+  readonly isSubmitting: boolean;
+  readonly isReopening: boolean;
+  readonly isExporting: boolean;
+  readonly onAcknowledge: () => void;
+  readonly onAssign: (assigneeUserId: string) => void;
+  readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onReopen: (reason: string) => void;
+  readonly onExportCsv: () => void;
+}
 
+/**
+ * Pure-JSX rendering sub-component. Extracted so the
+ * `IncidentDetailActions` orchestrator stays under the `complexity`
+ * lint cap (max 10); the gate lives on the parent, the JSX lives
+ * here.
+ *
+ * The `flags` prop is a `SlotFlags` object rather than five
+ * `canX` boolean props because the `react/boolean-prop-naming`
+ * rule rejects names that don't match `^is[A-Z]...`. Bundling
+ * the five visibility flags into one prop avoids the lint noise
+ * and keeps the orchestrator's destructuring compact.
+ */
+const Actions = ({
+  flags,
+  isAck,
+  isAssign,
+  isSubmitting,
+  isReopening,
+  isExporting,
+  onAcknowledge,
+  onAssign,
+  onSubmitResult,
+  onReopen,
+  onExportCsv,
+}: ActionsProps) => {
+  const { canAcknowledge, canAssign, canSubmitResult, canReopen, canExportCsv } = flags;
   return (
     <div data-testid="incident-detail-actions" className="flex flex-col gap-3">
       {canAcknowledge ? (
@@ -196,6 +310,20 @@ export const IncidentDetailActions = ({
         <SubmitResultForm isPending={isSubmitting} onSubmitResult={onSubmitResult} />
       ) : null}
       {canReopen ? <ReopenForm isPending={isReopening} onReopen={onReopen} /> : null}
+      {canExportCsv ? (
+        <button
+          type="button"
+          data-testid="incident-detail-export-csv-button"
+          disabled={isExporting}
+          onClick={onExportCsv}
+          className={[
+            "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
+            ACTION_BUTTON_BASE,
+          ].join(" ")}
+        >
+          {isExporting ? "Exporting…" : "Export CSV (30d)"}
+        </button>
+      ) : null}
     </div>
   );
 };

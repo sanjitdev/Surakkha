@@ -71,6 +71,11 @@ import { buildRecentIncidentsListReader } from "./incidents/recentWiring.js";
 import { buildIncidentsRouterMount } from "./incidents/routerWiring.js";
 import { authenticate } from "./middleware/authorize";
 import { mountNotificationRouter } from "./notifications/routerWiring.js";
+import {
+  buildCsvRouter,
+  buildPrismaDeviceExists,
+  buildPrismaStreamForCsv,
+} from "./readings/csvRouter.js";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 import { buildLatestReadingsListReader } from "./readings/wiring.js";
 import { WriteAmplificationError } from "./rules/hooks.js";
@@ -153,6 +158,19 @@ app.use(
 
 // Story 2.7 — `GET /api/devices`. The list-reader is lazy-resolved.
 app.use(buildDevicesRouter({ audit, listDevices: buildDevicesRosterListReader(getPrisma) }));
+
+// Story 5.2 — `GET /api/devices/:deviceId/readings.csv`. Streams the
+// last 30 days of readings (or the `?since`/`?until` window) as CSV.
+// RBAC: `export Reading` grants Operator + Admin. Mounted AFTER the
+// devices roster so the catch-all 404 (registered further below)
+// stays the LAST Express mount per RUNBOOK §6a.
+app.use(
+  buildCsvRouter({
+    audit,
+    streamForCsv: buildPrismaStreamForCsv(getPrisma),
+    deviceExists: buildPrismaDeviceExists(getPrisma),
+  }),
+);
 
 // Story 2.6 — `/api/incidents/recent`. The list-reader is lazy-resolved
 // and normalizes severity via `IncidentSeveritySchema` (drops the

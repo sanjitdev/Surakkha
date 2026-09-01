@@ -1,5 +1,5 @@
 # generated: 2026-08-21
-# last_updated: 2026-08-30T22:00:00.000Z
+# last_updated: 2026-09-01T00:00:00.000Z
 # project: Surakkha
 # project_key: NOKEY
 # tracking_system: file-system
@@ -120,7 +120,7 @@ development_status:
   # rbac_allowed emit is wired before any new audit-row consumers land.
   5-0-ai-3-1-fix-sweep: done
   5-1-admin-notifications-read-view: done
-  5-2-csv-export-of-30-days-of-readings: backlog
+  5-2-csv-export-of-30-days-of-readings: review
   5-3-audit-log-surface-at-audit: backlog
   5-4-readingaggregate-table: backlog
   5-5-hourly-retention-cron: backlog

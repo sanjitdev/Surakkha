@@ -64,6 +64,10 @@ import { useAcknowledgeMutation } from "./useAcknowledgeMutation";
 import { useAssignMutation } from "./useAssignMutation";
 import { useDetailActionHandlers } from "./useDetailActionHandlers";
 import {
+  ReadingsCsvExportRbacDeniedError,
+  useDownloadReadingsCsvMutation,
+} from "./useDownloadReadingsCsvMutation";
+import {
   type IncidentDetailRowQuery,
   useIncidentDetailPageQueries,
 } from "./useIncidentDetailPageQueries";
@@ -318,6 +322,12 @@ export const IncidentDetailPage = () => {
   const assignMutation = useAssignMutation(id ?? "");
   const submitResultMutation = useSubmitResultMutation(id ?? "");
   const reopenMutation = useReopenMutation(id ?? "");
+  // Story 5.2 — CSV export mutation. The mutation lives on the
+  // page (not in `useDetailActionHandlers`) because the success
+  // path triggers a browser-side download, not a row-query
+  // invalidation — the success handler closes over `incident` to
+  // name the target device.
+  const exportCsvMutation = useDownloadReadingsCsvMutation();
 
   useIncidentDetailSocket(id ?? "");
 
@@ -339,6 +349,35 @@ export const IncidentDetailPage = () => {
       pushToast,
     });
 
+  // Story 5.2 — CSV export handler. The mutation's success
+  // resolves once the blob has been saved; we surface a
+  // generic success toast (the wire does not carry a row count
+  // envelope — F3 decision: keep the generic "Downloaded
+  // readings export" copy rather than fabricating a count from
+  // the trailer-free body, and update the spec to match).
+  //
+  // F19 — branch on `instanceof ReadingsCsvExportRbacDeniedError`
+  // to surface the permanent-denial copy. RBAC denials are NOT
+  // retryable (the role will never gain `export Reading`), so
+  // the toast copy says "Not authorized to export readings"
+  // rather than the classifier's generic "Try again" copy.
+  const handleExportCsv = (): void => {
+    if (incident === undefined) return;
+    exportCsvMutation.mutate(
+      { deviceId: incident.device_id },
+      {
+        onSuccess: () => pushToast("success", "Downloaded readings export"),
+        onError: (err) => {
+          if (err instanceof ReadingsCsvExportRbacDeniedError) {
+            pushToast("error", "Not authorized to export readings");
+            return;
+          }
+          pushToast("error", err.message);
+        },
+      },
+    );
+  };
+
   return (
     <>
       <IncidentDetailDispatch
@@ -351,10 +390,12 @@ export const IncidentDetailPage = () => {
         isAssign={assignMutation.isPending}
         isSubmitting={submitResultMutation.isPending}
         isReopening={reopenMutation.isPending}
+        isExporting={exportCsvMutation.isPending}
         onAcknowledge={handleAcknowledge}
         onAssign={handleAssign}
         onSubmitResult={handleSubmitResult}
         onReopen={handleReopen}
+        onExportCsv={handleExportCsv}
         onRetry={() => {
           void queryClient.invalidateQueries({
             queryKey: incidentDetailQueryKey(id ?? ""),
@@ -387,10 +428,12 @@ const IncidentDetailDispatch = ({
   isAssign,
   isSubmitting,
   isReopening,
+  isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
   onReopen,
+  onExportCsv,
   onRetry,
 }: {
   readonly rowQuery: IncidentDetailRowQuery;
@@ -402,10 +445,12 @@ const IncidentDetailDispatch = ({
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
   readonly isReopening: boolean;
+  readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
   readonly onReopen: (reason: string) => void;
+  readonly onExportCsv: () => void;
   readonly onRetry: () => void;
 }) => {
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailNotFoundError) {
@@ -432,10 +477,12 @@ const IncidentDetailDispatch = ({
       isAssign={isAssign}
       isSubmitting={isSubmitting}
       isReopening={isReopening}
+      isExporting={isExporting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
       onReopen={onReopen}
+      onExportCsv={onExportCsv}
     />
   );
 };
@@ -457,10 +504,12 @@ const IncidentDetailBody = ({
   isAssign,
   isSubmitting,
   isReopening,
+  isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
   onReopen,
+  onExportCsv,
 }: {
   readonly incident: IncidentPayload;
   readonly timeline: readonly IncidentEventPayload[];
@@ -470,10 +519,12 @@ const IncidentDetailBody = ({
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
   readonly isReopening: boolean;
+  readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
   readonly onReopen: (reason: string) => void;
+  readonly onExportCsv: () => void;
 }) => (
   <div
     data-testid="incident-detail-root"
@@ -536,10 +587,12 @@ const IncidentDetailBody = ({
       isAssign={isAssign}
       isSubmitting={isSubmitting}
       isReopening={isReopening}
+      isExporting={isExporting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
       onReopen={onReopen}
+      onExportCsv={onExportCsv}
     />
 
     <section data-testid="incident-detail-timeline-section" className="flex flex-col gap-3">

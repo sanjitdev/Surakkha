@@ -96,9 +96,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)", 
           isAck={false}
           isAssign={false}
           isSubmitting={false}
+          isReopening={false}
+          isExporting={false}
           onAcknowledge={() => undefined}
           onAssign={() => undefined}
           onSubmitResult={() => undefined}
+          onReopen={() => undefined}
+          onExportCsv={() => undefined}
         />,
       );
       if (expectVisible) {
@@ -127,9 +131,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)", 
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     expect(screen.queryByTestId("incident-detail-acknowledge-button")).toBeNull();
@@ -145,9 +153,13 @@ describe("Story 4.5 — IncidentDetailActions visibility (Acknowledge button)", 
         isAck={true}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     const button = screen.getByTestId("incident-detail-acknowledge-button");
@@ -203,9 +215,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
           isAck={false}
           isAssign={false}
           isSubmitting={false}
+          isReopening={false}
+          isExporting={false}
           onAcknowledge={() => undefined}
           onAssign={() => undefined}
           onSubmitResult={() => undefined}
+          onReopen={() => undefined}
+          onExportCsv={() => undefined}
         />,
       );
       if (expectVisible) {
@@ -236,9 +252,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     // OPEN + Operator slot matrix = ["acknowledge"]; Assign slot is absent.
@@ -257,9 +277,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     // INSPECTING state — 4.1's `slotsForInspecting` returns [] for non-Technician
@@ -279,9 +303,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     const button = screen.getByTestId("incident-detail-assign-button");
@@ -333,9 +361,13 @@ describe("Story 4.6 — IncidentDetailActions visibility (Assign inline form)", 
         isAck={false}
         isAssign={true}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     const button = screen.getByTestId("incident-detail-assign-button");
@@ -368,9 +400,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     expect(screen.getByTestId("incident-detail-submit-result-form")).toBeInTheDocument();
@@ -399,9 +435,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
@@ -419,13 +459,21 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
+    // Story 5.2 — Admin still sees the actions region because
+    // Export CSV (30d) is visible to Admin regardless of state.
+    // The Submit Result form is still absent (Technician-only).
     expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
-    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+    expect(screen.getByTestId("incident-detail-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("incident-detail-export-csv-button")).toBeInTheDocument();
   });
 
   it("does NOT render the Submit Result form for INSPECTING + Operator (AC #3 — slot matrix is Technician-only)", () => {
@@ -438,13 +486,21 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
+    // Story 5.2 — Operator still sees the actions region because
+    // Export CSV (30d) is visible to Operator regardless of state.
+    // The Submit Result form is still absent (Technician-only).
     expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
-    expect(screen.queryByTestId("incident-detail-actions")).toBeNull();
+    expect(screen.getByTestId("incident-detail-actions")).toBeInTheDocument();
+    expect(screen.getByTestId("incident-detail-export-csv-button")).toBeInTheDocument();
   });
 
   it("does NOT render the Submit Result form for INSPECTING + Viewer (AC #3 — slot matrix is Technician-only)", () => {
@@ -457,9 +513,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
@@ -482,9 +542,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
           isAck={false}
           isAssign={false}
           isSubmitting={false}
+          isReopening={false}
+          isExporting={false}
           onAcknowledge={() => undefined}
           onAssign={() => undefined}
           onSubmitResult={() => undefined}
+          onReopen={() => undefined}
+          onExportCsv={() => undefined}
         />,
       );
       expect(screen.queryByTestId("incident-detail-submit-result-form")).toBeNull();
@@ -501,9 +565,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
     const button = screen.getByTestId("incident-detail-submit-result-button");
@@ -542,9 +610,13 @@ describe("Story 4.7 — IncidentDetailActions visibility (Submit Result inline f
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
         onAcknowledge={() => undefined}
         onAssign={() => undefined}
         onSubmitResult={onSubmitResult}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
       />,
     );
 
@@ -587,6 +659,10 @@ describe("Story 4.7 — InspectionOutcomeSchema drift pin", () => {
         isAck={false}
         isAssign={false}
         isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
+        onReopen={vi.fn()}
+        onExportCsv={vi.fn()}
         technicians={[]}
       />,
     );
@@ -600,5 +676,178 @@ describe("Story 4.7 — InspectionOutcomeSchema drift pin", () => {
     expect(radios.map((r) => r.getAttribute("data-testid"))).toEqual(
       schemaValues.map((v) => `incident-detail-submit-result-radio-${v}`),
     );
+  });
+});
+
+// ============================================================================
+// Story 5.2 — IncidentDetailActions visibility (Export CSV (30d) button)
+// ============================================================================
+//
+// The "Export CSV (30d)" button is gated on the RBAC mirror of the
+// api matrix entry `export Reading`: hidden for Technician / Viewer
+// (the matrix grants `export Reading` only to Admin / Operator).
+// The server is the authority — but the affordance is hidden client-
+// side so a Technician / Viewer never sees a button that would 403
+// on click. The button is state-agnostic: it renders for Admin /
+// Operator regardless of `incident.state` (the api defaults the
+// window to last 30d regardless of state).
+describe("Story 5.2 — IncidentDetailActions visibility (Export CSV (30d) button)", () => {
+  // Parameterized over the four-role RBAC matrix. The matrix grants
+  // `export Reading` to Admin + Operator only; Technician / Viewer
+  // are denied. Mirrors the api's `authorize({ action: "export",
+  // resource: "Reading" })` gate.
+  describe.each([
+    { role: "Admin", expectVisible: true },
+    { role: "Operator", expectVisible: true },
+    { role: "Technician", expectVisible: false },
+    { role: "Viewer", expectVisible: false },
+  ] as const)("OPEN + $role", ({ role, expectVisible }) => {
+    it(`${expectVisible ? "renders" : "does NOT render"} the Export CSV (30d) button`, () => {
+      const incident = makeIncident({ state: "OPEN" });
+      render(
+        <IncidentDetailActions
+          incident={incident}
+          viewerRole={role}
+          viewerUserId={TECH_ID}
+          isAck={false}
+          isAssign={false}
+          isSubmitting={false}
+          isReopening={false}
+          isExporting={false}
+          onAcknowledge={() => undefined}
+          onAssign={() => undefined}
+          onSubmitResult={() => undefined}
+          onReopen={() => undefined}
+          onExportCsv={() => undefined}
+        />,
+      );
+      if (expectVisible) {
+        expect(screen.getByTestId("incident-detail-export-csv-button")).toBeInTheDocument();
+        expect(screen.getByTestId("incident-detail-export-csv-button")).toHaveTextContent(
+          "Export CSV (30d)",
+        );
+        expect(screen.getByTestId("incident-detail-export-csv-button")).not.toBeDisabled();
+      } else {
+        expect(screen.queryByTestId("incident-detail-export-csv-button")).toBeNull();
+      }
+    });
+  });
+
+  it("does NOT render the Export CSV button for Technician + Viewer (HIDDEN_RBAC_DENIED)", () => {
+    const incident = makeIncident({ state: "OPEN" });
+    render(
+      <IncidentDetailActions
+        incident={incident}
+        viewerRole="Technician"
+        viewerUserId={TECH_ID}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
+        onAcknowledge={() => undefined}
+        onAssign={() => undefined}
+        onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
+      />,
+    );
+    expect(screen.queryByTestId("incident-detail-export-csv-button")).toBeNull();
+  });
+
+  it("fires onExportCsv on click (CLICK_TRIGGERS_DOWNLOAD)", () => {
+    const incident = makeIncident({ state: "OPEN" });
+    const onExportCsv = vi.fn();
+    render(
+      <IncidentDetailActions
+        incident={incident}
+        viewerRole="Operator"
+        viewerUserId={TECH_ID}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
+        onAcknowledge={() => undefined}
+        onAssign={() => undefined}
+        onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={onExportCsv}
+      />,
+    );
+    const button = screen.getByTestId("incident-detail-export-csv-button");
+    expect(button).not.toBeDisabled();
+    button.click();
+    expect(onExportCsv).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the Export CSV button while the export mutation is in flight (LOADING_STATE)", () => {
+    const incident = makeIncident({ state: "OPEN" });
+    render(
+      <IncidentDetailActions
+        incident={incident}
+        viewerRole="Operator"
+        viewerUserId={TECH_ID}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        isReopening={false}
+        isExporting={true}
+        onAcknowledge={() => undefined}
+        onAssign={() => undefined}
+        onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
+      />,
+    );
+    const button = screen.getByTestId("incident-detail-export-csv-button");
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Exporting…");
+  });
+
+  it("RBAC denial is invisible to the UI — only Operator + Admin see the button (RBAC_HIDDEN)", () => {
+    // Operator sees the button; Technician does not. The server is
+    // the authority (Technician gets a 403 if they tried), but the
+    // UI hides the affordance so a Technician never clicks a button
+    // they cannot use.
+    const incident = makeIncident({ state: "OPEN" });
+    const { rerender } = render(
+      <IncidentDetailActions
+        incident={incident}
+        viewerRole="Operator"
+        viewerUserId={TECH_ID}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
+        onAcknowledge={() => undefined}
+        onAssign={() => undefined}
+        onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId("incident-detail-export-csv-button")).toBeInTheDocument();
+
+    // Re-render with a Technician viewer — the button must vanish.
+    rerender(
+      <IncidentDetailActions
+        incident={incident}
+        viewerRole="Technician"
+        viewerUserId={TECH_ID}
+        isAck={false}
+        isAssign={false}
+        isSubmitting={false}
+        isReopening={false}
+        isExporting={false}
+        onAcknowledge={() => undefined}
+        onAssign={() => undefined}
+        onSubmitResult={() => undefined}
+        onReopen={() => undefined}
+        onExportCsv={() => undefined}
+      />,
+    );
+    expect(screen.queryByTestId("incident-detail-export-csv-button")).toBeNull();
   });
 });
