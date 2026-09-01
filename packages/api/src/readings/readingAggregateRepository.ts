@@ -112,34 +112,48 @@ export interface ReadingAggregateRepository {
  * Adapter — narrow the real `@prisma/client` to the
  * `ReadingAggregateRepository` slice. Mirrors
  * `resolveAuditLogRepository` at `auditLogRepository.ts:105-127`.
- * The `as unknown as` cast is contained to this file so future
- * Prisma type drifts do not ripple into the (future) reader or
- * test rig.
+ * The `as any` cast is contained to this file so future Prisma
+ * type drifts do not ripple into the (future) reader or test rig.
  *
  * Production narrows via this adapter; the test rig provides a
  * hand-rolled stub matching the same shape.
  */
 export const resolveReadingAggregateRepository = (prisma: unknown): ReadingAggregateRepository => {
-  // The double-cast (`unknown` → `any` → typed) keeps the
-  // narrowing visible at the seam without leaking the underlying
-  // client type to consumers. Mirrors the audit precedent.
+  // Single `as any` cast at the seam — the interface on
+  // `ReadingAggregateRepository` is the typed contract; the cast
+  // is intentionally contained here so future Prisma type drifts
+  // do not leak into the (future) reader or test rig. Mirrors
+  // the audit precedent at `auditLogRepository.ts:107`.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;
   return {
     readingAggregate: {
       findMany: async (args) => {
-        const rows = (await client.readingAggregate.findMany({
-          where: toPrismaWhere(args.where),
-          orderBy: args.orderBy,
-          take: args.take,
-        })) as ReadingAggregateRow[];
-        const count = (await client.readingAggregate.count({
-          where: toPrismaWhere(args.where),
-        })) as number;
+        // Short-circuit on `take < 1` so the spec's REPO_FIND_INVALID_LIMIT
+        // envelope (`{ rows: [], total: 0, truncated: false }`) is satisfied
+        // without hitting Prisma at all. Mirrors `clampLimit`'s caller-side
+        // guard but at the seam so the test rig + future router cannot
+        // accidentally bypass it.
+        if (args.take < 1) {
+          return { rows: [], total: 0, truncated: false };
+        }
+        // Hoist the where-clause coercion once and run the two independent
+        // queries in parallel — narrows the concurrent-writer race window
+        // between the findMany and the count by issuing them concurrently,
+        // and avoids re-running the helper chain on the count's hot path.
+        const where = toPrismaWhere(args.where);
+        const [rows, total] = await Promise.all([
+          client.readingAggregate.findMany({
+            where,
+            orderBy: args.orderBy,
+            take: args.take,
+          }) as Promise<ReadingAggregateRow[]>,
+          client.readingAggregate.count({ where }) as Promise<number>,
+        ]);
         return {
           rows,
-          total: count,
-          truncated: count > rows.length,
+          total,
+          truncated: total > rows.length,
         };
       },
     },

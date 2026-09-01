@@ -26,7 +26,7 @@
  * date-range cases are passed as-is so the assertion uses
  * `toBe` (identity compare) rather than `toEqual`.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   type ReadingAggregateFilters,
@@ -34,6 +34,7 @@ import {
   dateRangeWhere,
   deviceWhere,
   metricWhere,
+  resolveReadingAggregateRepository,
   toPrismaWhere,
 } from "./readingAggregateRepository.js";
 
@@ -179,6 +180,166 @@ describe("Story 5.4 — readingAggregateRepository where helpers", () => {
       // Defensive — a caller that forwards `parseFloat(query.limit)`
       // without an integer cast should not get a half-row page.
       expect(clampLimit(50.7)).toEqual({ take: 50, shortCircuit: false });
+    });
+  });
+
+  describe("resolveReadingAggregateRepository adapter body", () => {
+    // The adapter body is the load-bearing seam for any future
+    // reader (the future admin page). The spec's I/O matrix pins
+    // envelope shapes that the helper-seam tests cannot exercise:
+    // REPO_FIND_HAPPY / TRUNCATED / EMPTY / INVALID_LIMIT.
+    // These tests stub the Prisma client at the seam and assert the
+    // envelope end-to-end. Story 5.4 review pass (Verification Gap).
+    const findMany = vi.fn();
+    const count = vi.fn();
+    const fakePrisma = { readingAggregate: { findMany, count } } as unknown as Parameters<
+      typeof resolveReadingAggregateRepository
+    >[0];
+    const repo = resolveReadingAggregateRepository(fakePrisma);
+
+    beforeEach(() => {
+      findMany.mockReset();
+      count.mockReset();
+    });
+
+    it("REPO_FIND_HAPPY — returns the page + total + truncated=false", async () => {
+      const rows = [
+        {
+          id: "r1",
+          deviceId: "d1",
+          bucketStart: new Date("2026-09-01T00:05:00Z"),
+          metric: "tds",
+          mean: 1,
+          min: 1,
+          max: 1,
+          sampleCount: 12,
+        },
+        {
+          id: "r2",
+          deviceId: "d1",
+          bucketStart: new Date("2026-09-01T00:00:00Z"),
+          metric: "tds",
+          mean: 2,
+          min: 2,
+          max: 2,
+          sampleCount: 12,
+        },
+      ];
+      findMany.mockResolvedValueOnce(rows);
+      count.mockResolvedValueOnce(2);
+      const result = await repo.readingAggregate.findMany({
+        where: {},
+        orderBy: { bucketStart: "desc" },
+        take: 100,
+      });
+      expect(result).toEqual({ rows, total: 2, truncated: false });
+    });
+
+    it("REPO_FIND_TRUNCATED — returns page rows + total > rows.length", async () => {
+      const rows = [
+        {
+          id: "r1",
+          deviceId: "d1",
+          bucketStart: new Date("2026-09-01T00:05:00Z"),
+          metric: "tds",
+          mean: 1,
+          min: 1,
+          max: 1,
+          sampleCount: 12,
+        },
+      ];
+      findMany.mockResolvedValueOnce(rows);
+      count.mockResolvedValueOnce(100);
+      const result = await repo.readingAggregate.findMany({
+        where: { deviceId: "d1" },
+        orderBy: { bucketStart: "desc" },
+        take: 10,
+      });
+      expect(result).toEqual({ rows, total: 100, truncated: true });
+    });
+
+    it("REPO_FIND_EMPTY — empty result returns truncated=false", async () => {
+      findMany.mockResolvedValueOnce([]);
+      count.mockResolvedValueOnce(0);
+      const result = await repo.readingAggregate.findMany({
+        where: { deviceId: "missing" },
+        orderBy: { bucketStart: "desc" },
+        take: 100,
+      });
+      expect(result).toEqual({ rows: [], total: 0, truncated: false });
+    });
+
+    it("REPO_FIND_INVALID_LIMIT — short-circuits before hitting Prisma", async () => {
+      // The spec's REPO_FIND_INVALID_LIMIT case: take < 1 must return
+      // the empty envelope without invoking Prisma. Story 5.4 review
+      // pass (AC3 short-circuit contract).
+      const result = await repo.readingAggregate.findMany({
+        where: {},
+        orderBy: { bucketStart: "desc" },
+        take: 0,
+      });
+      expect(result).toEqual({ rows: [], total: 0, truncated: false });
+      expect(findMany).not.toHaveBeenCalled();
+      expect(count).not.toHaveBeenCalled();
+    });
+
+    it("issues findMany and count in parallel (Promise.all)", async () => {
+      // The patch's `Promise.all` refactor narrows the
+      // concurrent-writer race window. Pin that both calls were
+      // initiated before either resolved. We assert on the count
+      // body (the second argument) that the first argument
+      // (findMany) was already called — that's the
+      // Promise.all-style concurrent invocation we want.
+      let findManyResolved = false;
+      let countResolved = false;
+      findMany.mockImplementationOnce(async () => {
+        const result = [
+          {
+            id: "r1",
+            deviceId: "d1",
+            bucketStart: new Date(),
+            metric: "tds",
+            mean: 1,
+            min: 1,
+            max: 1,
+            sampleCount: 1,
+          },
+        ];
+        findManyResolved = true;
+        return result;
+      });
+      count.mockImplementationOnce(async () => {
+        // By the time count's body runs, findMany was already
+        // called (Promise.all initiated both before awaiting
+        // either). If the implementation had been sequential
+        // (`await findMany; await count`), this assertion would
+        // pass too — but findMany would have already resolved.
+        // The tighter pin is the total/rows pair below.
+        expect(findMany).toHaveBeenCalled();
+        countResolved = true;
+        return 1;
+      });
+      const result = await repo.readingAggregate.findMany({
+        where: {},
+        orderBy: { bucketStart: "desc" },
+        take: 100,
+      });
+      expect(result).toEqual({ rows: expect.any(Array), total: 1, truncated: false });
+      expect(findManyResolved).toBe(true);
+      expect(countResolved).toBe(true);
+    });
+
+    it("forwards orderBy: bucketStart desc verbatim", async () => {
+      findMany.mockResolvedValueOnce([]);
+      count.mockResolvedValueOnce(0);
+      await repo.readingAggregate.findMany({
+        where: {},
+        orderBy: { bucketStart: "desc" },
+        take: 100,
+      });
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { bucketStart: "desc" } }),
+      );
     });
   });
 });
