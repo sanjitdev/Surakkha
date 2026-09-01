@@ -172,6 +172,30 @@ const entityLabelFor = (entry: AuditLogEntry): string => {
   return entry.resourceId.slice(0, ID_SHORT_PREFIX_LENGTH);
 };
 
+/**
+ * Render the actor column. Audit rows are Admin-facing — the
+ * goal is disambiguation across many actors, not personal
+ * identification. We prefer a writer-supplied role label
+ * (`payload.actorRole`) so a future Story 5.6 audit writer can
+ * surface "Operator · Anjali" without a code change here; we
+ * fall back to a 8-char UUID prefix for now so the column is
+ * at least scannable. `null` actor (e.g. system-initiated
+ * `logout`) renders "system".
+ *
+ * TODO(5.6): once the audit writer ships a structured
+ * `payload.actorRole` for every row, drop the UUID fallback.
+ */
+const actorLabelFor = (row: AuditLogEntry): string => {
+  if (row.actorUserId === null) return "system";
+  const payloadObj =
+    typeof row.payload === "object" && row.payload !== null
+      ? (row.payload as Record<string, unknown>)
+      : null;
+  const payloadRole =
+    payloadObj && typeof payloadObj.actorRole === "string" ? payloadObj.actorRole : null;
+  return payloadRole ?? row.actorUserId.slice(0, ID_SHORT_PREFIX_LENGTH);
+};
+
 export interface AuditLogPageProps {
   readonly testId?: string;
 }
@@ -251,7 +275,7 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
     <div data-testid={testId} className="p-6">
       <h1 className="mb-2 text-2xl font-semibold text-neutral-body">Audit Log</h1>
       <p className="mb-6 text-md text-neutral-secondary">
-        Read-only trail of every audit emit call across the platform.
+        Admin-only audit trail — read-only record of every audit emit across the platform.
       </p>
       <AuditLogFilterPanel
         actorIds={actorIds}
@@ -295,6 +319,14 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
         isFiltered={isFilterActive}
         expandedId={expandedId}
         onToggleExpanded={(id) => setExpandedId((cur) => (cur === id ? null : id))}
+        onResetFilters={() => {
+          setActorIds([]);
+          setEvent("");
+          setResource("");
+          setPreset("30d");
+          setActorInput("");
+          setActorInputError(null);
+        }}
       />
     </div>
   );
@@ -513,10 +545,20 @@ interface AuditLogResultsPanelProps {
   readonly isFiltered: boolean;
   readonly expandedId: string | null;
   readonly onToggleExpanded: (id: string) => void;
+  readonly onResetFilters: () => void;
 }
 
 const AuditLogResultsPanel = (props: AuditLogResultsPanelProps) => {
-  const { query, entries, total, isTruncated, isFiltered, expandedId, onToggleExpanded } = props;
+  const {
+    query,
+    entries,
+    total,
+    isTruncated,
+    isFiltered,
+    expandedId,
+    onToggleExpanded,
+    onResetFilters,
+  } = props;
   if (query.isLoading) {
     return (
       <div data-testid="audit-log-loading" className="text-md text-neutral-secondary">
@@ -536,8 +578,25 @@ const AuditLogResultsPanel = (props: AuditLogResultsPanelProps) => {
       <div data-testid="audit-log-empty" className="text-md text-neutral-secondary">
         {/* Filter-aware empty copy distinguishes default-filter
             ("no events yet" — the table is fresh, no writers have
-            run yet) from a narrowed filter that matched nothing. */}
-        {isFiltered ? "No audit events match the current filters." : "No audit events yet."}
+            run yet) from a narrowed filter that matched nothing.
+            Filtered-empty surfaces a "Show last 30d" CTA so the
+            Admin can recover in one click; default-empty hints at
+            the 5.6 writer timeline so the silence is by-design. */}
+        {isFiltered ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span>No audit events match the current filters.</span>
+            <button
+              type="button"
+              onClick={onResetFilters}
+              data-testid="audit-log-reset-filters"
+              className="rounded-md border border-primary bg-primary px-3 py-1 text-sm text-white"
+            >
+              Show last 30d
+            </button>
+          </div>
+        ) : (
+          "No audit events yet. The audit writer ships in a future release — expand the date range to confirm."
+        )}
       </div>
     );
   }
@@ -581,8 +640,7 @@ interface AuditLogRowProps {
 }
 
 const AuditLogRow = ({ row, isExpanded, onToggle }: AuditLogRowProps) => {
-  const actorLabel =
-    row.actorUserId === null ? "system" : row.actorUserId.slice(0, ID_SHORT_PREFIX_LENGTH);
+  const actorLabel = actorLabelFor(row);
   const outcomeClass = OUTCOME_PILL_CLASS[row.outcome] ?? "bg-neutral-bg text-neutral-secondary";
   const entityHref = entityHrefFor(row);
   const entityLabel = entityLabelFor(row);

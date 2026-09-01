@@ -149,7 +149,7 @@ describe("Story 5.3 — AuditLogPage", () => {
     expect(screen.queryByTestId("audit-log-summary")).not.toBeNull();
   });
 
-  it("EMPTY_DEFAULT_FILTER: empty + default 30d → 'No audit events yet.'", async () => {
+  it("EMPTY_DEFAULT_FILTER: empty + default 30d → 'No audit events yet. ...' (no CTA, by-design)", async () => {
     installFetch(
       async () =>
         new Response(JSON.stringify(buildEnvelope([], 0, false)), {
@@ -159,7 +159,40 @@ describe("Story 5.3 — AuditLogPage", () => {
     );
     renderPage();
     await waitFor(() => expect(screen.queryByTestId("audit-log-empty")).not.toBeNull());
-    expect(screen.getByTestId("audit-log-empty").textContent).toContain("No audit events yet");
+    const text = screen.getByTestId("audit-log-empty").textContent ?? "";
+    expect(text).toContain("No audit events yet");
+    // The default-empty branch is by-design (the writer ships in
+    // 5.6) — no "Show last 30d" CTA. The reset CTA only fires on
+    // a narrowed filter (see EMPTY_NARROWED_FILTER_RESET below).
+    expect(screen.queryByTestId("audit-log-reset-filters")).toBeNull();
+  });
+
+  it("EMPTY_NARROWED_FILTER_RESET: 'Show last 30d' button appears on a narrowed filter and clears state on click", async () => {
+    installFetch(
+      async () =>
+        new Response(JSON.stringify(buildEnvelope([], 0, false)), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.queryByTestId("audit-log-empty")).not.toBeNull());
+    // Narrow with a non-matching event substring.
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("event-input"), { target: { value: "no-such-event" } });
+    });
+    await waitFor(() => expect(screen.queryByTestId("audit-log-reset-filters")).not.toBeNull());
+    const empty = screen.getByTestId("audit-log-empty").textContent ?? "";
+    expect(empty).toContain("No audit events match the current filters");
+    // Click the reset CTA — chip row empties, event input clears,
+    // preset returns to 30d (default), and a fresh refetch fires.
+    const before = captured.length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("audit-log-reset-filters"));
+    });
+    expect((screen.getByTestId("event-input") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTestId("actor-input")).not.toBeNull();
+    await waitFor(() => expect(captured.length).toBeGreaterThan(before));
   });
 
   it("EMPTY_NARROWED_FILTER: empty + active event filter → 'No audit events match the current filters.'", async () => {
@@ -383,6 +416,69 @@ describe("Story 5.3 — AuditLogPage", () => {
     });
     expect(row.getAttribute("aria-expanded")).toBe("true");
     expect(screen.queryByTestId(`audit-log-detail-${AUDIT_ID_1}`)).not.toBeNull();
+  });
+
+  it("ACTOR_PAYLOAD_ROLE: when payload.actorRole is set, the actor column renders the role label (5.6 writer-swap forward-compat)", async () => {
+    installFetch(
+      async () =>
+        new Response(
+          JSON.stringify(
+            buildEnvelope([
+              baseRow({
+                id: AUDIT_ID_1,
+                actorUserId: ADMIN_ID,
+                payload: { from: "OPEN", to: "ACKNOWLEDGED", actorRole: "Operator · Anjali" },
+              }),
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.queryByTestId("audit-log-table")).not.toBeNull());
+    const row = screen.getByTestId(`audit-log-row-${AUDIT_ID_1}`);
+    // The actor cell is the first <td>; collapse to text.
+    const actorCell = row.querySelectorAll("td")[0];
+    expect(actorCell?.textContent).toBe("Operator · Anjali");
+  });
+
+  it("ACTOR_NULL_RENDERED_SYSTEM: actorUserId null renders 'system' (no UUID prefix)", async () => {
+    installFetch(
+      async () =>
+        new Response(
+          JSON.stringify(
+            buildEnvelope([
+              baseRow({
+                id: AUDIT_ID_1,
+                auditAction: "logout",
+                actorUserId: null,
+                resource: "Session",
+                resourceId: null,
+              }),
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.queryByTestId("audit-log-table")).not.toBeNull());
+    const row = screen.getByTestId(`audit-log-row-${AUDIT_ID_1}`);
+    const actorCell = row.querySelectorAll("td")[0];
+    expect(actorCell?.textContent).toBe("system");
+  });
+
+  it("SUB_HEAD: sub-head copy includes 'Admin-only audit trail' (defensive against RBAC drift)", async () => {
+    installFetch(
+      async () =>
+        new Response(JSON.stringify(buildEnvelope([baseRow({ id: AUDIT_ID_1 })])), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.queryByTestId("audit-log-table")).not.toBeNull());
+    const sub = document.querySelector("p.text-md.text-neutral-secondary");
+    expect(sub?.textContent).toContain("Admin-only audit trail");
   });
 
   it("SUMMARY_TRUNCATED: when truncated is true, the summary copy says 'Showing X of Y+'", async () => {
