@@ -24,7 +24,7 @@ context: []
 **Always:**
 
 - New `ReadingAggregate` Prisma model + a new migration (next after `20260901000000_audit_log`, so `20260901000001_reading_aggregate`). First-ever aggregate table in the schema.
-- Columns mirror `epics.md:1622` exactly: `id` (uuid), `deviceId` (FK SET NULL → Device), `bucketStart` (`DateTime`), `metric` (`String` — closed enum: `tds | turbidity | ph | temperature | battery | signal`), `mean` (`Float`), `min` (`Float`), `max` (`Float`), `sampleCount` (`Int`).
+- Columns mirror the Story 5.4 user-story acceptance criteria (camelCase Prisma convention, not the snake_case `epics.md:1622` text): `id` (uuid), `deviceId` (FK SET NULL → Device), `bucketStart` (`DateTime`), `metric` (`String` — closed enum: `tds | turbidity | ph | temperature | battery | signal`), `mean` (`Float`), `min` (`Float`), `max` (`Float`), `sampleCount` (`Int`).
 - `@@unique([deviceId, bucketStart, metric])` — the 5.5 cron uses `ON CONFLICT (...) DO UPDATE` for idempotent overlap-safe retries; the constraint is the load-bearing invariant.
 - `@@index([deviceId, bucketStart])` for the (future) range-scan read pattern (admin / chart query).
 - `onDelete: SetNull` for the `deviceId` FK — a deleted device must NOT cascade-delete historical aggregates (regulators may still want them); the FK row goes null and the aggregate stays.
@@ -36,7 +36,7 @@ context: []
 **Ask First:**
 
 - _Resolved at step-01:_ Migration filename — default: `20260901000001_reading_aggregate/` following the same-day `_00001` pattern from `20260827000001_alert_rule_id_index/`.
-- _Resolved at step-01:_ `metric` column type — default: `String` (closed enum at Zod layer) so the Prisma schema stays migration-light when a metric is added; mirrors `AuditLog.resource` (`schema.prisma:554`).
+- _Resolved at step-01:_ `metric` column type — default: `String` (closed enum at Zod layer) so the Prisma schema stays migration-light when a metric is added; mirrors `AuditLog.resource` (`schema.prisma:631` as of 5.4; was `:554` at step-01 before 5.3's insert expanded the file).
 - _Resolved at step-01:_ Whether 5.4 ships a wire schema in `@surakkha/shared` — default: YES, a tiny `ReadingAggregateMetricSchema` Zod enum module so 5.5 doesn't have to invent it. No row schema (no UI consumer).
 
 **Never:**
@@ -68,7 +68,7 @@ context: []
 ## Code Map
 
 - `packages/db/prisma/schema.prisma:79-95` — `model Reading` block (sibling model to mirror; new `ReadingAggregate` block goes after).
-- `packages/db/prisma/schema.prisma:554` — `model AuditLog` (5.3 reference; demonstrates `@@index([..., createdAt])`, FK SET NULL, Json field convention).
+- `packages/db/prisma/schema.prisma:631` — `model AuditLog` (5.3 reference; demonstrates `@@index([..., createdAt])`, FK SET NULL, Json field convention). Spec line number drifted from `:554` at step-01 as 5.3's own model insert expanded the file.
 - `packages/db/prisma/schema.prisma:510-521` — `model RuleDebounceState` (closest structural sibling: minimal FK-only model + `@@unique` + cascade precedent).
 - `packages/db/prisma/migrations/20260901000000_audit_log/migration.sql` — most recent migration; new `20260901000001_reading_aggregate/migration.sql` follows the same `CREATE TABLE` + `CREATE INDEX` + `ALTER TABLE FK` shape (65-line precedent).
 - `packages/db/prisma/migrations/20260827000001_alert_rule_id_index/` — same-day `_00001` filename convention precedent.
@@ -128,8 +128,8 @@ context: []
 ### 2. Migration SQL (the on-disk shape)
 
 - [migration.sql:44](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L44) — `CREATE TABLE "ReadingAggregate"`: 8-column declaration with explicit `DEFAULT` + nullability.
-- [migration.sql:58](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L58) — `CREATE UNIQUE INDEX`: the upsert-target invariant in SQL form.
-- [migration.sql:70](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L70) — `FOREIGN KEY ... ON DELETE SET NULL`: mirrors the schema.prisma comment.
+- [migration.sql:66](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L66) — `CREATE UNIQUE INDEX ... NULLS NOT DISTINCT`: the upsert-target invariant in SQL form (Postgres 15+ NULL semantics).
+- [migration.sql:77](../../packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql#L77) — `FOREIGN KEY ... ON DELETE SET NULL`: mirrors the schema.prisma comment. (Spec wrote `:70` at the present step; the line shifted to `:77` after the 5.4 review pass added a multi-line comment above the unique index.)
 
 ### 3. Wire contract (the closed enum at the shared seam)
 
@@ -148,3 +148,39 @@ context: []
 ### 6. Tracking (the workflow ledger)
 
 - [sprint-status.yaml](../sprint-status.yaml) — `5-4-readingaggregate-table: in-progress`; epic-5 already `in-progress` so no epic lift.
+
+## Review Findings
+
+<!-- Code review pass — 2026-09-01. 4 reviewer layers (Blind Hunter, Edge Case Hunter, Verification Gap, Acceptance Auditor). -->
+
+### Decision Needed (2 — RESOLVED 2026-09-01)
+
+- [x] [Review][Decision] **`deviceId` nullability drift** — RESOLVED option 1 (nullable end-to-end). `schema.prisma` changed `deviceId String` → `deviceId String?`; SQL `TEXT` column is already nullable. The Prisma client now types `deviceId: string | null` and `ReadingAggregateRow.deviceId: string | null` is reachable.
+- [x] [Review][Decision] **`@@unique([deviceId, bucketStart, metric])` permits orphan duplicates under PostgreSQL NULL semantics** — RESOLVED option 1 (`NULLS NOT DISTINCT`). The migration SQL now emits `CREATE UNIQUE INDEX ... NULLS NOT DISTINCT` (Postgres 15+); two `deviceId IS NULL` rows at the same `(bucketStart, metric)` collide. Prisma's `@@unique` cannot emit the clause natively; the migration is hand-edited with a comment explaining the drift.
+
+### Patches (7 — APPLIED 2026-09-01)
+
+- [x] [Review][Patch] **Fix short-circuit contract: short-circuit `findMany` on `take === 0`** [`packages/api/src/readings/readingAggregateRepository.ts:130-144`] — DONE. Added `if (args.take < 1) return { rows: [], total: 0, truncated: false };` at the top of the adapter body. Spec REPO_FIND_INVALID_LIMIT envelope is now satisfied without hitting Prisma.
+- [x] [Review][Patch] **Refactor `findMany`+`count` to `Promise.all`; hoist `toPrismaWhere` once** [`packages/api/src/readings/readingAggregateRepository.ts:130-144`] — DONE. `const [rows, total] = await Promise.all([findMany, count])` with `where` hoisted.
+- [x] [Review][Patch] **Fix misleading "double-cast" comment** [`packages/api/src/readings/readingAggregateRepository.ts:123-126`] — DONE. Comment now correctly describes the single `prisma as any` cast (matches 5.3 audit precedent).
+- [x] [Review][Patch] **Add e2e adapter-body test** [`packages/api/src/readings/readingAggregateRepository.spec.ts`] — DONE. Added `describe("resolveReadingAggregateRepository adapter body", ...)` block with 6 new tests: REPO_FIND_HAPPY, REPO_FIND_TRUNCATED, REPO_FIND_EMPTY, REPO_FIND_INVALID_LIMIT (Prisma-not-called assertion), `Promise.all` parallel-issue, `orderBy` forward.
+- [x] [Review][Patch] **Add `packages/shared/src/reading-aggregate.spec.ts`** — DONE. 10 tests: 6 `it.each` closed-enum acceptances + 4 rejections (drift string, empty string, case-mismatch, size drift).
+- [x] [Review][Patch] **Add `packages/db/__tests__/reading-aggregate.schema.spec.ts` + `reading-aggregate.migration.spec.ts`** — DONE. Schema spec: 9 tests pin field order, `String?` deviceId, `String` metric, Float/Int types, `@@unique`+`@@index`, SetNull FK, Device back-relation, migration folder pattern. Migration spec: 4 tests pin CREATE TABLE shape (with `TEXT,` nullable deviceId), `NULLS NOT DISTINCT` UNIQUE INDEX, range-scan INDEX, FK `ON DELETE SET NULL ON UPDATE CASCADE`.
+- [x] [Review][Patch] **Update stale spec line citations** [`spec-5-4-readingaggregate-table.md:27, 39, 71, 131-132`] — DONE. `epics.md:1622` reframed to "user-story AC line (camelCase convention)"; `schema.prisma:554` → `:631` (5.3's own insert shifted it); `migration.sql:58` → `:66` (the NULLS NOT DISTINCT comment block added 8 lines); `migration.sql:70` → `:77`.
+
+### Deferred (12)
+
+- [x] [Review][Defer] **Redundant `@@index([deviceId, bucketStart])` vs `@@unique([deviceId, bucketStart, metric])` leading prefix** [`packages/db/prisma/schema.prisma:158`] — deferred, pre-existing — Postgres can range-scan the unique index; both are kept to mirror 5.3 AuditLog precedent; index-tuning pass can drop later.
+- [x] [Review][Defer] **`bucketStart` is `TIMESTAMP(3)` timezone-naive** [`packages/db/prisma/migrations/20260901000001_reading_aggregate/migration.sql:47`] — deferred, pre-existing — DST ambiguity is locked in by the 5.4 schema choice; 5.5 cron writes in UTC anyway; column-type migration to `Timestamptz` is a future story.
+- [x] [Review][Defer] **Spec ↔ epic-5 snake_case drift on column names** [`spec-5-4-readingaggregate-table.md:27`] — deferred, pre-existing — Prisma camelCase is the repo convention; epic-5 narrative predates the convention.
+- [x] [Review][Defer] **Spec line 34 promises `findMany({limit?})` but interface accepts pre-clamped `take`** [`packages/api/src/readings/readingAggregateRepository.ts:97-109`] — deferred, pre-existing — future admin router owns the `limit → clampLimit → take` wiring.
+- [x] [Review][Defer] **`since > until` silent empty result** [`packages/api/src/readings/readingAggregateRepository.ts:201-208`] — deferred, pre-existing — caller contract; helper chain trusts inputs.
+- [x] [Review][Defer] **Whitespace-only `deviceId`/`metric` not stripped** [`packages/api/src/readings/readingAggregateRepository.ts:179-193`] — deferred, pre-existing — future router-level Zod boundary owns string-trim validation.
+- [x] [Review][Defer] **Adapter swallows Prisma errors identically (no P2002 vs P1001 triage)** [`packages/api/src/readings/readingAggregateRepository.ts:130-144`] — deferred, pre-existing — out of 5.4 scope (5.5 cron owns error triage).
+- [x] [Review][Defer] **No DB-level CHECK for 5-min bucket floor** [`packages/db/prisma/schema.prisma:145`] — deferred, pre-existing — by spec design ("5.4 ships the column shape only"); 5.5 cron owns the floor formula.
+- [x] [Review][Defer] **Sequential `findMany`+`count` race** [`packages/api/src/readings/readingAggregateRepository.ts:130-144`] — deferred, pre-existing — typical pagination race; refactor to `Promise.all` (see Patches) narrows the window.
+- [x] [Review][Defer] **Adapter crashes on null/undefined prisma argument** [`packages/api/src/readings/readingAggregateRepository.ts:122`] — deferred, pre-existing — caller contract violation; matches 5.3 precedent (no null-guard there either).
+- [x] [Review][Defer] **No pagination cursor; empty `where` full-scans** [`packages/api/src/readings/readingAggregateRepository.ts:97-109`] — deferred, pre-existing — by spec design (capped at 1000); future admin read surface owns pagination.
+- [x] [Review][Defer] **`metricWhere` accepts free string (closed-enum comment lies)** [`packages/api/src/readings/readingAggregateRepository.ts:184-188`] — deferred, pre-existing — no router in 5.4; closed-enum validation lives at the future router boundary.
+- [x] [Review][Defer] **AC2 (`P2002`) has no test coverage** [`spec-5-4-readingaggregate-table.md:95`] — deferred, pre-existing — AC2 is asserted at the SQL shape level (unique index exists); live `prisma.readingAggregate.create()` duplicate-insert test requires a live DB; deferred to 5.5 writer-side tests.
+- [x] [Review][Defer] **AC1 migration-on-fresh-DB has no automated test** [`spec-5-4-readingaggregate-table.md:94`] — deferred, pre-existing — `prisma migrate dev` runs locally; CI is a TODO stub (out of 5.4 scope).

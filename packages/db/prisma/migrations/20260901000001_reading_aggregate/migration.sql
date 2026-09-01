@@ -54,9 +54,17 @@ CREATE TABLE "ReadingAggregate" (
     CONSTRAINT "ReadingAggregate_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex — compound unique key (the 5.5 upsert target)
+-- CreateIndex — compound unique key (the 5.5 upsert target).
+-- Hand-edited to add NULLS NOT DISTINCT (Story 5.4 review pass):
+-- Postgres treats NULLs as distinct in UNIQUE indexes by default,
+-- so two `(bucketStart, metric)` rows with `deviceId IS NULL` would
+-- not collide, permitting orphan-duplicate buckets once any Device
+-- is deleted — breaking the 5.5 cron's idempotent
+-- `ON CONFLICT (...) DO UPDATE` invariant. Prisma's `@@unique` does
+-- not natively emit the NULLS NOT DISTINCT clause; this is the
+-- canonical Postgres 15+ syntax.
 CREATE UNIQUE INDEX "ReadingAggregate_deviceId_bucketStart_metric_key"
-    ON "ReadingAggregate"("deviceId", "bucketStart", "metric");
+    ON "ReadingAggregate"("deviceId", "bucketStart", "metric") NULLS NOT DISTINCT;
 
 -- CreateIndex — future range-scan read pattern
 CREATE INDEX "ReadingAggregate_deviceId_bucketStart_idx"

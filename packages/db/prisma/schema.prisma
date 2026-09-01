@@ -141,7 +141,14 @@ model Reading {
 //      read pattern (admin / chart query).
 model ReadingAggregate {
   id          String   @id @default(uuid())
-  deviceId    String
+  // Nullable end-to-end with the SQL migration (Story 5.4 review
+  // pass). A deleted Device MUST NOT wipe historical aggregates
+  // (regulator-facing retention requirement); the FK row goes null
+  // and the aggregate stays. Matching the Prisma column to the
+  // SQL `TEXT` column means the Prisma client's TypeScript types
+  // will accept `deviceId: null` on the read path (tombstoned rows
+  // are now reachable in the typed row shape, not just in the SQL).
+  deviceId    String?
   bucketStart DateTime
   metric      String
   mean        Float
@@ -149,11 +156,17 @@ model ReadingAggregate {
   max         Float
   sampleCount Int
 
-  // ON DELETE SET NULL — a removed Device MUST NOT wipe historical
-  // aggregates (regulator-facing retention requirement); the FK
-  // row goes null and the aggregate stays.
   device Device? @relation("DeviceReadingAggregates", fields: [deviceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  // NULLS NOT DISTINCT — the migration SQL emits the unique index
+  // with `NULLS NOT DISTINCT` so two `(bucketStart, metric)` rows
+  // with `deviceId IS NULL` collide (Story 5.4 review pass).
+  // Without it, Postgres treats NULLs as distinct and permits
+  // orphan-duplicate buckets once any Device is deleted — breaking
+  // the 5.5 cron's `ON CONFLICT (...) DO UPDATE` invariant on the
+  // tombstoned path. Prisma's `@@unique` does not natively emit
+  // the `NULLS NOT DISTINCT` clause; the migration SQL is hand-
+  // edited to include it.
   @@unique([deviceId, bucketStart, metric])
   @@index([deviceId, bucketStart])
 }

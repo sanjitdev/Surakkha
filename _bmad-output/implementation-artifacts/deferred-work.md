@@ -208,3 +208,23 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-5-3-audit-log-surface-at-audit.md`
   summary: `<RbacRoute>` may briefly flash `<RbacDenied />` if `useCurrentRole()` resolves after first paint (e.g., between login and role fetch). No third-layer skeleton masks the flash.
   evidence: `packages/web/src/access/RbacRoute.tsx` is a thin wrapper around `<RbacDenied />` + `useCurrentRole()`. The race window is small but exists; pre-existing pattern across all admin routes (5.1, 5.3, etc.). **Defer until the role-resolution loading state is a shared concern (likely Story 6.x).**
+
+## Deferred from: code review of spec-5-4-readingaggregate-table (2026-09-01)
+
+<!-- 4 reviewer layers: Blind Hunter, Edge Case Hunter, Verification Gap, Acceptance Auditor.
+     Triage: 2 decision-needed (deviceId nullability drift, NULL-distinct @@unique), 9 patch, 12+ defer, 6 dismiss. -->
+
+- **F-5.4-D1** — Redundant `@@index([deviceId, bucketStart])` vs `@@unique([deviceId, bucketStart, metric])` leading prefix (`packages/db/prisma/schema.prisma:158`). Postgres can range-scan the unique index; both kept to mirror 5.3 AuditLog precedent. Index-tuning pass can drop later.
+- **F-5.4-D2** — `bucketStart` is `TIMESTAMP(3)` timezone-naive (`migration.sql:47`). DST ambiguity is locked in by the 5.4 schema choice; 5.5 cron writes in UTC anyway; column-type migration to `Timestamptz` is a future story. Documented in spec Review Findings.
+- **F-5.4-D3** — Spec ↔ epic-5 snake_case drift on column names (`spec-5-4-readingaggregate-table.md:27`). Prisma camelCase is the repo convention; epic-5 narrative predates the standardization.
+- **F-5.4-D4** — Spec line 34 promises `findMany({limit?})` but interface accepts pre-clamped `take` (`readingAggregateRepository.ts:97-109`). Future admin router owns the `limit → clampLimit → take` wiring.
+- **F-5.4-D5** — `since > until` produces silent empty result (`readingAggregateRepository.ts:201-208`). Caller contract; helper chain trusts inputs. Future router-level validation owns this.
+- **F-5.4-D6** — Whitespace-only `deviceId`/`metric` not stripped (`readingAggregateRepository.ts:179-193`). Future router-level Zod boundary owns string-trim validation.
+- **F-5.4-D7** — Adapter swallows Prisma errors identically — no P2002 vs P1001 triage (`readingAggregateRepository.ts:130-144`). Out of 5.4 scope (5.5 cron owns error triage).
+- **F-5.4-D8** — No DB-level CHECK for 5-min bucket floor (`schema.prisma:145`). By spec design ("5.4 ships the column shape only"); 5.5 cron owns the floor formula.
+- **F-5.4-D9** — Sequential `findMany`+`count` race / window (`readingAggregateRepository.ts:130-144`). Typical pagination race; the patch's `Promise.all` refactor narrows the window.
+- **F-5.4-D10** — Adapter crashes on null/undefined prisma arg (`readingAggregateRepository.ts:122`). Caller contract violation; matches 5.3 precedent (no null-guard there either).
+- **F-5.4-D11** — No pagination cursor; empty `where` full-scans (`readingAggregateRepository.ts:97-109`). By spec design (capped at 1000); future admin read surface owns pagination.
+- **F-5.4-D12** — `metricWhere` accepts free string despite "closed-enum" comment (`readingAggregateRepository.ts:184-188`). No router in 5.4; closed-enum validation lives at the future router boundary.
+- **F-5.4-D13** — AC2 (`P2002`) has no executable coverage (`spec-5-4-readingaggregate-table.md:95`). AC2 is asserted at the SQL shape level (unique index exists); live `prisma.readingAggregate.create()` duplicate-insert test requires a live DB; deferred to 5.5 writer-side tests.
+- **F-5.4-D14** — AC1 migration-on-fresh-DB has no automated verification (`spec-5-4-readingaggregate-table.md:94`). `prisma migrate dev` runs locally; CI is a TODO stub (out of 5.4 scope).
