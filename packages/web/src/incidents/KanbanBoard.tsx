@@ -256,7 +256,9 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   );
 
   if (query.isError && query.error instanceof KanbanRbacDeniedError) {
-    return <RbacDenied />;
+    // Story 6.11 — thread the role so the back-link picks the
+    // role-aware destination.
+    return <RbacDenied viewerRole={role} />;
   }
 
   if (query.isError) {

@@ -26,11 +26,10 @@ import { RbacDenied } from "./RbacDenied";
 export const RbacRoute = ({ children }: PropsWithChildren) => {
   const role = useCurrentRole();
   const location = useLocation();
-  const allowed = isPathAllowedForRole(
-    NAV_GROUPS,
-    location.pathname,
-    role,
-  );
+  const allowed = isPathAllowedForRole(NAV_GROUPS, location.pathname, role);
   if (allowed) return <>{children}</>;
-  return <RbacDenied />;
+  // Story 6.11 — thread the role through so the back-link picks a
+  // role-aware destination (Technician → /devices; everyone else
+  // → /dashboard) rather than the generic "Back to dashboard".
+  return <RbacDenied viewerRole={role} />;
 };

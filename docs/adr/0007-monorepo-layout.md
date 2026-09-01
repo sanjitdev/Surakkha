@@ -44,7 +44,7 @@ other three; cross-cutting types live there and **only** there.
 ├── eslint.config.js
 ├── packages/
 │   ├── api/             (Node 20, Express, Socket.IO)
-│   ├── web/             (Node 20, Vite, React, shadcn/ui)
+│   ├── web/             (Node 20, Vite, React, Tailwind — hand-rolled primitives; see DESIGN.md §ui_system)
 │   ├── simulator/       (Node 20, separate process, same wire contract)
 │   ├── shared/          (Zod schemas, types, RBAC matrix)
 │   └── db/              (node-pg-migrate, seeds, fixtures)
@@ -61,7 +61,7 @@ Three corollaries:
    in `shared`.
 3. **Each package has its own `tsconfig.json`** extending the root
    `tsconfig.base.json`. The base sets `strict: true`, `target:
-   ES2022`, `module: ESNext`, and path aliases for `@surakkha/shared`.
+ES2022`, `module: ESNext`, and path aliases for `@surakkha/shared`.
 
 ## Consequences
 

@@ -182,13 +182,13 @@ trigger has not been met, the ADR is still in force.
 
 This is a pnpm workspace monorepo. Five packages:
 
-| Package              | Purpose                                         |
-| -------------------- | ----------------------------------------------- |
-| `packages/api`       | Express + Socket.IO, ingestion, rules, workflow |
-| `packages/web`       | Vite + React + shadcn/ui dashboard              |
-| `packages/simulator` | Telemetry simulator (separate Node process)     |
-| `packages/shared`    | Wire contract, RBAC matrix, types, logger       |
-| `packages/db`        | Migrations, seeds, fixtures                     |
+| Package              | Purpose                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `packages/api`       | Express + Socket.IO, ingestion, rules, workflow                                                            |
+| `packages/web`       | Vite + React + Tailwind dashboard (hand-rolled primitives — see `_bmad-output/.../DESIGN.md` §`ui_system`) |
+| `packages/simulator` | Telemetry simulator (separate Node process)                                                                |
+| `packages/shared`    | Wire contract, RBAC matrix, types, logger                                                                  |
+| `packages/db`        | Migrations, seeds, fixtures                                                                                |
 
 **Cross-cutting rule** (ADR 0007, ESLint-enforced): no epic may
 import a type from another epic's directory. Cross-epic types live

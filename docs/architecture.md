@@ -11,7 +11,7 @@
 
 ## 1. What this document is
 
-This document captures the **architectural invariants** of Surakkha — the decisions a future builder *cannot* read off compliant code, and the seams designed so v2 can extend without re-architecting.
+This document captures the **architectural invariants** of Surakkha — the decisions a future builder _cannot_ read off compliant code, and the seams designed so v2 can extend without re-architecting.
 
 Non-invariants (mission, personas, business objectives, acceptance criteria, v2 backlog) live in the BRD. Product details (feature deep-dives, slicing plan, success metrics) live in the PRD. This document only covers: system shape, wire contract, rules engine contract, data model, simulator contract, deployment shape, and a concise invariants list.
 
@@ -22,7 +22,7 @@ A load-bearing decision made in this document is one where two engineers, buildi
 ## 2. System shape
 
 ```
-React (Vite + TS, Tailwind + shadcn/ui)
+React (Vite + TS, Tailwind — hand-rolled primitives; see `_bmad-output/.../DESIGN.md` §`ui_system`)
    │
    ├── REST (Express + Zod-validated)
    └── WebSocket (Socket.IO)  ← live readings + alerts
@@ -86,38 +86,38 @@ This is the single most important architectural decision. Everything below deriv
 
 **Field contracts:**
 
-| Field | Type | Required | Rule |
-|-------|------|----------|------|
-| `device_id` | UUIDv4 string | yes | Must match the device-id segment of the WebSocket path; mismatch is folded into step 1 (validate) and surfaced as `400 bad_request` with `missing_fields:["device_id"]` (ADR 0013 §"Amendment"). |
-| `ts` | RFC3339 / ISO-8601 UTC string | yes | Server records `server_received_at` separately; `clock_skew_detected` flag set if `|server_received_at - ts| > 60s` |
-| `fw` | semver string | yes | Free-form; surfaced in admin ops view; not validated by server in v1 |
-| `seq` | non-negative integer | yes | Monotonically increasing per-device counter. Gaps ≤ 5 tolerated silently; gaps > 5 set `out_of_order` flag and are logged but accepted. Frames with `seq` ≤ last-seen `seq` are dropped silently (no error, no alert) |
-| `version` | integer | yes | v1.0 is locked at `1`. Unknown versions rejected with `400 invalid_version` |
-| `metrics` | object | yes | All six v1 metrics required. Missing metric → reject `400 bad_request` with `missing_fields:["metrics.<key>"]`. Unknown TOP-LEVEL frame keys rejected by `.strict()` (ADR 0001); unknown metric keys inside `metrics` are silently dropped (forward-compat per ADR 0001). |
+| Field       | Type                          | Required | Rule                                                                                                                                                                                                                                                                      |
+| ----------- | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------ |
+| `device_id` | UUIDv4 string                 | yes      | Must match the device-id segment of the WebSocket path; mismatch is folded into step 1 (validate) and surfaced as `400 bad_request` with `missing_fields:["device_id"]` (ADR 0013 §"Amendment").                                                                          |
+| `ts`        | RFC3339 / ISO-8601 UTC string | yes      | Server records `server_received_at` separately; `clock_skew_detected` flag set if `                                                                                                                                                                                       | server_received_at - ts | > 60s` |
+| `fw`        | semver string                 | yes      | Free-form; surfaced in admin ops view; not validated by server in v1                                                                                                                                                                                                      |
+| `seq`       | non-negative integer          | yes      | Monotonically increasing per-device counter. Gaps ≤ 5 tolerated silently; gaps > 5 set `out_of_order` flag and are logged but accepted. Frames with `seq` ≤ last-seen `seq` are dropped silently (no error, no alert)                                                     |
+| `version`   | integer                       | yes      | v1.0 is locked at `1`. Unknown versions rejected with `400 invalid_version`                                                                                                                                                                                               |
+| `metrics`   | object                        | yes      | All six v1 metrics required. Missing metric → reject `400 bad_request` with `missing_fields:["metrics.<key>"]`. Unknown TOP-LEVEL frame keys rejected by `.strict()` (ADR 0001); unknown metric keys inside `metrics` are silently dropped (forward-compat per ADR 0001). |
 
 **Metric type contract** (enforced by Zod in `packages/shared/src/telemetry.ts`):
 
 **Hard reject ranges** (BRD §8.3.1; `MetricRanges` in `telemetry.ts:13-20`). Frames outside these bounds fail validation with `400 bad_request` and `missing_fields:["metrics.<key>"]`:
 
-| Key | Type | Unit | Hard reject range | Allowed null |
-|-----|------|------|-------------------|--------------|
-| `ph` | number | pH | 0–14 | no |
-| `tds_ppm` | number | ppm | 0–5000 | no |
-| `turbidity_ntu` | number | NTU | 0–1000 | no |
-| `temp_c` | number | °C | -10 to 80 | no |
-| `chlorine_ppm` | number | ppm | 0–5 | no |
-| `water_level_cm` | number | cm | 0–500 | no |
+| Key              | Type   | Unit | Hard reject range | Allowed null |
+| ---------------- | ------ | ---- | ----------------- | ------------ |
+| `ph`             | number | pH   | 0–14              | no           |
+| `tds_ppm`        | number | ppm  | 0–5000            | no           |
+| `turbidity_ntu`  | number | NTU  | 0–1000            | no           |
+| `temp_c`         | number | °C   | -10 to 80         | no           |
+| `chlorine_ppm`   | number | ppm  | 0–5               | no           |
+| `water_level_cm` | number | cm   | 0–500             | no           |
 
 **Soft (extended observation) ranges** (architecture §3.2; `MetricExtendedRanges` in `telemetry.ts`). Frames inside the soft range but outside the hard range are observationally unusual but accepted in v1. Story 2.3 owns the soft-vs-hard policy:
 
-| Key | Soft extended range |
-|-----|---------------------|
-| `ph` | 0–14 (matches hard) |
-| `tds_ppm` | 0–5000 (matches hard) |
-| `turbidity_ntu` | 0–3000 |
-| `temp_c` | -10 to 80 (matches hard) |
-| `chlorine_ppm` | 0–10 |
-| `water_level_cm` | 0–500 (matches hard) |
+| Key              | Soft extended range      |
+| ---------------- | ------------------------ |
+| `ph`             | 0–14 (matches hard)      |
+| `tds_ppm`        | 0–5000 (matches hard)    |
+| `turbidity_ntu`  | 0–3000                   |
+| `temp_c`         | -10 to 80 (matches hard) |
+| `chlorine_ppm`   | 0–10                     |
+| `water_level_cm` | 0–500 (matches hard)     |
 
 Frames with any metric outside the **hard** reject range are rejected with `400 bad_request`. NaN / Infinity rejected with `400 bad_request` (`.finite()` in `rangedFloat`).
 
@@ -234,11 +234,11 @@ Rules are JSON, stored per `device_id` (or globally when `device_id` IS NULL), v
 
 ### 4.2 v1 rule types
 
-| Type | Operator set | Example |
-|------|--------------|---------|
-| `instant` | `>=`, `>`, `<=`, `<`, `==` | TDS >= 300 |
-| `rate` | `delta_per_minute` | turbidity +0.5/min |
-| `absence` | `no_reading_for_seconds` | silent 300s |
+| Type      | Operator set               | Example            |
+| --------- | -------------------------- | ------------------ |
+| `instant` | `>=`, `>`, `<=`, `<`, `==` | TDS >= 300         |
+| `rate`    | `delta_per_minute`         | turbidity +0.5/min |
+| `absence` | `no_reading_for_seconds`   | silent 300s        |
 
 No multi-metric correlation, no ML, no seasonal baselines in v1.
 
@@ -366,16 +366,16 @@ Notification (id, channel, recipient_user_id, payload, simulated_at)
 
 **Transition table (`actor` column is the required role):**
 
-| From | To | Trigger | Actor | Audit event |
-|------|----|---------|-------|-------------|
-| (none) | OPEN | rule fires after de-bounce | system | `incident_opened` |
-| OPEN | ACKNOWLEDGED | Operator acknowledges | Operator | `incident_acknowledged` |
-| ACKNOWLEDGED | INSPECTING | Operator assigns Technician | Operator | `incident_assigned` |
-| INSPECTING | SAFE | Operator submits result | Operator | `incident_result_submitted` |
-| INSPECTING | UNSAFE | Operator submits result | Operator | `incident_result_submitted` (auto-emits `notification:critical` to all Admins) |
-| INSPECTING | MONITORING | Operator submits result | Operator | `incident_result_submitted` |
-| SAFE/UNSAFE/MONITORING | RESOLVED | Operator resolves | Operator | `incident_resolved` |
-| RESOLVED | OPEN | Admin adds a comment with `severity=critical` | Admin | `incident_reopened` |
+| From                   | To           | Trigger                                       | Actor    | Audit event                                                                    |
+| ---------------------- | ------------ | --------------------------------------------- | -------- | ------------------------------------------------------------------------------ |
+| (none)                 | OPEN         | rule fires after de-bounce                    | system   | `incident_opened`                                                              |
+| OPEN                   | ACKNOWLEDGED | Operator acknowledges                         | Operator | `incident_acknowledged`                                                        |
+| ACKNOWLEDGED           | INSPECTING   | Operator assigns Technician                   | Operator | `incident_assigned`                                                            |
+| INSPECTING             | SAFE         | Operator submits result                       | Operator | `incident_result_submitted`                                                    |
+| INSPECTING             | UNSAFE       | Operator submits result                       | Operator | `incident_result_submitted` (auto-emits `notification:critical` to all Admins) |
+| INSPECTING             | MONITORING   | Operator submits result                       | Operator | `incident_result_submitted`                                                    |
+| SAFE/UNSAFE/MONITORING | RESOLVED     | Operator resolves                             | Operator | `incident_resolved`                                                            |
+| RESOLVED               | OPEN         | Admin adds a comment with `severity=critical` | Admin    | `incident_reopened`                                                            |
 
 **Allowed actors per state:**
 
@@ -385,14 +385,14 @@ Notification (id, channel, recipient_user_id, payload, simulated_at)
 
 ### 5.1.1 Kanban column projection (derived view)
 
-The 7-state incident machine above is the source of truth. The Kanban UI on `/incidents` projects incidents into four severity-mixed triage columns. The projection is a *derived view*, not a parallel state machine — state transitions do not move cards between columns directly; a backend state change recomputes the column placement.
+The 7-state incident machine above is the source of truth. The Kanban UI on `/incidents` projects incidents into four severity-mixed triage columns. The projection is a _derived view_, not a parallel state machine — state transitions do not move cards between columns directly; a backend state change recomputes the column placement.
 
-| Kanban column | Projected states |
-|---|---|
-| `Open · Critical` | `OPEN` with severity = `critical` |
-| `Open · Warning` | `OPEN` with severity = `warning` |
-| `Acknowledged` | `ACKNOWLEDGED`, `INSPECTING` |
-| `Resolved` | `SAFE`, `UNSAFE`, `MONITORING`, `RESOLVED` |
+| Kanban column     | Projected states                           |
+| ----------------- | ------------------------------------------ |
+| `Open · Critical` | `OPEN` with severity = `critical`          |
+| `Open · Warning`  | `OPEN` with severity = `warning`           |
+| `Acknowledged`    | `ACKNOWLEDGED`, `INSPECTING`               |
+| `Resolved`        | `SAFE`, `UNSAFE`, `MONITORING`, `RESOLVED` |
 
 Rules:
 
@@ -438,12 +438,12 @@ Simulator JWTs are issued with `aud=simulator` and have read-only-equivalent sco
 
 **One Docker Compose file, four services:**
 
-| Service | Image | Port | Purpose |
-|---------|-------|------|---------|
-| `db` | `postgres:15` | 5432 | Single instance, volume-mounted data |
-| `api` | Node 20 | 3000 | Express + WS ingestion + rules engine + workflow + cron |
-| `web` | Nginx (serving Vite build) | 5173 | React SPA |
-| `simulator` | Node 20 | (no external port) | Separate process, connects to `api` over WS |
+| Service     | Image                      | Port               | Purpose                                                 |
+| ----------- | -------------------------- | ------------------ | ------------------------------------------------------- |
+| `db`        | `postgres:15`              | 5432               | Single instance, volume-mounted data                    |
+| `api`       | Node 20                    | 3000               | Express + WS ingestion + rules engine + workflow + cron |
+| `web`       | Nginx (serving Vite build) | 5173               | React SPA                                               |
+| `simulator` | Node 20                    | (no external port) | Separate process, connects to `api` over WS             |
 
 **Environment:** `.env.example` ships with all required keys (`JWT_SECRET`, `DATABASE_URL`, `PORT`, simulator keys). README has a 5-minute quickstart.
 
@@ -475,30 +475,30 @@ These decisions are **load-bearing** — they bind the contract between api, sim
 
 ### 8.1 Durable invariants (any change is a wire-contract-breaking change)
 
-| # | Invariant | Binds | Prevents |
-|---|-----------|-------|----------|
-| I-1 | Wire contract `version` is `1`, with the field contract in §3.2, metric type contract in §3.2, and processing order in §3.2 | api, simulator, frontend decoder | Drift between framing (simulator) and parsing (api) |
-| I-2 | Per-device server-side rate cap is `1 reading / 2s`; over-cap frames are rejected with `429 rate_limited` and `Retry-After` header. **The simulator MUST buffer and respect `Retry-After`, not silently drop.** | api, simulator | Server overload, alert spam, silent simulator drop |
-| I-3 | Per-device JWT required; `aud` is either `device` (24h expiry) or `simulator` (1h expiry); `iss` is `surakkha-api`; HS256 with `JWT_SECRET`. Reconnect on `401 token_expired`. | api auth, simulator auth | Cross-device spoofing, simulator compromise leading to admin actions |
-| I-4 | Simulator JWTs carry `aud=simulator` with scope locked to `telemetry:write`. They cannot execute any other API surface — including admin endpoints — even with a leaked token. | api auth, simulator auth | Privilege escalation via leaked simulator token |
-| I-5 | Rules engine supports only `instant`, `rate`, `absence` rule types. New rule types require a wire-contract bump. | api | Rules-engine complexity explosion; v2 expansion must be deliberate |
-| I-6 | Severity is set by the rule, not inferred by the engine. | rules engine | Auto-severity mistakes; false `critical` alerts |
-| I-7 | `device_id` is UUIDv4, generated at provisioning, never derived from MAC/SIM. | platform | Identity drift across SIM swaps |
-| I-8 | Default severity defaults and threshold values come from BRD §8.3.1 (WHO/BSTI source-of-truth); the database seed script `prisma/seed.ts` is the executable form of these defaults. **Server does not compute defaults at runtime** — it reads from the seeded `Rule` rows. | database seed, audit | Inconsistent thresholds across schools, undocumented defaults |
-| I-11 | Wire contract is **read-only telemetry** in v1: the api NEVER sends a frame to a device. Calibration, threshold-push, and firmware-update flows are v2. | wire contract | Premature command surface; downstream commits |
-| I-12 | Simulator uses the same `ws://<host>/ingest/{device_id}` path as real devices, with no back-door endpoints. | simulator, api | Hidden data-entry paths that bypass validation, rate cap, auth |
+| #    | Invariant                                                                                                                                                                                                                                                                   | Binds                            | Prevents                                                             |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------- |
+| I-1  | Wire contract `version` is `1`, with the field contract in §3.2, metric type contract in §3.2, and processing order in §3.2                                                                                                                                                 | api, simulator, frontend decoder | Drift between framing (simulator) and parsing (api)                  |
+| I-2  | Per-device server-side rate cap is `1 reading / 2s`; over-cap frames are rejected with `429 rate_limited` and `Retry-After` header. **The simulator MUST buffer and respect `Retry-After`, not silently drop.**                                                             | api, simulator                   | Server overload, alert spam, silent simulator drop                   |
+| I-3  | Per-device JWT required; `aud` is either `device` (24h expiry) or `simulator` (1h expiry); `iss` is `surakkha-api`; HS256 with `JWT_SECRET`. Reconnect on `401 token_expired`.                                                                                              | api auth, simulator auth         | Cross-device spoofing, simulator compromise leading to admin actions |
+| I-4  | Simulator JWTs carry `aud=simulator` with scope locked to `telemetry:write`. They cannot execute any other API surface — including admin endpoints — even with a leaked token.                                                                                              | api auth, simulator auth         | Privilege escalation via leaked simulator token                      |
+| I-5  | Rules engine supports only `instant`, `rate`, `absence` rule types. New rule types require a wire-contract bump.                                                                                                                                                            | api                              | Rules-engine complexity explosion; v2 expansion must be deliberate   |
+| I-6  | Severity is set by the rule, not inferred by the engine.                                                                                                                                                                                                                    | rules engine                     | Auto-severity mistakes; false `critical` alerts                      |
+| I-7  | `device_id` is UUIDv4, generated at provisioning, never derived from MAC/SIM.                                                                                                                                                                                               | platform                         | Identity drift across SIM swaps                                      |
+| I-8  | Default severity defaults and threshold values come from BRD §8.3.1 (WHO/BSTI source-of-truth); the database seed script `prisma/seed.ts` is the executable form of these defaults. **Server does not compute defaults at runtime** — it reads from the seeded `Rule` rows. | database seed, audit             | Inconsistent thresholds across schools, undocumented defaults        |
+| I-11 | Wire contract is **read-only telemetry** in v1: the api NEVER sends a frame to a device. Calibration, threshold-push, and firmware-update flows are v2.                                                                                                                     | wire contract                    | Premature command surface; downstream commits                        |
+| I-12 | Simulator uses the same `ws://<host>/ingest/{device_id}` path as real devices, with no back-door endpoints.                                                                                                                                                                 | simulator, api                   | Hidden data-entry paths that bypass validation, rate cap, auth       |
 
 ### 8.2 v1 operational constraints (NOT durable — may change in v2 without a contract bump)
 
 These are deliberate v1 simplifications. They are listed here so the AI coding agent does not mistake them for durable decisions.
 
-| # | Constraint | Why v1-only |
-|---|-----------|-------------|
-| I-9 | One Node process for api + ingestion + rules + alerts + workflow + cron (simulator separate) | Premature microservices; horizontal-scaling theatre. v2 may split into api + worker. |
-| I-10 | Postgres is the only persistence layer (no Redis, no message queue, no time-series DB) | Operational complexity. v2 may add pub/sub for multi-process scaling. |
-| I-13 | HS256 JWT (single secret) | Sufficient for single-tenant v1. v2 will move to RS256 + JWKS for key rotation. |
-| I-14 | WebSocket transport over plain `ws://` (no mTLS) | Local demo only. Production deployment (BRD Appendix B) requires `wss://`. |
-| I-15 | Cron-driven retention (hourly, max 10,000 rows per run) | Adequate for the demo dataset. v2 may switch to a continuous aggregation worker. |
+| #    | Constraint                                                                                   | Why v1-only                                                                          |
+| ---- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| I-9  | One Node process for api + ingestion + rules + alerts + workflow + cron (simulator separate) | Premature microservices; horizontal-scaling theatre. v2 may split into api + worker. |
+| I-10 | Postgres is the only persistence layer (no Redis, no message queue, no time-series DB)       | Operational complexity. v2 may add pub/sub for multi-process scaling.                |
+| I-13 | HS256 JWT (single secret)                                                                    | Sufficient for single-tenant v1. v2 will move to RS256 + JWKS for key rotation.      |
+| I-14 | WebSocket transport over plain `ws://` (no mTLS)                                             | Local demo only. Production deployment (BRD Appendix B) requires `wss://`.           |
+| I-15 | Cron-driven retention (hourly, max 10,000 rows per run)                                      | Adequate for the demo dataset. v2 may switch to a continuous aggregation worker.     |
 
 ### 8.3 RBAC enforcement contract
 
@@ -520,6 +520,7 @@ Every API endpoint MUST enforce `(subject, action, resource)` authorization. The
 ### 8.4 Bump procedure
 
 If a v2 change touches any of I-1 through I-12, it is a breaking change and requires:
+
 - a wire-contract version bump (`version: 2` in the frame);
 - a shared-types update in `packages/shared/src/telemetry.ts`;
 - both sides of the boundary updated in lockstep;
@@ -531,16 +532,16 @@ Changes to §8.2 (v1 operational constraints) are NOT contract-breaking and may 
 
 ## 9. How this document relates to the others
 
-| Question | Document |
-|----------|----------|
-| Why are we building this? | BRD §1–2, refined idea §2 |
-| Who is it for and what do they do? | BRD §3 (objectives), §6 (personas), §7 (stories) |
-| When is v1.0 done? | BRD §11 (17 acceptance criteria) |
-| What features ship, in what order? | PRD §4 (MoSCoW), §5 (P0 deep-dives), §6 (slicing) |
-| What are the technical invariants? | **This document** |
-| What is the wire contract / data model / simulator / deployment shape? | **This document** |
-| Where did the v1.0 decisions come from? | Refined idea §13 (resolution table) |
-| What is deferred to v2? | BRD Appendix B |
-| What was the original brainstorm? | `Surakkha-water-monioring-system-idea.md` (historical) |
+| Question                                                               | Document                                               |
+| ---------------------------------------------------------------------- | ------------------------------------------------------ |
+| Why are we building this?                                              | BRD §1–2, refined idea §2                              |
+| Who is it for and what do they do?                                     | BRD §3 (objectives), §6 (personas), §7 (stories)       |
+| When is v1.0 done?                                                     | BRD §11 (17 acceptance criteria)                       |
+| What features ship, in what order?                                     | PRD §4 (MoSCoW), §5 (P0 deep-dives), §6 (slicing)      |
+| What are the technical invariants?                                     | **This document**                                      |
+| What is the wire contract / data model / simulator / deployment shape? | **This document**                                      |
+| Where did the v1.0 decisions come from?                                | Refined idea §13 (resolution table)                    |
+| What is deferred to v2?                                                | BRD Appendix B                                         |
+| What was the original brainstorm?                                      | `Surakkha-water-monioring-system-idea.md` (historical) |
 
 A new contributor should read the BRD first for context, this document second for the technical shape, then the PRD for the build plan. They do not need to read the original spec file — it no longer exists; its content has been refactored into this document and the BRD/PRD/refined idea.

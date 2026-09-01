@@ -85,7 +85,7 @@ The 36 FRs (FR-1 through FR-36) below are authoritative from `docs/Surakkha-BRD.
 **FR-25.** v1 uses a single secret with no key rotation; JWKS / RS256 is a v2 requirement.
 **FR-26.** v1 has no SSO or MFA; documented as a v2 item.
 **FR-27.** v1 notifications are UI-only (toast + banner); no real SMS, email, or push.
-**FR-28.** The platform MUST record every notification that *would* have been sent to a `Notification` table, visible on `/admin/notifications`.
+**FR-28.** The platform MUST record every notification that _would_ have been sent to a `Notification` table, visible on `/admin/notifications`.
 **FR-29.** Users with export permission MUST be able to download 30 days of readings for any sensor as CSV.
 **FR-30.** All state changes, threshold changes, and simulator events MUST appear in a queryable audit log viewable only by Admin role.
 **FR-31.** Raw readings older than 30 days MUST be aggregated into 5-minute mean/min/max rows and the raw rows deleted.
@@ -254,31 +254,32 @@ Step 0 is not an epic. It establishes the **shared package** that every epic imp
 
 **`packages/shared` contents:**
 
-| File | Defines | Why foundation |
-|---|---|---|
-| `src/telemetry.ts` | Zod schema for the `version: 1` telemetry frame (FR-2, AR-2). Metric type/range validation per architecture §3.2. | Both api and simulator import this; a contract bump requires editing only this file. |
-| `src/auth.ts` | JWT claim shape (`iss: surakkha-api`, `aud: device|simulator`, `scope`), the access/refresh token DTOs (FR-22, FR-23, AR-4). | Epic 1's middleware and Epic 2's simulator both type-check against the same shape. |
-| `src/events.ts` | WebSocket event payloads (`reading:new`, `alert:opened`, `alert:acknowledged`, `incident:updated`, `incident:state_changed`, `notification:critical`) per architecture §3.5. | Backend emitters (Epic 4) and frontend listeners (Epic 2) agree on shape by construction. |
-| `src/incident.ts` | Incident state enum (`OPEN | ACKNOWLEDGED | INSPECTING | SAFE | UNSAFE | MONITORING | RESOLVED`) per architecture §5.1. | One source of truth for the state machine — no epic renumbers or renames a state. |
-| `src/rbac.ts` | Role enum, action enum, resource enum, and the `(subject, action, resource)` predicate (architecture §8.3) — imported by Epic 1's middleware and by every other epic's handler tests. | Tests on this file catch every RBAC regression Epic 1 enables. |
+| File               | Defines                                                                                                                                                                               | Why foundation                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---- | ------ | ---------- | --------------------------------- | --------------------------------------------------------------------------------- |
+| `src/telemetry.ts` | Zod schema for the `version: 1` telemetry frame (FR-2, AR-2). Metric type/range validation per architecture §3.2.                                                                     | Both api and simulator import this; a contract bump requires editing only this file.      |
+| `src/auth.ts`      | JWT claim shape (`iss: surakkha-api`, `aud: device                                                                                                                                    | simulator`, `scope`), the access/refresh token DTOs (FR-22, FR-23, AR-4).                 | Epic 1's middleware and Epic 2's simulator both type-check against the same shape. |
+| `src/events.ts`    | WebSocket event payloads (`reading:new`, `alert:opened`, `alert:acknowledged`, `incident:updated`, `incident:state_changed`, `notification:critical`) per architecture §3.5.          | Backend emitters (Epic 4) and frontend listeners (Epic 2) agree on shape by construction. |
+| `src/incident.ts`  | Incident state enum (`OPEN                                                                                                                                                            | ACKNOWLEDGED                                                                              | INSPECTING                                                                         | SAFE | UNSAFE | MONITORING | RESOLVED`) per architecture §5.1. | One source of truth for the state machine — no epic renumbers or renames a state. |
+| `src/rbac.ts`      | Role enum, action enum, resource enum, and the `(subject, action, resource)` predicate (architecture §8.3) — imported by Epic 1's middleware and by every other epic's handler tests. | Tests on this file catch every RBAC regression Epic 1 enables.                            |
 
 **Cross-cutting rule (binding for every epic):** No epic may `import type` from another epic's directory. All cross-epic types live in `packages/shared/src` only. The AI coding agent is explicitly bound by this rule; any candidate code that violates it is wrong, regardless of what the agent's pattern matching suggests.
 
 **Sub-steps:**
 
-| ID | Sub-step | Done when |
-|---|---|---|
-| F-0.1 | Monorepo scaffold (Vite + React + TypeScript + Tailwind + shadcn-ui frontend, Node 20 + Express + Prisma backend, separate simulator process, Postgres 15 — `packages/web`, `packages/api`, `packages/simulator`, `packages/shared`, `packages/db`). | `pnpm install && pnpm -r build` succeeds on a clean clone. |
-| F-0.2 | `packages/shared` skeleton with the five files above (stub Zod schemas + enums). | `pnpm -F shared test` runs (even if no tests). |
-| F-0.3 | ESLint + Prettier config at the repo root with the per-package inheritance. | `pnpm lint` succeeds. |
-| F-0.4 | Docker Compose with the four services (web, api, simulator, db). | `docker compose up` brings everything up; `docker compose down -v` cleans up. |
-| F-0.5 | README quickstart (NFR-11). | A fresh user reaches the demo state in under 15 minutes via `git clone && docker compose up && README steps`. |
+| ID    | Sub-step                                                                                                                                                                                                                                                                                                                                                                                                                                       | Done when                                                                                                     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| F-0.1 | Monorepo scaffold (Vite + React + TypeScript + Tailwind + shadcn-ui frontend _(note: shadcn-ui was on the original plan but the implementation shipped hand-rolled Tailwind primitives on the `tailwind.config.ts` token system — no Radix, CVA, or lucide installed)_, Node 20 + Express + Prisma backend, separate simulator process, Postgres 15 — `packages/web`, `packages/api`, `packages/simulator`, `packages/shared`, `packages/db`). | `pnpm install && pnpm -r build` succeeds on a clean clone.                                                    |
+| F-0.2 | `packages/shared` skeleton with the five files above (stub Zod schemas + enums).                                                                                                                                                                                                                                                                                                                                                               | `pnpm -F shared test` runs (even if no tests).                                                                |
+| F-0.3 | ESLint + Prettier config at the repo root with the per-package inheritance.                                                                                                                                                                                                                                                                                                                                                                    | `pnpm lint` succeeds.                                                                                         |
+| F-0.4 | Docker Compose with the four services (web, api, simulator, db).                                                                                                                                                                                                                                                                                                                                                                               | `docker compose up` brings everything up; `docker compose down -v` cleans up.                                 |
+| F-0.5 | README quickstart (NFR-11).                                                                                                                                                                                                                                                                                                                                                                                                                    | A fresh user reaches the demo state in under 15 minutes via `git clone && docker compose up && README steps`. |
 
-**Why this isn't Epic 1's Story 1.1:** Step 0 produces no user-visible functionality. Per the bmad-advanced-elicitation Pre-mortem + Assumption Audit (A2, A7), if it lives inside Epic 1, Epic 1's start has to wait for shared types to be defined *while* it's already writing JWTs — the right types never get a chance to be canonical because they didn't exist before auth code did. Step 0 is the foundation seam; Epic 1 consumes from it.
+**Why this isn't Epic 1's Story 1.1:** Step 0 produces no user-visible functionality. Per the bmad-advanced-elicitation Pre-mortem + Assumption Audit (A2, A7), if it lives inside Epic 1, Epic 1's start has to wait for shared types to be defined _while_ it's already writing JWTs — the right types never get a chance to be canonical because they didn't exist before auth code did. Step 0 is the foundation seam; Epic 1 consumes from it.
 
 ## Epic List
 
 ### Epic 1: Auth & User Management
+
 Operators, Technicians, Admins, and Viewers can sign in, see only what their role allows, and have their actions audited. The login shell, role-aware nav, the global RBAC middleware, the foundation design tokens, and the responsive layout shell all land here so every later epic ships against a known access boundary and a known visual language.
 **FRs covered:** FR-20, FR-21, FR-22, FR-23, FR-24, FR-25, FR-26
 **ARs covered:** AR-4, AR-10
@@ -286,6 +287,7 @@ Operators, Technicians, Admins, and Viewers can sign in, see only what their rol
 **Stories:** 1.1, 1.2a, 1.2b, 1.3–1.10 (11 stories)
 
 ### Epic 2: Devices & Telemetry
+
 Operators can see live telemetry from six simulated devices, with a stable device identity, the wire-contract seam, and a working simulator that emits realistic frames. The dashboard shell, the saturated severity KPI band, the live readings table, and the map are all wired to the same socket stream so the demo story starts here.
 **FRs covered:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-33, FR-34, FR-35, FR-36
 **ARs covered:** AR-1, AR-2, AR-3, AR-5, AR-12
@@ -294,12 +296,14 @@ Operators can see live telemetry from six simulated devices, with a stable devic
 **Stories:** 2.1–2.9 (9 stories)
 
 ### Epic 3: Rules & Alerts
+
 Operators can see when a sensor reading breaches a threshold, with de-bounced alerts that auto-create incidents. The rules engine supports `instant`, `rate`, and `absence` rule types; defaults are seeded from BRD §8.3.1; severity is set by the rule, not inferred; alerts are de-bounced per `(device, metric, severity)`.
 **FRs covered:** FR-11, FR-12, FR-13, FR-14, FR-15
 **ARs covered:** AR-6, AR-7
 **Stories:** 3.1–3.7 (7 stories)
 
 ### Epic 4: Incidents & Workflow
+
 Operators, Technicians, and Admins can move an incident through the full state machine, see the severity banner for UNSAFE results, and resolve or reopen with a full audit trail. The 4-column severity-mixed Kanban is the day-to-day surface; the underlying 7-state machine governs transitions and remains auditable. Epic 4 also owns the `Notification` row writer (FR-28 schema side) and the card-action-affordance contract that Epic 2's read-only incident preview consumes.
 **FRs covered:** FR-16, FR-17, FR-18, FR-19, FR-27; FR-28 (schema + writer only — read view lives in Epic 5)
 **ARs covered:** AR-8, AR-9, AR-11
@@ -307,12 +311,14 @@ Operators, Technicians, and Admins can move an incident through the full state m
 **Stories:** 4.1–4.13 (13 stories)
 
 ### Epic 5: Reporting & Audit
+
 Admins and Operators can export readings, see the notification log, browse the audit trail, and trust that data older than 30 days has been aggregated into 5-minute mean/min/max rows. The hourly retention cron is the seam for v2 to swap in a continuous aggregation worker. Epic 5 owns the read side of `Notification` (FR-28 view side); the writer and schema land in Epic 4 because that's where `incident:state_changed` events emit notifications.
 **FRs covered:** FR-28 (read view only), FR-29, FR-30, FR-31, FR-32
 **ARs covered:** AR-13
 **Stories:** 5.1–5.6 (6 stories)
 
 ### Epic 6: Cross-cutting NFRs
+
 The non-functional backbone: Docker Compose deployment, README quickstart, lint/format, test coverage, observability, accessibility audit, `prefers-reduced-motion` enforcement, comprehension aids (LegendStrip / SeverityShowcase / WalkthroughOverlay), the operational constraints register that prevents the AI coding agent from mistaking v1 simplifications for durable decisions, and the cross-epic shared-package rule. The visual layer's foundation tokens and the responsive shell ship in Epic 1 so they don't have to ship last.
 **FRs covered:** (no new FRs; this epic realises NFRs)
 **NFRs covered:** NFR-1, NFR-2, NFR-3, NFR-4, NFR-8, NFR-9, NFR-11, NFR-12, NFR-15
@@ -1395,7 +1401,7 @@ So that I cannot miss a critical water-safety outcome — and the banner must be
 
 As a developer,
 I want a `Notification` row written for every `notification:critical` event,
-So that the platform records what *would* have been sent in v1 and v2 can replay them via real channels.
+So that the platform records what _would_ have been sent in v1 and v2 can replay them via real channels.
 
 **Acceptance Criteria:**
 
@@ -1924,4 +1930,3 @@ So that the NFR-1 SLA is enforced on every PR. (Moved from Epic 3 to keep SLA te
 **Then** the test skips with a clear "Simulator not running" message rather than failing
 
 **Covers:** NFR-1.
-

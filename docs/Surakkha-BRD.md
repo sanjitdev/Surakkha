@@ -49,13 +49,13 @@ Bangladesh has ~130,000 government primary schools. Even capturing 10 schools fo
 
 ## 3. Business Objectives
 
-| # | Objective | Success Measure |
-|---|-----------|----------------|
-| BO-1 | Demonstrate a complete Sensor → Resolution workflow end-to-end | A reviewer can reproduce the DHAKA-SCHOOL-023 contamination flow from a fresh clone in under 15 minutes |
-| BO-2 | Validate the device contract as the seam between simulator and real hardware | Simulator and real-device integration paths use identical wire contract (§6) |
-| BO-3 | Establish operator-grade audit and permissioning patterns | Every state transition is timestamped and attributed; permission matrix in §4 of the spec is enforced on every endpoint |
-| BO-4 | Keep v1 shippable inside a 2–4 week build window | 100% of v2 backlog items in §15 of the spec remain deferred; no creep |
-| BO-5 | Make a defensible platform-vs-vertical claim | Documented device abstraction (§6) and rules engine abstraction (§7) that, without code change, support other verticals |
+| #    | Objective                                                                    | Success Measure                                                                                                         |
+| ---- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| BO-1 | Demonstrate a complete Sensor → Resolution workflow end-to-end               | A reviewer can reproduce the DHAKA-SCHOOL-023 contamination flow from a fresh clone in under 15 minutes                 |
+| BO-2 | Validate the device contract as the seam between simulator and real hardware | Simulator and real-device integration paths use identical wire contract (§6)                                            |
+| BO-3 | Establish operator-grade audit and permissioning patterns                    | Every state transition is timestamped and attributed; permission matrix in §4 of the spec is enforced on every endpoint |
+| BO-4 | Keep v1 shippable inside a 2–4 week build window                             | 100% of v2 backlog items in §15 of the spec remain deferred; no creep                                                   |
+| BO-5 | Make a defensible platform-vs-vertical claim                                 | Documented device abstraction (§6) and rules engine abstraction (§7) that, without code change, support other verticals |
 
 ---
 
@@ -91,16 +91,16 @@ Each deferred item is logged for the v2 BRD.
 
 ## 5. Stakeholders
 
-| Stakeholder | Interest | Engagement in v1 |
-|-------------|----------|------------------|
-| **Solo / 2-person dev team** | Build, demo, iterate | Build, operate, document |
-| **Future hiring managers / portfolio reviewers** | Assess engineering judgment, scope discipline, workflow thinking | Primary audience for the live demo |
-| **Schools (represented, not onboarded)** | Validates operator realism of UX | Persona-driven design only in v1 |
-| **Headmaster (persona)** | Decision-maker at school level | Informs the Admin/Operator role split; **not a v1 user account** |
-| **Caretaker (persona)** | Sensor operator, on-the-ground responder | Maps to the **Operator** role in v1 |
-| **Technician (persona)** | Visits site, submits results | Maps to the **Technician** role in v1 |
-| **Upazila Education Office (future)** | Escalation recipient | Out of v1 user set; documented as escalation path |
-| **BSTI (future)** | Standards authority for thresholds | Threshold defaults hard-coded from WHO for v1; BSTI alignment deferred to v2 |
+| Stakeholder                                      | Interest                                                         | Engagement in v1                                                             |
+| ------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Solo / 2-person dev team**                     | Build, demo, iterate                                             | Build, operate, document                                                     |
+| **Future hiring managers / portfolio reviewers** | Assess engineering judgment, scope discipline, workflow thinking | Primary audience for the live demo                                           |
+| **Schools (represented, not onboarded)**         | Validates operator realism of UX                                 | Persona-driven design only in v1                                             |
+| **Headmaster (persona)**                         | Decision-maker at school level                                   | Informs the Admin/Operator role split; **not a v1 user account**             |
+| **Caretaker (persona)**                          | Sensor operator, on-the-ground responder                         | Maps to the **Operator** role in v1                                          |
+| **Technician (persona)**                         | Visits site, submits results                                     | Maps to the **Technician** role in v1                                        |
+| **Upazila Education Office (future)**            | Escalation recipient                                             | Out of v1 user set; documented as escalation path                            |
+| **BSTI (future)**                                | Standards authority for thresholds                               | Threshold defaults hard-coded from WHO for v1; BSTI alignment deferred to v2 |
 
 ---
 
@@ -210,17 +210,17 @@ The table below is the **canonical v1.0 threshold set** for government primary s
 
 Where WHO and BSTI differ, BSTI is authoritative for Bangladesh deployments and is what ships in v1.0. Where the standard is silent, an engineering default is used and the rationale column documents why.
 
-| Metric | Operator | Value | Severity | Hysteresis (s) | Min duration (s) | Source | Rationale |
-|--------|----------|-------|----------|----------------|------------------|--------|-----------|
-| `ph` | `<` | 6.5 | warning | 300 | 30 | WHO/BSTI | Below pH 6.5: corrosive water, potential metal leaching |
-| `ph` | `>` | 8.5 | warning | 300 | 30 | WHO/BSTI | Above pH 8.5: scale formation, aesthetic and operational impact |
-| `tds_ppm` | `>=` | 300 | warning | 300 | 60 | WHO (aesthetic) | TDS > 300 ppm: noticeable taste; > 1000 ppm is health concern but rare in schools |
-| `tds_ppm` | `>=` | 1000 | critical | 600 | 30 | WHO | TDS ≥ 1000 ppm: health-based upper limit per WHO guideline |
-| `turbidity_ntu` | `>` | 5 | critical | 600 | 30 | WHO/BSTI | Turbidity > 5 NTU: interferes with disinfection; immediate health risk |
-| `chlorine_ppm` | `<` | 0.2 | critical | 600 | 60 | WHO | Free chlorine < 0.2 mg/L: insufficient residual disinfection |
-| `chlorine_ppm` | `>` | 1.5 | warning | 300 | 60 | WHO | Free chlorine > 1.5 mg/L: taste complaint, operational concern |
-| `temp_c` | `>` | 45 | warning | 600 | 120 | engineering | Water above 45°C: supply fault (heater proximity, sun-exposed tank); not a chemical health risk |
-| `water_level_cm` | `<` | 20 | warning | 300 | 60 | engineering | Level below 20 cm: tank near empty; supply or pump fault |
+| Metric           | Operator | Value | Severity | Hysteresis (s) | Min duration (s) | Source          | Rationale                                                                                       |
+| ---------------- | -------- | ----- | -------- | -------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `ph`             | `<`      | 6.5   | warning  | 300            | 30               | WHO/BSTI        | Below pH 6.5: corrosive water, potential metal leaching                                         |
+| `ph`             | `>`      | 8.5   | warning  | 300            | 30               | WHO/BSTI        | Above pH 8.5: scale formation, aesthetic and operational impact                                 |
+| `tds_ppm`        | `>=`     | 300   | warning  | 300            | 60               | WHO (aesthetic) | TDS > 300 ppm: noticeable taste; > 1000 ppm is health concern but rare in schools               |
+| `tds_ppm`        | `>=`     | 1000  | critical | 600            | 30               | WHO             | TDS ≥ 1000 ppm: health-based upper limit per WHO guideline                                      |
+| `turbidity_ntu`  | `>`      | 5     | critical | 600            | 30               | WHO/BSTI        | Turbidity > 5 NTU: interferes with disinfection; immediate health risk                          |
+| `chlorine_ppm`   | `<`      | 0.2   | critical | 600            | 60               | WHO             | Free chlorine < 0.2 mg/L: insufficient residual disinfection                                    |
+| `chlorine_ppm`   | `>`      | 1.5   | warning  | 300            | 60               | WHO             | Free chlorine > 1.5 mg/L: taste complaint, operational concern                                  |
+| `temp_c`         | `>`      | 45    | warning  | 600            | 120              | engineering     | Water above 45°C: supply fault (heater proximity, sun-exposed tank); not a chemical health risk |
+| `water_level_cm` | `<`      | 20    | warning  | 300            | 60               | engineering     | Level below 20 cm: tank near empty; supply or pump fault                                        |
 
 **Notes on the table:**
 
@@ -237,7 +237,7 @@ Where WHO and BSTI differ, BSTI is authoritative for Bangladesh deployments and 
 - **FR-15.** Threshold breach MUST produce an alert with severity (`info | warning | critical`), opened_at, acknowledged_at, cleared_at.
 - **FR-16.** Alerts of severity `warning` or `critical` MUST auto-create an incident linked to the alert and the school.
 - **FR-17.** Incident lifecycle follows the state machine in spec §5: `OPEN → ACKNOWLEDGED → INSPECTING → (SAFE | UNSAFE | MONITORING) → RESOLVED`, with a `REOPENED` branch.
-- **FR-18.** Status `UNSAFE` MUST automatically raise a Critical notification banner to all Admins for 24 hours or until acknowledged. The 24-hour auto-dismiss is implemented but not covered by automated tests in v1 (would require time mocking); the *until-acknowledged* dismissal is tested.
+- **FR-18.** Status `UNSAFE` MUST automatically raise a Critical notification banner to all Admins for 24 hours or until acknowledged. The 24-hour auto-dismiss is implemented but not covered by automated tests in v1 (would require time mocking); the _until-acknowledged_ dismissal is tested.
 - **FR-19.** Every state transition MUST be recorded in `IncidentEvent` with actor_user_id, type, payload, and timestamp.
 
 ### 8.5 Permissions
@@ -256,7 +256,7 @@ Where WHO and BSTI differ, BSTI is authoritative for Bangladesh deployments and 
 ### 8.7 Notifications
 
 - **FR-27.** v1 notifications are UI-only (toast + banner); no real SMS, email, or push.
-- **FR-28.** The platform MUST record every notification that *would* have been sent to a `Notification` table, visible on `/admin/notifications`.
+- **FR-28.** The platform MUST record every notification that _would_ have been sent to a `Notification` table, visible on `/admin/notifications`.
 
 ### 8.8 Reporting and audit
 
@@ -279,23 +279,23 @@ Where WHO and BSTI differ, BSTI is authoritative for Bangladesh deployments and 
 
 ## 9. Non-Functional Requirements
 
-| ID | Category | Requirement |
-|----|----------|-------------|
-| NFR-1 | Performance | End-to-end alert latency (breach → alert visible on dashboard) MUST be under 3 seconds under nominal load (6 devices). |
-| NFR-2 | Performance | Dashboard UI MUST remain responsive (input lag under 100ms) with 6 live devices at 1 reading / 2s each. |
-| NFR-3 | Scalability (design) | The device contract (§6) is designed as the seam for v2 horizontal scaling (a future pub/sub layer). v1's single-process architecture supports the 6-device demo and is expected to support 10–100 devices without redesign; actual capacity is not load-tested in v1. |
-| NFR-4 | Reliability | The platform MUST tolerate a 60-second disconnect mid-incident (per spec §17 risk row) without losing state. The simulator MUST include an `Offline` scenario that exercises this. |
-| NFR-5 | Reliability | Simulator MUST buffer up to 5,000 readings and flush on reconnect without loss. |
-| NFR-6 | Security | All endpoints MUST enforce the permission matrix; JWTs MUST be validated on every request; passwords MUST use bcrypt cost 12. |
-| NFR-7 | Security (v2 deferred) | Per-frame cryptographic signing, JWKS/RS256, audit-log immutability via hash chains. |
-| NFR-8 | Usability | A reviewer who has never seen the project MUST understand the workflow within 60 seconds from the dashboard (per spec §3.8). |
-| NFR-9 | Usability | A school (school row, sensors, rules, primary contact) MUST be onboardable in under 5 minutes via the UI (per spec §3.1). |
-| NFR-10 | Localisability (deferred) | v1 ships English-only with a translation file structure and Tailwind tokens ready for Bangla fonts (locale content v2). |
-| NFR-11 | Operability | The platform MUST be reproducible locally with a single `docker compose up` plus a 5-minute README quickstart. |
-| NFR-12 | Test coverage | Backend MUST target 70% line coverage; frontend 50%. Playwright MUST cover the happy path: login → see reading → trigger scenario → resolve incident. |
-| NFR-13 | Maintainability | Lint and format MUST be enforced (ESLint + Prettier); type-safety MUST be end-to-end via shared Zod schemas consumed by both api and simulator. |
-| NFR-14 | Compatibility | The wire contract MUST be frozen behind a `version: 1` header and treated as a contract review item every sprint (per spec §17). |
-| NFR-15 | Deployment | v1 deployment MUST be a single Docker Compose file with three services: web (Nginx-served Vite build), api (Node 20), db (Postgres 15 with volume-mounted data). |
+| ID     | Category                  | Requirement                                                                                                                                                                                                                                                            |
+| ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR-1  | Performance               | End-to-end alert latency (breach → alert visible on dashboard) MUST be under 3 seconds under nominal load (6 devices).                                                                                                                                                 |
+| NFR-2  | Performance               | Dashboard UI MUST remain responsive (input lag under 100ms) with 6 live devices at 1 reading / 2s each.                                                                                                                                                                |
+| NFR-3  | Scalability (design)      | The device contract (§6) is designed as the seam for v2 horizontal scaling (a future pub/sub layer). v1's single-process architecture supports the 6-device demo and is expected to support 10–100 devices without redesign; actual capacity is not load-tested in v1. |
+| NFR-4  | Reliability               | The platform MUST tolerate a 60-second disconnect mid-incident (per spec §17 risk row) without losing state. The simulator MUST include an `Offline` scenario that exercises this.                                                                                     |
+| NFR-5  | Reliability               | Simulator MUST buffer up to 5,000 readings and flush on reconnect without loss.                                                                                                                                                                                        |
+| NFR-6  | Security                  | All endpoints MUST enforce the permission matrix; JWTs MUST be validated on every request; passwords MUST use bcrypt cost 12.                                                                                                                                          |
+| NFR-7  | Security (v2 deferred)    | Per-frame cryptographic signing, JWKS/RS256, audit-log immutability via hash chains.                                                                                                                                                                                   |
+| NFR-8  | Usability                 | A reviewer who has never seen the project MUST understand the workflow within 60 seconds from the dashboard (per spec §3.8).                                                                                                                                           |
+| NFR-9  | Usability                 | A school (school row, sensors, rules, primary contact) MUST be onboardable in under 5 minutes via the UI (per spec §3.1).                                                                                                                                              |
+| NFR-10 | Localisability (deferred) | v1 ships English-only with a translation file structure and Tailwind tokens ready for Bangla fonts (locale content v2).                                                                                                                                                |
+| NFR-11 | Operability               | The platform MUST be reproducible locally with a single `docker compose up` plus a 5-minute README quickstart.                                                                                                                                                         |
+| NFR-12 | Test coverage             | Backend MUST target 70% line coverage; frontend 50%. Playwright MUST cover the happy path: login → see reading → trigger scenario → resolve incident.                                                                                                                  |
+| NFR-13 | Maintainability           | Lint and format MUST be enforced (ESLint + Prettier); type-safety MUST be end-to-end via shared Zod schemas consumed by both api and simulator.                                                                                                                        |
+| NFR-14 | Compatibility             | The wire contract MUST be frozen behind a `version: 1` header and treated as a contract review item every sprint (per spec §17).                                                                                                                                       |
+| NFR-15 | Deployment                | v1 deployment MUST be a single Docker Compose file with three services: web (Nginx-served Vite build), api (Node 20), db (Postgres 15 with volume-mounted data).                                                                                                       |
 
 ---
 
@@ -314,7 +314,7 @@ Where WHO and BSTI differ, BSTI is authoritative for Bangladesh deployments and 
 
 - **Cloud / hosting:** None for v1 (local Docker Compose). Production hosting deferred to v2.
 - **Third-party services:** None for v1 (UI-only notifications). Real SMS / email / WhatsApp deferred.
-- **Open source:** Vite, React, TanStack Query, Socket.IO, Express, Zod, Prisma, PostgreSQL 15, Tailwind, shadcn/ui, Recharts, Leaflet, react-i18next, Vitest, Playwright, node-cron, bcrypt, jsonwebtoken. All chosen under the constraint of "no microservices, no Kubernetes, no Redis, no message queue" (spec §9).
+- **Open source:** Vite, React, TanStack Query, Socket.IO, Express, Zod, Prisma, PostgreSQL 15, Tailwind (hand-rolled primitives on a strict token system; no shadcn), Recharts, Leaflet, react-i18next, Vitest, Playwright, node-cron, bcrypt, jsonwebtoken. All chosen under the constraint of "no microservices, no Kubernetes, no Redis, no message queue" (spec §9). Note: shadcn/ui was on the original stack list but the implementation shipped hand-rolled Tailwind primitives on the `tailwind.config.ts` token system — see `_bmad-output/planning-artifacts/ux-designs/ux-Surakkha-2026-08-20/DESIGN.md` §`ui_system`.
 - **Internal:** A monorepo structure with `apps/web`, `apps/api`, `packages/simulator`, `packages/shared` (the shared package is the load-bearing piece that keeps the wire contract from drifting).
 
 ### 10.3 Constraints
@@ -353,22 +353,22 @@ The MVP is complete when **all** of the following hold (mirroring and extending 
 
 ## 12. Risks and Mitigations
 
-| ID | Risk | Likelihood | Impact | Mitigation |
-|----|------|-----------|--------|------------|
-| R-1 | Scope creeps back to the "everything" idea | High | Schedule slip, MVP never ships | Hard cutoff enforced: v2 backlog in spec §15 is a separate doc; any new ask defers to v2 BRD. |
-| R-2 | Simulator wire contract drifts from intended real-hardware shape | Medium | Re-integration cost when hardware lands | The api and simulator consume a **shared Zod schema** in `packages/shared`. CI on every PR fails if either side modifies a wire-contract type without updating the other. Treated as a contract-review item every sprint. |
-| R-3 | Rules engine complexity explodes | Medium | Time sink; v1 slips | Ship only the three rule types in §7.2; resist adding more in v1. |
-| R-4 | Time-series storage costs blow up | Low (v1, 6 devices) / High (v2, scale) | Capacity surprise later | 30-day raw retention + 5-min aggregation cron; review at end of build before scaling. |
-| R-5 | Bangla-speaking users cannot read the UI in v1 | Certain (deferred by design) | Accessibility / market-fit signal | Document as v2; preload a Bangla-capable font stack in Tailwind config and a `bn` locale scaffold in `react-i18next` so v2 is a content drop, not a refactor. |
-| R-6 | Single Node process hits a wall at scale | Low (v1) / Inherent (v2) | Future re-architecture | §6 abstraction is the seam; do not entangle simulator with platform internals; keep the rules engine stateless wrt process. |
-| R-7 | Bangladesh load-shedding breaks dev assumptions | Medium (realistic) | Demo reliability | Simulator `Offline` scenario; architecture test: 60s disconnect mid-incident must not lose state. |
-| R-8 | Single JWT secret leaks | Low (v1, local demo) | Catastrophic (real deployment) | v1 constraint; v2 BRD mandates JWKS / RS256 + key rotation before any production rollout. |
-| R-9 | Permission matrix regression | Medium | Security / workflow integrity | Automated negative-case tests for every matrix cell; PR-time lint check that any new endpoint declares its `(subject, action, resource)` triple. |
-| R-10 | 2–4 week build window slips | High (common) | MVP doesn't ship; portfolio narrative weakens | Time-box each of the 8 vertical slices from §11 to 2–3 days; any slice that overruns triggers a scope-cut conversation, not a schedule-extension. Demo story (§14) is the must-have; everything else is should-have. |
-| R-11 | Bus factor (single developer holds all knowledge) | Medium | Project becomes unmaintainable | All knowledge lives in the repo: README, three docs (spec / BRD / refinement), inline comments on non-obvious code, and an ADR log for decisions. No tribal knowledge. |
-| R-12 | npm supply-chain compromise (transitive dependency attack) | Low (v1, local) / Medium (v2) | Build integrity, runtime exploit | `npm audit` runs in CI on every PR; lockfile is committed; dependencies are reviewed before additions. Production rollout deferred — not blocking v1 demo. |
-| R-13 | Regulatory exposure (BSTI / Bangladesh data-protection) | Certain (deferred by design) | Legal/compliance gap if production rollout attempted on v1 code | v1 explicitly defers compliance (spec §15, Appendix B). The README must state "not for production use" prominently. Any future production BRD must include compliance as a non-negotiable first slice. |
-| R-14 | Demo-day failure (Docker won't run on reviewer's machine; laptop battery dies mid-demo) | Medium (realistic) | Portfolio reviewer's 60-second comprehension SLA (NFR-8) fails | README quickstart is tested on a clean machine before every demo. Fallback: a recorded screencast of the demo is kept ready, plus a public hosted URL if budget allows. |
+| ID   | Risk                                                                                    | Likelihood                             | Impact                                                          | Mitigation                                                                                                                                                                                                                |
+| ---- | --------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-1  | Scope creeps back to the "everything" idea                                              | High                                   | Schedule slip, MVP never ships                                  | Hard cutoff enforced: v2 backlog in spec §15 is a separate doc; any new ask defers to v2 BRD.                                                                                                                             |
+| R-2  | Simulator wire contract drifts from intended real-hardware shape                        | Medium                                 | Re-integration cost when hardware lands                         | The api and simulator consume a **shared Zod schema** in `packages/shared`. CI on every PR fails if either side modifies a wire-contract type without updating the other. Treated as a contract-review item every sprint. |
+| R-3  | Rules engine complexity explodes                                                        | Medium                                 | Time sink; v1 slips                                             | Ship only the three rule types in §7.2; resist adding more in v1.                                                                                                                                                         |
+| R-4  | Time-series storage costs blow up                                                       | Low (v1, 6 devices) / High (v2, scale) | Capacity surprise later                                         | 30-day raw retention + 5-min aggregation cron; review at end of build before scaling.                                                                                                                                     |
+| R-5  | Bangla-speaking users cannot read the UI in v1                                          | Certain (deferred by design)           | Accessibility / market-fit signal                               | Document as v2; preload a Bangla-capable font stack in Tailwind config and a `bn` locale scaffold in `react-i18next` so v2 is a content drop, not a refactor.                                                             |
+| R-6  | Single Node process hits a wall at scale                                                | Low (v1) / Inherent (v2)               | Future re-architecture                                          | §6 abstraction is the seam; do not entangle simulator with platform internals; keep the rules engine stateless wrt process.                                                                                               |
+| R-7  | Bangladesh load-shedding breaks dev assumptions                                         | Medium (realistic)                     | Demo reliability                                                | Simulator `Offline` scenario; architecture test: 60s disconnect mid-incident must not lose state.                                                                                                                         |
+| R-8  | Single JWT secret leaks                                                                 | Low (v1, local demo)                   | Catastrophic (real deployment)                                  | v1 constraint; v2 BRD mandates JWKS / RS256 + key rotation before any production rollout.                                                                                                                                 |
+| R-9  | Permission matrix regression                                                            | Medium                                 | Security / workflow integrity                                   | Automated negative-case tests for every matrix cell; PR-time lint check that any new endpoint declares its `(subject, action, resource)` triple.                                                                          |
+| R-10 | 2–4 week build window slips                                                             | High (common)                          | MVP doesn't ship; portfolio narrative weakens                   | Time-box each of the 8 vertical slices from §11 to 2–3 days; any slice that overruns triggers a scope-cut conversation, not a schedule-extension. Demo story (§14) is the must-have; everything else is should-have.      |
+| R-11 | Bus factor (single developer holds all knowledge)                                       | Medium                                 | Project becomes unmaintainable                                  | All knowledge lives in the repo: README, three docs (spec / BRD / refinement), inline comments on non-obvious code, and an ADR log for decisions. No tribal knowledge.                                                    |
+| R-12 | npm supply-chain compromise (transitive dependency attack)                              | Low (v1, local) / Medium (v2)          | Build integrity, runtime exploit                                | `npm audit` runs in CI on every PR; lockfile is committed; dependencies are reviewed before additions. Production rollout deferred — not blocking v1 demo.                                                                |
+| R-13 | Regulatory exposure (BSTI / Bangladesh data-protection)                                 | Certain (deferred by design)           | Legal/compliance gap if production rollout attempted on v1 code | v1 explicitly defers compliance (spec §15, Appendix B). The README must state "not for production use" prominently. Any future production BRD must include compliance as a non-negotiable first slice.                    |
+| R-14 | Demo-day failure (Docker won't run on reviewer's machine; laptop battery dies mid-demo) | Medium (realistic)                     | Portfolio reviewer's 60-second comprehension SLA (NFR-8) fails  | README quickstart is tested on a clean machine before every demo. Fallback: a recorded screencast of the demo is kept ready, plus a public hosted URL if budget allows.                                                   |
 
 ---
 
@@ -380,18 +380,18 @@ The single most important deliverable from this project is not the codebase — 
 
 ### The 10-step walkthrough
 
-| # | Step | What the reviewer sees |
-|---|------|------------------------|
-| 1 | Clone the repo | Empty workspace |
-| 2 | Run `docker compose up` | Postgres, api, web, simulator all come up healthy |
-| 3 | Open the dashboard | DHAKA-SCHOOL-023 reporting healthy readings on a real-time chart, KPI cards green, map marker green |
-| 4 | Open `/admin/simulator`, pick DHAKA-SCHOOL-023, scenario `RisingTDS`, click Start | Simulator starts ramping TDS by +20 ppm / 5s |
-| 5 | Within seconds | An alert appears on the dashboard; an incident is auto-created and visible in `/incidents` |
-| 6 | Log in as Operator | Acknowledge the incident; assign a Technician from the user list |
-| 7 | Log in as Technician | Mark `Inspecting`; submit result `Unsafe` with a comment |
-| 8 | Critical banner fires | All Admin sessions see a top-of-page red banner for 24h or until acknowledged |
-| 9 | Log in as Operator | Review the Technician's submission; resolve (or reopen) the incident |
-| 10 | Open `/audit` | See every transition — alert opened, incident auto-created, acknowledgement, assignment, status changes, resolution — with actor and timestamp |
+| #   | Step                                                                              | What the reviewer sees                                                                                                                         |
+| --- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Clone the repo                                                                    | Empty workspace                                                                                                                                |
+| 2   | Run `docker compose up`                                                           | Postgres, api, web, simulator all come up healthy                                                                                              |
+| 3   | Open the dashboard                                                                | DHAKA-SCHOOL-023 reporting healthy readings on a real-time chart, KPI cards green, map marker green                                            |
+| 4   | Open `/admin/simulator`, pick DHAKA-SCHOOL-023, scenario `RisingTDS`, click Start | Simulator starts ramping TDS by +20 ppm / 5s                                                                                                   |
+| 5   | Within seconds                                                                    | An alert appears on the dashboard; an incident is auto-created and visible in `/incidents`                                                     |
+| 6   | Log in as Operator                                                                | Acknowledge the incident; assign a Technician from the user list                                                                               |
+| 7   | Log in as Technician                                                              | Mark `Inspecting`; submit result `Unsafe` with a comment                                                                                       |
+| 8   | Critical banner fires                                                             | All Admin sessions see a top-of-page red banner for 24h or until acknowledged                                                                  |
+| 9   | Log in as Operator                                                                | Review the Technician's submission; resolve (or reopen) the incident                                                                           |
+| 10  | Open `/audit`                                                                     | See every transition — alert opened, incident auto-created, acknowledgement, assignment, status changes, resolution — with actor and timestamp |
 
 ### Why this is the test
 
@@ -401,14 +401,14 @@ The single most important deliverable from this project is not the codebase — 
 
 ### What "failed" looks like
 
-| Symptom | Likely cause |
-|---------|--------------|
-| Docker won't start | README quickstart not tested on a clean machine → R-14 |
-| Simulator connects but no readings appear | Wire contract drift between simulator and api → R-2 |
-| Alert fires but no incident auto-created | Rules engine severity path broken → R-3 |
-| Technician can see other Technicians' incidents | RBAC regression → R-9 |
-| `/audit` shows nothing | Audit-log write path broken → verify FR-19 |
-| Reviewer takes >15 min | One of the SLAs in §11 is unmet |
+| Symptom                                         | Likely cause                                           |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| Docker won't start                              | README quickstart not tested on a clean machine → R-14 |
+| Simulator connects but no readings appear       | Wire contract drift between simulator and api → R-2    |
+| Alert fires but no incident auto-created        | Rules engine severity path broken → R-3                |
+| Technician can see other Technicians' incidents | RBAC regression → R-9                                  |
+| `/audit` shows nothing                          | Audit-log write path broken → verify FR-19             |
+| Reviewer takes >15 min                          | One of the SLAs in §11 is unmet                        |
 
 ---
 
@@ -416,11 +416,11 @@ The single most important deliverable from this project is not the codebase — 
 
 This BRD is approved when the following stakeholders agree that the requirements above accurately reflect the business intent and are achievable within the 2–4 week target:
 
-| Role | Name | Signature | Date |
-|------|------|-----------|------|
-| Product Owner |  |  |  |
-| Tech Lead |  |  |  |
-| Reviewer (portfolio) |  |  |  |
+| Role                 | Name | Signature | Date |
+| -------------------- | ---- | --------- | ---- |
+| Product Owner        |      |           |      |
+| Tech Lead            |      |           |      |
+| Reviewer (portfolio) |      |           |      |
 
 ---
 
@@ -428,21 +428,21 @@ This BRD is approved when the following stakeholders agree that the requirements
 
 The matrix below traces the BRD's main functional sections back to the spec section they implement and the acceptance criterion they map to. It is not exhaustive: business objectives (§3), assumptions (§10.1), dependencies (§10.2), and risks (§12) are intentionally not in this table — they govern the project rather than implement a specific feature.
 
-| BRD Section | Source in Spec | Mapped to DoD Item |
-|-------------|----------------|---------------------|
-| §6 Personas | §4 | §11.5 (RBAC) |
-| §7 User Stories | §3, §4, §5, §7 | §11.1–§11.7 |
-| §8.1 Device and telemetry | §6 | §11.9 |
-| §8.2 Transport | §6.3 | §11.9 |
-| §8.3 Rules engine | §7 | §11.10 |
-| §8.4 Alerts and incidents | §5, §7 | §11.3, §11.4 |
-| §8.5 Permissions | §4 | §11.5 |
-| §8.6 Auth | §12 | §11.5 |
-| §8.7 Notifications | §13 | §11.8 (route), §11.4 (workflow banner) |
-| §8.8 Reporting and audit | §3.6, §18 | §11.6 (export), §11.4 (audit-trail-visible) |
-| §8.9 Data retention | §8 | §11.11 |
-| §8.10 Simulator | §10 | §11.2 (live devices), §11.12 (audit), §11.16 (seam test) |
-| §9 NFRs | §3, §17 | §11.1, §11.2, §11.3, §11.7, §11.13 |
+| BRD Section               | Source in Spec | Mapped to DoD Item                                       |
+| ------------------------- | -------------- | -------------------------------------------------------- |
+| §6 Personas               | §4             | §11.5 (RBAC)                                             |
+| §7 User Stories           | §3, §4, §5, §7 | §11.1–§11.7                                              |
+| §8.1 Device and telemetry | §6             | §11.9                                                    |
+| §8.2 Transport            | §6.3           | §11.9                                                    |
+| §8.3 Rules engine         | §7             | §11.10                                                   |
+| §8.4 Alerts and incidents | §5, §7         | §11.3, §11.4                                             |
+| §8.5 Permissions          | §4             | §11.5                                                    |
+| §8.6 Auth                 | §12            | §11.5                                                    |
+| §8.7 Notifications        | §13            | §11.8 (route), §11.4 (workflow banner)                   |
+| §8.8 Reporting and audit  | §3.6, §18      | §11.6 (export), §11.4 (audit-trail-visible)              |
+| §8.9 Data retention       | §8             | §11.11                                                   |
+| §8.10 Simulator           | §10            | §11.2 (live devices), §11.12 (audit), §11.16 (seam test) |
+| §9 NFRs                   | §3, §17        | §11.1, §11.2, §11.3, §11.7, §11.13                       |
 
 ---
 

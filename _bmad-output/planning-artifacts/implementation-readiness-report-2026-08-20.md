@@ -1,6 +1,14 @@
 ---
-outputFile: '{planning_artifacts}/implementation-readiness-report-{{date}}.md'
-stepsCompleted: [step-01-document-discovery, step-02-prd-analysis, step-03-epic-coverage-validation, step-04-ux-alignment, step-05-epic-quality-review, step-06-final-assessment]
+outputFile: "{planning_artifacts}/implementation-readiness-report-{{date}}.md"
+stepsCompleted:
+  [
+    step-01-document-discovery,
+    step-02-prd-analysis,
+    step-03-epic-coverage-validation,
+    step-04-ux-alignment,
+    step-05-epic-quality-review,
+    step-06-final-assessment,
+  ]
 ---
 
 # Implementation Readiness Assessment Report
@@ -66,66 +74,66 @@ stepsCompleted: [step-01-document-discovery, step-02-prd-analysis, step-03-epic-
 
 The PRD inherits the BRD's 36 functional requirements unchanged. They are extracted below in BRD order.
 
-| FR ID | Requirement | Source |
-|-------|-------------|--------|
-| FR-1 | Stable UUIDv4 device_id; persists across SIM/MAC changes | BRD §8.1 |
-| FR-2 | Telemetry frame schema (six metrics: ph, tds_ppm, turbidity_ntu, temp_c, chlorine_ppm, water_level_cm) | BRD §8.1 |
-| FR-3 | Unknown fields ignored; missing required fields → 400 | BRD §8.1 |
-| FR-4 | server_received_at separate from device ts; clock-skew exposed | BRD §8.1 |
-| FR-5 | Monotonic per-device seq counter; drop/reorder detection | BRD §8.1 |
-| FR-6 | Per-device JWT at transport layer (frame level unauthenticated) | BRD §8.1 |
-| FR-7 | WebSocket at /ingest/{device_id} | BRD §8.2 |
-| FR-8 | Short-lived per-device JWT, rotated on simulator start | BRD §8.2 |
-| FR-9 | Simulator reconnect with exponential backoff, 5K buffer, flush on reconnect | BRD §8.2 |
-| FR-10 | Per-device rate cap 1/2s; bursts → 429 | BRD §8.2 |
-| FR-11 | JSON rules per device or global, versioned, audit-logged | BRD §8.3 |
-| FR-12 | Three rule types: instant, rate, absence | BRD §8.3 |
-| FR-13 | Severity explicit per rule; defaults from §8.3.1 table | BRD §8.3 |
-| FR-14 | min_duration_seconds + hysteresis_seconds per (device, metric, severity) | BRD §8.3 |
-| FR-15 | Threshold breach → Alert with severity, opened_at, acknowledged_at, cleared_at | BRD §8.4 |
-| FR-16 | Warning/critical alerts auto-create incident | BRD §8.4 |
-| FR-17 | Incident state machine with REOPENED branch | BRD §8.4 |
-| FR-18 | UNSAFE → Critical notification banner, 24h or until acknowledged | BRD §8.4 |
-| FR-19 | Every state transition recorded in IncidentEvent | BRD §8.4 |
-| FR-20 | RBAC enforced as (subject, action, resource) on every endpoint | BRD §8.5 |
-| FR-21 | Negative RBAC cases covered by tests | BRD §8.5 |
-| FR-22 | JWT HS256, 8h expiry | BRD §8.6 |
-| FR-23 | Access + refresh tokens; refresh in httpOnly cookie | BRD §8.6 |
-| FR-24 | bcrypt cost 12 | BRD §8.6 |
-| FR-25 | Single JWT secret, no rotation in v1 | BRD §8.6 |
-| FR-26 | No SSO/MFA in v1 (v2 deferral) | BRD §8.6 |
-| FR-27 | UI-only notifications (toast + banner) | BRD §8.7 |
-| FR-28 | /admin/notifications page listing recorded notifications | BRD §8.7 |
-| FR-29 | CSV export of 30 days of readings | BRD §8.8 |
-| FR-30 | All state changes / threshold changes / simulator events in audit log | BRD §8.8 |
-| FR-31 | Aggregation cron: 30-day raw retention → 5-min mean/min/max | BRD §8.9 |
-| FR-32 | Hourly cron drives retention/aggregation | BRD §8.9 |
-| FR-33 | Simulator is a separate Node process on the same wire contract | BRD §8.10 |
+| FR ID | Requirement                                                                                                                                                        | Source    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| FR-1  | Stable UUIDv4 device_id; persists across SIM/MAC changes                                                                                                           | BRD §8.1  |
+| FR-2  | Telemetry frame schema (six metrics: ph, tds_ppm, turbidity_ntu, temp_c, chlorine_ppm, water_level_cm)                                                             | BRD §8.1  |
+| FR-3  | Unknown fields ignored; missing required fields → 400                                                                                                              | BRD §8.1  |
+| FR-4  | server_received_at separate from device ts; clock-skew exposed                                                                                                     | BRD §8.1  |
+| FR-5  | Monotonic per-device seq counter; drop/reorder detection                                                                                                           | BRD §8.1  |
+| FR-6  | Per-device JWT at transport layer (frame level unauthenticated)                                                                                                    | BRD §8.1  |
+| FR-7  | WebSocket at /ingest/{device_id}                                                                                                                                   | BRD §8.2  |
+| FR-8  | Short-lived per-device JWT, rotated on simulator start                                                                                                             | BRD §8.2  |
+| FR-9  | Simulator reconnect with exponential backoff, 5K buffer, flush on reconnect                                                                                        | BRD §8.2  |
+| FR-10 | Per-device rate cap 1/2s; bursts → 429                                                                                                                             | BRD §8.2  |
+| FR-11 | JSON rules per device or global, versioned, audit-logged                                                                                                           | BRD §8.3  |
+| FR-12 | Three rule types: instant, rate, absence                                                                                                                           | BRD §8.3  |
+| FR-13 | Severity explicit per rule; defaults from §8.3.1 table                                                                                                             | BRD §8.3  |
+| FR-14 | min_duration_seconds + hysteresis_seconds per (device, metric, severity)                                                                                           | BRD §8.3  |
+| FR-15 | Threshold breach → Alert with severity, opened_at, acknowledged_at, cleared_at                                                                                     | BRD §8.4  |
+| FR-16 | Warning/critical alerts auto-create incident                                                                                                                       | BRD §8.4  |
+| FR-17 | Incident state machine with REOPENED branch                                                                                                                        | BRD §8.4  |
+| FR-18 | UNSAFE → Critical notification banner, 24h or until acknowledged                                                                                                   | BRD §8.4  |
+| FR-19 | Every state transition recorded in IncidentEvent                                                                                                                   | BRD §8.4  |
+| FR-20 | RBAC enforced as (subject, action, resource) on every endpoint                                                                                                     | BRD §8.5  |
+| FR-21 | Negative RBAC cases covered by tests                                                                                                                               | BRD §8.5  |
+| FR-22 | JWT HS256, 8h expiry                                                                                                                                               | BRD §8.6  |
+| FR-23 | Access + refresh tokens; refresh in httpOnly cookie                                                                                                                | BRD §8.6  |
+| FR-24 | bcrypt cost 12                                                                                                                                                     | BRD §8.6  |
+| FR-25 | Single JWT secret, no rotation in v1                                                                                                                               | BRD §8.6  |
+| FR-26 | No SSO/MFA in v1 (v2 deferral)                                                                                                                                     | BRD §8.6  |
+| FR-27 | UI-only notifications (toast + banner)                                                                                                                             | BRD §8.7  |
+| FR-28 | /admin/notifications page listing recorded notifications                                                                                                           | BRD §8.7  |
+| FR-29 | CSV export of 30 days of readings                                                                                                                                  | BRD §8.8  |
+| FR-30 | All state changes / threshold changes / simulator events in audit log                                                                                              | BRD §8.8  |
+| FR-31 | Aggregation cron: 30-day raw retention → 5-min mean/min/max                                                                                                        | BRD §8.9  |
+| FR-32 | Hourly cron drives retention/aggregation                                                                                                                           | BRD §8.9  |
+| FR-33 | Simulator is a separate Node process on the same wire contract                                                                                                     | BRD §8.10 |
 | FR-34 | 6 default devices, 6 base scenarios including Offline (PRD notes 7 scenarios: Normal, RisingTDS, TurbiditySpike, ChlorineDrop, Offline, BatteryLow, RandomFailure) | BRD §8.10 |
-| FR-35 | Simulator JWTs aud=simulator, telemetry:write scope | BRD §8.10 |
-| FR-36 | /admin/simulator Admin-only, emits __simulator_event audit entries | BRD §8.10 |
+| FR-35 | Simulator JWTs aud=simulator, telemetry:write scope                                                                                                                | BRD §8.10 |
+| FR-36 | /admin/simulator Admin-only, emits \_\_simulator_event audit entries                                                                                               | BRD §8.10 |
 
 **Total functional requirements: 36.**
 
 ### Non-Functional Requirements
 
-| NFR ID | Category | Requirement | Source |
-|--------|----------|-------------|--------|
-| NFR-1 | Performance | End-to-end alert latency <3s under 6-device load | BRD §9 |
-| NFR-2 | Performance | Dashboard input lag <100ms with 6 live devices at 1 reading / 2s | BRD §9 |
-| NFR-3 | Scalability (design) | Single-process v1 supports 10–100 devices without redesign; not load-tested | BRD §9 |
-| NFR-4 | Reliability | Tolerate 60s disconnect mid-incident; Offline scenario exercises this | BRD §9 |
-| NFR-5 | Reliability | Simulator buffer 5,000 readings without loss | BRD §9 |
-| NFR-6 | Security | All endpoints enforce RBAC; JWT validated; bcrypt 12 | BRD §9 |
-| NFR-7 | Security (v2 deferred) | Per-frame signing, JWKS/RS256, hash-chained audit | BRD §9 |
-| NFR-8 | Usability | Reviewer 60-second comprehension from dashboard | BRD §9 |
-| NFR-9 | Usability | School onboarding ≤5 minutes via UI | BRD §9 |
-| NFR-10 | Localisability (deferred) | English only; bn scaffold | BRD §9 |
-| NFR-11 | Operability | docker compose up + 5-min README | BRD §9 |
-| NFR-12 | Test coverage | Backend 70% / frontend 50%; Playwright happy path | BRD §9 |
-| NFR-13 | Maintainability | Lint+format enforced; shared Zod schemas | BRD §9 |
-| NFR-14 | Compatibility | Wire contract frozen behind version:1 header | BRD §9 |
-| NFR-15 | Deployment | Single Docker Compose with web, api, simulator, db services; Postgres 15 | BRD §9 |
+| NFR ID | Category                  | Requirement                                                                 | Source |
+| ------ | ------------------------- | --------------------------------------------------------------------------- | ------ |
+| NFR-1  | Performance               | End-to-end alert latency <3s under 6-device load                            | BRD §9 |
+| NFR-2  | Performance               | Dashboard input lag <100ms with 6 live devices at 1 reading / 2s            | BRD §9 |
+| NFR-3  | Scalability (design)      | Single-process v1 supports 10–100 devices without redesign; not load-tested | BRD §9 |
+| NFR-4  | Reliability               | Tolerate 60s disconnect mid-incident; Offline scenario exercises this       | BRD §9 |
+| NFR-5  | Reliability               | Simulator buffer 5,000 readings without loss                                | BRD §9 |
+| NFR-6  | Security                  | All endpoints enforce RBAC; JWT validated; bcrypt 12                        | BRD §9 |
+| NFR-7  | Security (v2 deferred)    | Per-frame signing, JWKS/RS256, hash-chained audit                           | BRD §9 |
+| NFR-8  | Usability                 | Reviewer 60-second comprehension from dashboard                             | BRD §9 |
+| NFR-9  | Usability                 | School onboarding ≤5 minutes via UI                                         | BRD §9 |
+| NFR-10 | Localisability (deferred) | English only; bn scaffold                                                   | BRD §9 |
+| NFR-11 | Operability               | docker compose up + 5-min README                                            | BRD §9 |
+| NFR-12 | Test coverage             | Backend 70% / frontend 50%; Playwright happy path                           | BRD §9 |
+| NFR-13 | Maintainability           | Lint+format enforced; shared Zod schemas                                    | BRD §9 |
+| NFR-14 | Compatibility             | Wire contract frozen behind version:1 header                                | BRD §9 |
+| NFR-15 | Deployment                | Single Docker Compose with web, api, simulator, db services; Postgres 15    | BRD §9 |
 
 **Total non-functional requirements: 15.**
 
@@ -198,13 +206,13 @@ The PRD inherits all 17 acceptance criteria from BRD §11, including:
 
 ### Open cross-document inconsistencies to resolve
 
-| # | Issue | Source | Required action |
-|---|-------|--------|-----------------|
-| 1 | FR-34 says "6 base scenarios" but lists 7 | BRD §8.10 + PRD P0 entry | Update to "7 base scenarios" in both documents |
-| 2 | NFR-15 lists 3 services; architecture has 4 | BRD §9 + PRD | Update NFR-15 wording to "four services: web, api, simulator, db" |
-| 3 | F-13 lists 6 default rules; BRD §8.3.1 has 9 | PRD F-13 + BRD §8.3.1 | Update F-13 to mirror the canonical 9-row table |
-| 4 | RBAC matrix reference missing | architecture §8.3 | Create `docs/architecture-appendix-rbac.md` |
-| 5 | `/admin/notifications` listed as route | BRD §11.8 | Already corrected in previous pass |
+| #   | Issue                                        | Source                   | Required action                                                   |
+| --- | -------------------------------------------- | ------------------------ | ----------------------------------------------------------------- |
+| 1   | FR-34 says "6 base scenarios" but lists 7    | BRD §8.10 + PRD P0 entry | Update to "7 base scenarios" in both documents                    |
+| 2   | NFR-15 lists 3 services; architecture has 4  | BRD §9 + PRD             | Update NFR-15 wording to "four services: web, api, simulator, db" |
+| 3   | F-13 lists 6 default rules; BRD §8.3.1 has 9 | PRD F-13 + BRD §8.3.1    | Update F-13 to mirror the canonical 9-row table                   |
+| 4   | RBAC matrix reference missing                | architecture §8.3        | Create `docs/architecture-appendix-rbac.md`                       |
+| 5   | `/admin/notifications` listed as route       | BRD §11.8                | Already corrected in previous pass                                |
 
 ## Epic Coverage Validation (Step 3)
 
@@ -266,16 +274,16 @@ The PRD is UI-centric. UI is not optional:
 
 Because no UX document exists, alignment cannot be validated against one. The PRD and architecture together describe the UI but in prose, not as a UX artefact.
 
-| Area | PRD status | Architecture status | UX document status |
-|------|------------|---------------------|---------------------|
-| 14 routes enumerated | Yes (PRD §3 personas) | Yes (architecture §11.2) | None |
-| Executive dashboard layout | ASCII mockup in F-7 | No | None |
-| Incident Kanban columns | Listed in F-10 | No | None |
-| Sensor detail chart | Described in F-8 | No | None |
-| Role-aware UI affordances | Described in F-4 | No | None |
-| Bangla-friendly typography | Mentioned in refined idea §10 | Not specified | None |
-| Design tokens (shadcn/ui) | Mentioned in PRD and refined idea | No | None |
-| Accessibility (WCAG) | Not addressed | Not addressed | None |
+| Area                       | PRD status                        | Architecture status      | UX document status                                                                                                                                            |
+| -------------------------- | --------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 14 routes enumerated       | Yes (PRD §3 personas)             | Yes (architecture §11.2) | None                                                                                                                                                          |
+| Executive dashboard layout | ASCII mockup in F-7               | No                       | None                                                                                                                                                          |
+| Incident Kanban columns    | Listed in F-10                    | No                       | None                                                                                                                                                          |
+| Sensor detail chart        | Described in F-8                  | No                       | None                                                                                                                                                          |
+| Role-aware UI affordances  | Described in F-4                  | No                       | None                                                                                                                                                          |
+| Bangla-friendly typography | Mentioned in refined idea §10     | Not specified            | None                                                                                                                                                          |
+| Design tokens (shadcn/ui)  | Mentioned in PRD and refined idea | No                       | None _(later superseded — the implementation shipped hand-rolled Tailwind primitives on `tailwind.config.ts`; see `_bmad-output/.../DESIGN.md` §`ui_system`)_ |
+| Accessibility (WCAG)       | Not addressed                     | Not addressed            | None                                                                                                                                                          |
 
 ### Warnings
 

@@ -38,6 +38,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { RbacDenied } from "../access/RbacDenied";
+import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { AdminNotificationsRbacDeniedError } from "../notifications/AdminNotificationsRbacDeniedError";
 import {
   type AdminNotificationFilters,
@@ -176,12 +177,16 @@ export const AdminNotificationsPage = ({
 
   const { notifications, query } = useAdminNotificationList(filters);
 
+  // Story 6.11 — read the viewer's role for the role-aware back
+  // link on the 403 surface (Riley persona fix).
+  const viewerRole = useCurrentRole();
+
   // Defense-in-depth: route-level `<RbacRoute>` already gates the
   // non-Admin path; this branch handles the rare case where the
   // matrix drifts mid-session. Identical class identity to the
   // page-level check.
   if (query.isError && query.error instanceof AdminNotificationsRbacDeniedError) {
-    return <RbacDenied />;
+    return <RbacDenied viewerRole={viewerRole} />;
   }
 
   return (
@@ -301,7 +306,15 @@ export const AdminNotificationsPage = ({
         </div>
       ) : notifications.length === 0 ? (
         <div data-testid="admin-notifications-empty" className="text-md text-neutral-secondary">
-          No notifications match the current filters.
+          {/* When the operator hasn't touched any filter the
+              "match the current filters" phrasing is presumptuous
+              (critique 2026-08-31 valley finding) — it reads as
+              the user's fault when the system has nothing to
+              surface. Detect "any filter active" and pick the
+              copy that matches the operator's mental model. */}
+          {severity.length === 0 && preset === "30d"
+            ? "No notifications in the last 30 days."
+            : "No notifications match the current filters."}
         </div>
       ) : (
         <table className="w-full border-collapse" data-testid="admin-notifications-table">

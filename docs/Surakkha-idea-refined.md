@@ -13,7 +13,7 @@
 
 The original idea file is a brainstorm. It contains five project ideas, an architectural sketch, a list of "production-grade features," and a final recommendation to build **Surakkha**. That recommendation was good. The brainstorm itself was not: it mixed decisions with aspirations, used "real-time" without a number, and quietly assumed a generic metric schema that would have made the project 3× longer to build.
 
-This document is a **post-brainstorm refinement**: same idea, contradictions resolved, overclaims corrected, assumptions surfaced. It is **not** a technical spec — the spec lives in `architecture.md`. This document explains *what we chose and why we chose it*, in plain language.
+This document is a **post-brainstorm refinement**: same idea, contradictions resolved, overclaims corrected, assumptions surfaced. It is **not** a technical spec — the spec lives in `architecture.md`. This document explains _what we chose and why we chose it_, in plain language.
 
 ---
 
@@ -81,7 +81,7 @@ This number is achievable because:
 - Socket.IO broadcasts from ingestion directly to subscribed dashboards.
 - Postgres is local (Docker Compose) — sub-millisecond writes.
 
-The SLA is also tight enough to be a *useful* portfolio claim — "3 seconds end-to-end" is specific, measurable, and impressive in a portfolio context. "Real-time" with no number is not.
+The SLA is also tight enough to be a _useful_ portfolio claim — "3 seconds end-to-end" is specific, measurable, and impressive in a portfolio context. "Real-time" with no number is not.
 
 **Note:** in real Bangladesh deployment over 2G/3G cellular with intermittent power, this SLA is unlikely to hold. That's a v2 problem; the v1 SLA is for the demo platform. Documented honestly.
 
@@ -125,7 +125,7 @@ The original idea says (line 198): "Instead of simply inserting fake data into t
 
 Why:
 
-- It forces the platform's ingestion path to be the *only* way readings enter the system. No back-door insert paths.
+- It forces the platform's ingestion path to be the _only_ way readings enter the system. No back-door insert paths.
 - It exercises the auth layer, the rate limiter, the reconnection logic, the backpressure buffer — all of which real hardware will exercise too.
 - The day real hardware lands, only the transport (WebSocket → MQTT/LoRaWAN adapter) changes. The simulator can stay for QA, demos, and regression tests.
 
@@ -167,9 +167,9 @@ The Operator UI shows a clear "Device last seen 12 minutes ago" indicator. The d
 
 The original idea talks about visual impressiveness ("Water Safety Overview" mockup, color-coded map markers, live readings table). The refinement:
 
-- **Stack:** Vite + React 18 + TypeScript + TanStack Query + Socket.IO client + Tailwind CSS + **shadcn/ui** primitives + Recharts + Leaflet + react-i18next (en only for v1, bn scaffolded).
-- **Polish level:** functional shadcn/ui — clean, accessible, consistent, fast to build. Not bespoke. Not a custom design system. Not animated motion pieces.
-- **Why:** a polished shadcn dashboard is portfolio-quality and ships in days. A bespoke design system adds 1–2 weeks that don't compound into product value for an MVP.
+- **Stack:** Vite + React 18 + TypeScript + TanStack Query + Socket.IO client + Tailwind CSS (hand-rolled primitives on the `tailwind.config.ts` token system; **no shadcn installed** — Radix, CVA, and lucide were not adopted) + Recharts + Leaflet + react-i18next (en only for v1, bn scaffolded).
+- **Polish level:** functional Tailwind utility composition on a strict token discipline (severity palette reserved for status only; chrome uses neutral tokens; touch-targets >= 44px; `prefers-reduced-motion` honoured across all keyframes). Not bespoke motion pieces. Not a generic SaaS look-alike.
+- **Why:** a polished hand-rolled Tailwind dashboard is portfolio-quality and ships in days. The token system + prose linter (`scripts/lint-prose.mjs`) + hex-string ESLint rule + `eslint-plugin-tailwindcss` gates (Story 6.10) keep the surface coherent without a primitive library dependency.
 - **Bangla-friendly typography:** Tailwind config registers a Bangla-capable font fallback stack now, so when `bn` locale content lands in v2, it's a translation file drop, not a refactor.
 
 ---
@@ -199,19 +199,19 @@ The single most important deliverable from this project is not the codebase — 
 
 Carried over from the spec §15 and stated here in business language:
 
-| v1 does not have | Reason |
-|------------------|--------|
-| Real IoT hardware | Not buildable in 2–4 weeks; wire contract is the seam |
-| Mobile app | Web-first, mobile is v2 |
-| Bangla UI content | English UI with Bangla-friendly typography tokens; locale content is v2 |
-| Multi-tenant data isolation | Single deployment, single customer base in v1 |
-| Audit-log hash chain / signed records | Plain append-only is enough for portfolio; tamper-evident is v2 |
-| Cryptographic frame signing | Per-device JWT auth is enough for v1 |
-| Time-series DB | 30-day retention + 5-min aggregation in Postgres is enough for v1 |
-| Redis pub/sub / BullMQ / microservices | Single Node process handles 10–100 devices comfortably |
-| Real SMS / email / WhatsApp | UI-only notifications + `Notification` table for v1 |
-| BSTI/WHO compliance certification | Not in scope; conservative WHO defaults are baseline |
-| Production deployment (TLS, monitoring, backups) | Local demo only; production is v2 |
+| v1 does not have                                 | Reason                                                                  |
+| ------------------------------------------------ | ----------------------------------------------------------------------- |
+| Real IoT hardware                                | Not buildable in 2–4 weeks; wire contract is the seam                   |
+| Mobile app                                       | Web-first, mobile is v2                                                 |
+| Bangla UI content                                | English UI with Bangla-friendly typography tokens; locale content is v2 |
+| Multi-tenant data isolation                      | Single deployment, single customer base in v1                           |
+| Audit-log hash chain / signed records            | Plain append-only is enough for portfolio; tamper-evident is v2         |
+| Cryptographic frame signing                      | Per-device JWT auth is enough for v1                                    |
+| Time-series DB                                   | 30-day retention + 5-min aggregation in Postgres is enough for v1       |
+| Redis pub/sub / BullMQ / microservices           | Single Node process handles 10–100 devices comfortably                  |
+| Real SMS / email / WhatsApp                      | UI-only notifications + `Notification` table for v1                     |
+| BSTI/WHO compliance certification                | Not in scope; conservative WHO defaults are baseline                    |
+| Production deployment (TLS, monitoring, backups) | Local demo only; production is v2                                       |
 
 Each row is a deliberate cut. Each row is recoverable as a v2 BRD item.
 
@@ -219,13 +219,13 @@ Each row is a deliberate cut. Each row is recoverable as a v2 BRD item.
 
 ## 13. What we're trading for what
 
-| Trade | Choice | What we gave up |
-|-------|--------|-----------------|
-| Build speed vs. abstraction depth | Build speed | Generic metric schema, multi-tenant boundaries, full audit-log tamper-evidence |
-| Visual polish vs. design system | Functional polish | Bespoke design language, motion design, custom layouts |
-| Single-process simplicity vs. horizontal scalability | Single-process | Pub/sub, message queues, microservices — all deferred |
-| Realism vs. demoability | Demoability | Real cellular latency, real carrier integrations, real SMS |
-| Scope discipline vs. feature breadth | Discipline | Every feature that didn't serve the Sensor → Resolution chain |
+| Trade                                                | Choice            | What we gave up                                                                |
+| ---------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------ |
+| Build speed vs. abstraction depth                    | Build speed       | Generic metric schema, multi-tenant boundaries, full audit-log tamper-evidence |
+| Visual polish vs. design system                      | Functional polish | Bespoke design language, motion design, custom layouts                         |
+| Single-process simplicity vs. horizontal scalability | Single-process    | Pub/sub, message queues, microservices — all deferred                          |
+| Realism vs. demoability                              | Demoability       | Real cellular latency, real carrier integrations, real SMS                     |
+| Scope discipline vs. feature breadth                 | Discipline        | Every feature that didn't serve the Sensor → Resolution chain                  |
 
 Every choice in the left column is reversible in v2 without re-architecting v1, because the wire contract (§6 of spec) is the seam. That seam is the only architectural commitment we're making. Everything else is implementation detail.
 
@@ -233,12 +233,12 @@ Every choice in the left column is reversible in v2 without re-architecting v1, 
 
 ## 14. How to read the three documents together
 
-| Document | Question it answers | Audience |
-|----------|--------------------|----------|
-| `Surakkha-water-monioring-system-idea.md` | "What are we building and why?" | First-time readers, brainstormers |
-| `Surakkha-idea-refined.md` (this) | "What did we choose, what did we cut, and why?" | Stakeholders, future contributors |
-| `architecture.md` | "How exactly do we build it?" | Developers building tomorrow |
-| `Surakkha-BRD.md` | "What does the business need and how do we measure it?" | Product owner, portfolio reviewer |
+| Document                                  | Question it answers                                     | Audience                          |
+| ----------------------------------------- | ------------------------------------------------------- | --------------------------------- |
+| `Surakkha-water-monioring-system-idea.md` | "What are we building and why?"                         | First-time readers, brainstormers |
+| `Surakkha-idea-refined.md` (this)         | "What did we choose, what did we cut, and why?"         | Stakeholders, future contributors |
+| `architecture.md`                         | "How exactly do we build it?"                           | Developers building tomorrow      |
+| `Surakkha-BRD.md`                         | "What does the business need and how do we measure it?" | Product owner, portfolio reviewer |
 
 If you only read one, read the spec. If you read two, read the spec and this document. If you read three, add the BRD. The original idea is preserved as historical record, not active reference.
 
@@ -248,19 +248,19 @@ If you only read one, read the spec. If you read two, read the spec and this doc
 
 For traceability, every flaw identified in the brainstorm session is resolved here:
 
-| # | Flaw in original idea | Resolution in this document / spec |
-|---|----------------------|-------------------------------------|
-| A | Customer vertical is contradictory (4 lists, 3 different) | §3 — schools only |
-| B | "Abstraction" promise overclaims generic schema | §6 — two-layer schema, generic registry scaffolded, fixed metrics for v1 |
-| C | "Real-time" without an SLA | §5 — 3 seconds, locked |
-| D | RBAC implies technicians can write to devices | §8 — read-only telemetry in v1, no bi-directional commands |
-| E | Bangladesh angle is a list of "things in Dhaka" | §3 — schools anchored to BSTI + Upazila Education Office escalation |
-| F | "Simulated" and "real" notifications conflated | §12 — UI-only notifications, recorded in `Notification` table |
-| G | Audit log is a footnote | §8 — append-only audit on every transition; tamper-evidence deferred to v2 |
-| H | Five-idea comparison has no criteria | Out of scope — decision was already made |
-| I | No queue, by accident; spec by design | §12 — explicit, deliberate |
-| J | No onboarding-the-reviewer friction | §11 — 15-minute reproducible demo, locked |
-| K | Simulator is a dev convenience | §7 — separate process, same wire contract, scoped JWTs, audited |
-| L | Device count drifts (5 vs 6) | Spec §3 — locked at 6 for the demo |
+| #   | Flaw in original idea                                     | Resolution in this document / spec                                         |
+| --- | --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| A   | Customer vertical is contradictory (4 lists, 3 different) | §3 — schools only                                                          |
+| B   | "Abstraction" promise overclaims generic schema           | §6 — two-layer schema, generic registry scaffolded, fixed metrics for v1   |
+| C   | "Real-time" without an SLA                                | §5 — 3 seconds, locked                                                     |
+| D   | RBAC implies technicians can write to devices             | §8 — read-only telemetry in v1, no bi-directional commands                 |
+| E   | Bangladesh angle is a list of "things in Dhaka"           | §3 — schools anchored to BSTI + Upazila Education Office escalation        |
+| F   | "Simulated" and "real" notifications conflated            | §12 — UI-only notifications, recorded in `Notification` table              |
+| G   | Audit log is a footnote                                   | §8 — append-only audit on every transition; tamper-evidence deferred to v2 |
+| H   | Five-idea comparison has no criteria                      | Out of scope — decision was already made                                   |
+| I   | No queue, by accident; spec by design                     | §12 — explicit, deliberate                                                 |
+| J   | No onboarding-the-reviewer friction                       | §11 — 15-minute reproducible demo, locked                                  |
+| K   | Simulator is a dev convenience                            | §7 — separate process, same wire contract, scoped JWTs, audited            |
+| L   | Device count drifts (5 vs 6)                              | Spec §3 — locked at 6 for the demo                                         |
 
 Every row was a real flaw. Every row now has an answer.

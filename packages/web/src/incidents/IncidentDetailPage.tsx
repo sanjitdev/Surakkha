@@ -412,7 +412,9 @@ const IncidentDetailDispatch = ({
     return <NotFound />;
   }
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailRbacDeniedError) {
-    return <RbacDenied />;
+    // Story 6.11 — thread the role so the back-link picks the
+    // role-aware destination.
+    return <RbacDenied viewerRole={viewerRole} />;
   }
   if (rowQuery.isError) {
     return <IncidentDetailErrorState onRetry={onRetry} />;
