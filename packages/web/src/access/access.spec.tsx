@@ -246,10 +246,13 @@ describe("Story 1.6 — RbacRoute gate (AC2)", () => {
 });
 
 describe("Story 1.6 — nav registry helpers (IA single source of truth)", () => {
-  it("finds /audit under Operate → Operator, Admin", () => {
+  it("finds /audit under Operate → Admin (Story 5.3 tightened RBAC)", () => {
     const item = findNavItemForPath(NAV_GROUPS, "/audit");
     expect(item).not.toBeNull();
-    expect(item?.roles).toEqual(["Operator", "Admin"]);
+    // Story 5.3 — Audit is Admin-only; the RBAC matrix grants
+    // `read × AuditLog` to Admin exclusively, so the nav registry
+    // matches. Pre-5.3 the roles were `["Operator", "Admin"]`.
+    expect(item?.roles).toEqual(["Admin"]);
   });
 
   it("returns null for a path not in the IA (gate does not deny)", () => {
@@ -257,9 +260,9 @@ describe("Story 1.6 — nav registry helpers (IA single source of truth)", () =>
   });
 
   it("isPathAllowedForRole mirrors the sidebar filter", () => {
-    // /audit → Operator / Admin
+    // /audit → Admin only (Story 5.3 tightened RBAC).
     expect(isPathAllowedForRole(NAV_GROUPS, "/audit", "Admin")).toBe(true);
-    expect(isPathAllowedForRole(NAV_GROUPS, "/audit", "Operator")).toBe(true);
+    expect(isPathAllowedForRole(NAV_GROUPS, "/audit", "Operator")).toBe(false);
     expect(isPathAllowedForRole(NAV_GROUPS, "/audit", "Viewer")).toBe(false);
     expect(isPathAllowedForRole(NAV_GROUPS, "/audit", "Technician")).toBe(false);
     // /dashboard → any role (roles: null)

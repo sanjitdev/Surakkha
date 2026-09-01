@@ -55,6 +55,7 @@ import { mountThresholdsRouter } from "./admin/thresholdsWiring.js";
 import { mountAlertRouters } from "./alerts/wiring.js";
 import { mountAttachmentRouter } from "./attachments/routerWiring.js";
 import { type AuditLogger } from "./audit";
+import { mountAuditRouter } from "./audit/routerWiring.js";
 import { buildActorUserIdResolver } from "./auth/actorUserIdResolver";
 import { assertJwtSecret } from "./auth/jwt";
 import { buildAuthRouter } from "./auth/router";
@@ -220,6 +221,13 @@ app.use(
 
 // Story 4.10 — mount `/api/notifications` (read + acknowledge).
 mountNotificationRouter({ app, audit, resolvePrismaClient: getPrisma });
+
+// Story 5.3 — mount `/api/audit/list` (Admin-only audit-lens
+// read view). Mounted AFTER notifications + BEFORE attachments
+// to keep the catch-all 404 ordering intact (RUNBOOK §6a). The
+// `/audit` surface is read-only; no write affordance is exposed
+// here. The audit writer swap is Story 5.6.
+mountAuditRouter({ app, audit, resolvePrismaClient: getPrisma });
 
 // Story 4.13 — mount `/api/incidents/:id/attachments` (POST + GET)
 // and `/api/attachments/:id` (DELETE).

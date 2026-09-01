@@ -157,18 +157,19 @@ describe("Rule model — schema.prisma source-walk pin (Story 3.1)", () => {
     expect(block).toMatch(/@@unique\(\[deviceId,\s*metric,\s*operator,\s*threshold,\s*version\]\)/);
   });
 
-  it("does NOT introduce MetricDefinition or AuditLog tables", () => {
-    // Per the spec "Never" list: those models belong to other stories.
-    // Catching a stray declaration here keeps the story boundary clean.
-    // Note: the `Alert` + `RuleDebounceState` models belong to Story
-    // 3.4 — see `alert-debounce.schema.spec.ts` for those pins.
-    // Story 4.2 introduced `IncidentEvent` for the Incident state
-    // machine audit trail — see `incident-state-machine.schema.spec.ts`
-    // for those pins. `MetricDefinition` and `AuditLog` still belong
-    // to future stories.
+  it("does NOT introduce MetricDefinition tables", () => {
+    // Per the spec "Never" list: `MetricDefinition` belongs to a
+    // future story. Catching a stray declaration here keeps the
+    // story boundary clean. Note: the `Alert` + `RuleDebounceState`
+    // models belong to Story 3.4 — see `alert-debounce.schema.spec.ts`
+    // for those pins. Story 4.2 introduced `IncidentEvent` for the
+    // Incident state machine audit trail — see
+    // `incident-state-machine.schema.spec.ts` for those pins.
+    // Story 5.3 introduced the `AuditLog` table — see
+    // `audit-log.schema.spec.ts` for those pins (and to confirm
+    // `MetricDefinition` is still not present).
     const source = readSchema();
     expect(source).not.toMatch(/^model MetricDefinition\b/m);
-    expect(source).not.toMatch(/^model AuditLog\b/m);
   });
 
   it.each(REQUIRED_ENUMS)(

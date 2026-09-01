@@ -77,49 +77,52 @@ export const mountOwnerRoute = (
 /**
  * One entry per denial cell the Story 1.8 register pins. The set
  * superset'd `RBAC_NEGATIVE_CASES` (10 cases) plus extra cells that
- * catch obvious bypasses (Viewer reading AuditLog, Operator driving
- * Simulator, etc.).
+ * catch obvious bypasses (Operator driving Simulator, Viewer
+ * reading SeverityBanner, etc.).
+ *
+ * Note: Story 5.3 removed the `Operator → read → AuditLog` entry
+ * because the production `/api/audit/list` mount is now covered by
+ * `audit/router.spec.ts` RBAC_OPERATOR case, which exercises the
+ * REAL endpoint rather than this test-only fixture.
  */
 const NEGATIVE_ROUTES: readonly MountArgs[] = [
-  // 1. Operator → read → AuditLog (RBAC_NEGATIVE_CASES #1)
-  { method: "get", path: "/audit", action: "read", resource: "AuditLog" },
-  // 2. Viewer → create → Incident (RBAC_NEGATIVE_CASES #2)
+  // 1. Viewer → create → Incident (RBAC_NEGATIVE_CASES #2)
   { method: "post", path: "/incidents", action: "create", resource: "Incident" },
-  // 3. Operator → drive → Simulator (RBAC_NEGATIVE_CASES #5)
+  // 2. Operator → drive → Simulator (RBAC_NEGATIVE_CASES #5)
   { method: "post", path: "/admin/simulator/x/scenario", action: "drive", resource: "Simulator" },
-  // 4. Viewer → submit_result → Incident (RBAC_NEGATIVE_CASES #4)
+  // 3. Viewer → submit_result → Incident (RBAC_NEGATIVE_CASES #4)
   {
     method: "post",
     path: "/incidents/x/submit_result",
     action: "submit_result",
     resource: "Incident",
   },
-  // 5. Technician → export → Reading (RBAC_NEGATIVE_CASES #6)
+  // 4. Technician → export → Reading (RBAC_NEGATIVE_CASES #6)
   { method: "get", path: "/devices/x/export.csv", action: "export", resource: "Reading" },
-  // 6. Operator → read → SeverityBanner (RBAC_NEGATIVE_CASES #7)
+  // 5. Operator → read → SeverityBanner (RBAC_NEGATIVE_CASES #7)
   { method: "get", path: "/banners/active", action: "read", resource: "SeverityBanner" },
-  // 7. Viewer → update → Rule (RBAC_NEGATIVE_CASES #8)
+  // 6. Viewer → update → Rule (RBAC_NEGATIVE_CASES #8)
   { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
-  // 8. Operator → manage → User (RBAC_NEGATIVE_CASES #9)
+  // 7. Operator → manage → User (RBAC_NEGATIVE_CASES #9)
   { method: "post", path: "/admin/users", action: "manage", resource: "User" },
-  // 9. Viewer → manage → User (extra)
+  // 8. Viewer → manage → User (extra)
   { method: "post", path: "/admin/users", action: "manage", resource: "User" },
-  // 10. Technician → delete → Device (extra)
+  // 9. Technician → delete → Device (extra)
   { method: "delete", path: "/devices/x", action: "delete", resource: "Device" },
-  // 11. Technician → update → Device (extra)
+  // 10. Technician → update → Device (extra)
   { method: "patch", path: "/devices/x", action: "update", resource: "Device" },
-  // 12. Technician → create → Device (extra)
+  // 11. Technician → create → Device (extra)
   { method: "post", path: "/devices", action: "create", resource: "Device" },
-  // 13. Operator → reopen → Incident (extra)
+  // 12. Operator → reopen → Incident (extra)
   { method: "post", path: "/incidents/x/reopen", action: "reopen", resource: "Incident" },
-  // 14. Operator → delete → Device (extra)
+  // 13. Operator → delete → Device (extra)
   { method: "delete", path: "/devices/x", action: "delete", resource: "Device" },
-  // 15. Viewer → acknowledge → Incident (extra)
+  // 14. Viewer → acknowledge → Incident (extra)
   { method: "post", path: "/incidents/x/acknowledge", action: "acknowledge", resource: "Incident" },
-  // 16. Technician → resolve → Incident (extra)
+  // 15. Technician → resolve → Incident (extra)
   { method: "post", path: "/incidents/x/resolve", action: "resolve", resource: "Incident" },
-  // 17. Viewer → acknowledge → Alert (Story 3.5 AC3) and
-  // 18. Technician → acknowledge → Alert (Story 3.5 AC4) — RBAC
+  // 16. Viewer → acknowledge → Alert (Story 3.5 AC3) and
+  // 17. Technician → acknowledge → Alert (Story 3.5 AC4) — RBAC
   // matrix grants `Alert.acknowledge = false` to both. The test rig
   // drives BOTH subjects (NEGATIVE_CASES indices 16 + 17) against
   // the SINGLE mounted handler here (Express's `app.post` with
@@ -127,16 +130,16 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   // one handler survives per unique path). The shared gate enforces
   // both denies by virtue of the matrix cell.
   { method: "post", path: "/alerts/x/acknowledge", action: "acknowledge", resource: "Alert" },
-  // 19. Operator → update → Rule (Story 3.7 AC6) — mirrors the
-  // existing #7 (Viewer → update → Rule) for the second deny cell.
+  // 18. Operator → update → Rule (Story 3.7 AC6) — mirrors the
+  // existing #6 (Viewer → update → Rule) for the second deny cell.
   // The matrix grants `Operator.update.Rule = N`.
   { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
-  // 20. Technician → update → Rule (Story 3.7 AC6) — third deny cell
+  // 19. Technician → update → Rule (Story 3.7 AC6) — third deny cell
   // on the same handler; matrix grants `Technician.update.Rule = N`.
   // All three subjects (Viewer / Operator / Technician) drive the same
   // `(method, path)` slot; the matrix cell enforces each deny.
   { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
-  // 21. Operator → POST /admin/thresholds/rules (Story 3.7 AC6) —
+  // 20. Operator → POST /admin/thresholds/rules (Story 3.7 AC6) —
   // matrix also gates POST on `update × Rule` (no `create × Rule`
   // cell exists). Distinct path so Express mounts a separate handler
   // for the POST variant.
@@ -194,19 +197,13 @@ export interface NegativeCase {
 }
 
 export const NEGATIVE_CASES: readonly NegativeCase[] = [
+  // Story 5.3 removed the former index 1 (`Operator → read →
+  // AuditLog` against `buildRbacNegativeApp`); the production
+  // `/api/audit/list` endpoint is now covered by
+  // `audit/router.spec.ts`'s RBAC_OPERATOR case, which exercises
+  // the real mount rather than this test-only fixture.
   {
     index: 1,
-    subject: "Operator",
-    method: "get",
-    path: "/audit",
-    action: "read",
-    resource: "AuditLog",
-    expected: 403,
-    auditAction: "rbac_denied",
-    appendixRow: "AuditLog · read",
-  },
-  {
-    index: 2,
     subject: "Viewer",
     method: "post",
     path: "/incidents",

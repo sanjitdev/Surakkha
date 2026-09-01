@@ -34,6 +34,7 @@ import { SimulatorPage } from "./admin/simulator/SimulatorPage";
 import { ThresholdsPage } from "./admin/thresholds/ThresholdsPage";
 import { AdminNotificationsPage } from "./admin-notifications/AdminNotificationsPage";
 import { apiLogin, configureApiClient } from "./api/apiClient";
+import { AuditLogPage } from "./audit-log/AuditLogPage";
 import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
 import { KpiStat } from "./components/KpiStat";
@@ -266,8 +267,14 @@ createRoot(root).render(
             element={
               <CurrentRoleProvider>
                 <AppShell>
+                  {/* Story 5.3 — Admin-only audit log read view.
+                      Renders the 100 most recent `AuditLog` rows
+                      across all actors with actor / event /
+                      resource / date-range filters. Wrapping
+                      preserved: `<RbacRoute>` so a non-Admin
+                      direct URL hit renders `<RbacDenied />`. */}
                   <RbacRoute>
-                    <PageStub name="Audit" />
+                    <AuditLogPage />
                   </RbacRoute>
                 </AppShell>
               </CurrentRoleProvider>

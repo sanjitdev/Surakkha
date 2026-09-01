@@ -194,3 +194,17 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-12-technician-filtered-kanban.md`
   summary: Server filter and client render-time filter are redundant (defense-in-depth). The server already filters Tech viewers at the WHERE clause; the client re-filters the rendered slice. The server filter is the security boundary; the client filter handles the case where the cache is shared with SeverityBanner.
   evidence: Two layers, both correct. **Documenting for future readers** — a maintainer who sees the client filter may think it's the only filter and remove the server one (security regression). The dual-filter is intentional; do not collapse.
+
+## Deferred from: code review of 5-3-audit-log-surface-at-audit (2026-09-01)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-3-audit-log-surface-at-audit.md`
+  summary: `AuditLogPage` filter-section DOM ids (`actor-filter-heading`, `event-filter-heading`, `resource-filter-heading`, `range-filter-heading`) are hard-coded globals; a future story that embeds the page twice (e.g., a side-by-side preview surface) would collide.
+  evidence: `packages/web/src/audit-log/AuditLogPage.tsx` declares four `id="..."` attributes that are singletons today (the page mounts once per `/audit` route). A React 18 `useId()` would have been the standard fix. **Defer until a second embedding site appears.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-3-audit-log-surface-at-audit.md`
+  summary: `AuditLog.outcome` column has no index; if a future story adds an "outcome = failure" filter chip, the query degrades to a seq scan.
+  evidence: `packages/db/prisma/migrations/20260901000000_audit_log/migration.sql` creates the table + two indexes (`@@index([createdAt])`, `@@index([actorUserId, createdAt])`). The `outcome` column is a free `String` with a closed set (`success | failure | allow`) but unindexed. **Defer until outcome-filter is added.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-5-3-audit-log-surface-at-audit.md`
+  summary: `<RbacRoute>` may briefly flash `<RbacDenied />` if `useCurrentRole()` resolves after first paint (e.g., between login and role fetch). No third-layer skeleton masks the flash.
+  evidence: `packages/web/src/access/RbacRoute.tsx` is a thin wrapper around `<RbacDenied />` + `useCurrentRole()`. The race window is small but exists; pre-existing pattern across all admin routes (5.1, 5.3, etc.). **Defer until the role-resolution loading state is a shared concern (likely Story 6.x).**

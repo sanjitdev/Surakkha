@@ -140,7 +140,10 @@ describe("Story 1.2b — role-aware nav (EXPERIENCE.md §Information Architectur
   it("Operator sees Monitor + Operate but not Admin", () => {
     const visible = filterNav(NAV_GROUPS, "Operator");
     expect(visible.find((g) => g.label === "Monitor")?.items.length).toBe(4);
-    expect(visible.find((g) => g.label === "Operate")?.items.length).toBe(2);
+    // Story 5.3 — Audit is Admin-only; Operator's Operate group
+    // narrows to Reports only. The pre-5.3 count of 2 included
+    // /audit which now belongs to the Admin group.
+    expect(visible.find((g) => g.label === "Operate")?.items.length).toBe(1);
     expect(visible.find((g) => g.label === "Admin")?.items.length).toBe(0);
   });
 

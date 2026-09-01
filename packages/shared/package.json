@@ -31,6 +31,10 @@
       "types": "./dist/notification.d.ts",
       "import": "./dist/notification.js"
     },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "import": "./dist/audit.js"
+    },
     "./rbac": {
       "types": "./dist/rbac.d.ts",
       "import": "./dist/rbac.js"

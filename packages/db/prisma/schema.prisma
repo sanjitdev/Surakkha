@@ -313,6 +313,13 @@ model User {
   acknowledgedNotifs    Notification[]  @relation("NotificationAcknowledger")
   uploadedAttachments   Attachment[]    @relation("AttachmentUploader")
   alertAcknowledgements Alert[]         @relation("AlertAcknowledger")
+  // Story 5.3 — `AuditLog.actorUserId` FK back-relation. Named
+  // `UserAuditLogs` so the audit-log seam is discoverable in
+  // `schema.prisma` (the Alert / Incident / Notification reverse
+  // relations follow the same `ParentChild` naming convention;
+  // `UserAuditLogs` reads as "the User → AuditLog set this user
+  // authored").
+  auditLogs             AuditLog[]      @relation("UserAuditLogs")
 }
 
 // Story 4.2 — UserRole enum. Mirrors `RoleSchema` in
@@ -511,4 +518,51 @@ model RuleDebounceState {
   device Device @relation("DeviceRuleDebounceStates", fields: [deviceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([deviceId, metric, severity])
+}
+
+// Story 5.3 — `AuditLog` table. The v1 audit writer (Story 1.5)
+// writes a Pino log line; Story 5.6 swaps that writer to land rows
+// here. This story ships the table + read surface first so the
+// Admin can browse the trail once the writer is flipped.
+//
+// Mirrors `IncidentEvent` (4.2) shape 1:1:
+//   - `id` (UUIDv4, server-generated).
+//   - `actorUserId` (FK SET NULL to `User` — the audit row MUST
+//      outlive its actor; a deleted Admin's `rbac_allowed` rows
+//      remain forensically valid).
+//   - `auditAction` (free String — the closed enum is in
+//      `@surakkha/shared/rbac` and Story 5.6 may extract it into
+//      the new `audit.ts` module; this story keeps it as a
+//      free String per the spec's "Why outcome is a String
+//      column rather than a Prisma enum" note).
+//   - `resource` (the entity type the action targeted — e.g.
+//      `"Incident"`, `"Rule"`, `"User"`).
+//   - `resourceId` (the entity id when applicable; null for
+//      actions like `logout` that have no resource binding).
+//   - `payload` (Json — heterogeneous by design; the writer
+//      passes through whatever the call site already has).
+//   - `outcome` (free String — three values today: `"success"`,
+//      `"failure"`, `"allow"`; kept as String to avoid a Prisma
+//      enum migration every time a variant is added).
+//   - `createdAt` (server default `now()`).
+//
+// Indexes:
+//   - `@@index([createdAt])` — the default listing
+//     (`GET /api/audit/list`) orders by `createdAt DESC`.
+//   - `@@index([actorUserId, createdAt])` — the actor-filter
+//     branch (`?actorIds=a,b`) reads both columns.
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  auditAction String
+  resource    String
+  resourceId  String?
+  payload     Json
+  outcome     String
+  createdAt   DateTime @default(now())
+
+  actor User? @relation("UserAuditLogs", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([createdAt])
+  @@index([actorUserId, createdAt])
 }

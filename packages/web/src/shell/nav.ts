@@ -48,7 +48,14 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     label: "Operate",
     items: [
       { label: "Reports", to: "/reports", roles: ["Operator", "Admin"] },
-      { label: "Audit", to: "/audit", roles: ["Operator", "Admin"] },
+      // Story 5.3 — RBAC matrix grants `read × AuditLog` to Admin
+      // only (`rbac.ts:115`); the previous `["Operator", "Admin"]`
+      // value put the link in the sidebar for Operators who would
+      // 403 on click (the matrix/UI drift the spec calls out in
+      // "Why the nav fix belongs in 5.3"). Tightened to Admin only
+      // so a non-Admin direct URL hit still 403s as expected
+      // (defense in depth).
+      { label: "Audit", to: "/audit", roles: ["Admin"] },
     ],
   },
   {

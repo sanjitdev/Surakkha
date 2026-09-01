@@ -8,8 +8,7 @@
  *
  * Coverage matrix (each entry is one `it(...)` block):
  *   index  subject     action           resource          expected
- *      1   Operator    read             AuditLog          403
- *      2   Viewer      create           Incident          403
+ *      1   Viewer      create           Incident          403
  *      3   Technician  read             Incident          403  (ownership)
  *      4   Viewer      submit_result    Incident          403
  *      5   Operator    drive            Simulator         403
@@ -29,10 +28,13 @@
  *     19   Technician  update           Rule              403
  *     20   Operator    update           Rule (POST)       403
  *
- * Total: 20 negative cases (Story 1.8 floor: 10; Story 3.5 adds cases
+ * Total: 19 negative cases (Story 1.8 floor: 10; Story 3.5 adds cases
  * 16 + 17 for the Alert.acknowledge deny cells; Story 3.7 adds cases
  * 18 + 19 + 20 for the Rule.update deny cells on the /admin/thresholds
- * admin tab).
+ * admin tab; Story 5.3 removes the former index 1 `Operator → read
+ * AuditLog` case because the production endpoint now lives behind
+ * the real `mountAuditRouter` mount — covered by
+ * `audit/router.spec.ts:RBAC_OPERATOR`).
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Server, createServer } from "node:http";
