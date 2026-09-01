@@ -39,6 +39,8 @@ import { ERROR_CODES } from "../errors.js";
 import { HTTP_BAD_REQUEST, HTTP_INTERNAL_ERROR, HTTP_OK } from "../httpStatus.js";
 import { authorize, type AuthorizedRequest } from "../middleware/authorize.js";
 
+import { normalizeRecentIncidentSeverity } from "./recentWiring.js";
+
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 const RECENT_WINDOW_HOURS = 24;
@@ -156,7 +158,7 @@ export const buildPrismaRecentIncidents =
       // buckets. Map anything unknown to "warning" so a typo'd
       // severity in the DB still surfaces — the alternative (drop
       // the row) is a worse signal.
-      severity: normalizeSeverity(row.severity),
+      severity: normalizeRecentIncidentSeverity(row.severity),
       metric: row.metric,
       value: row.value,
       opened_at:
@@ -165,9 +167,3 @@ export const buildPrismaRecentIncidents =
           : new Date(row.openedAt).toISOString(),
     }));
   };
-
-const SEVERITY_BUCKETS = new Set(["info", "warning", "critical"] as const);
-const normalizeSeverity = (raw: string): "info" | "warning" | "critical" =>
-  SEVERITY_BUCKETS.has(raw as "info" | "warning" | "critical")
-    ? (raw as "info" | "warning" | "critical")
-    : "warning";

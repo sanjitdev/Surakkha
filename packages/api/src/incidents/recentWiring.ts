@@ -29,7 +29,7 @@ const logger = createLogger({ name: "surakkha-api", level: "info" });
 const RECENT_WINDOW_HOURS = 24;
 const HOUR_MS = 3_600_000;
 
-const normalizeSeverity = (raw: string): RecentIncidentSummary["severity"] => {
+export const normalizeRecentIncidentSeverity = (raw: string): RecentIncidentSummary["severity"] => {
   const parsed = IncidentSeveritySchema.safeParse(raw);
   return parsed.success ? parsed.data : "warning";
 };
@@ -78,7 +78,7 @@ export const buildRecentIncidentsListReader =
       ).map((row) => ({
         id: row.id,
         device_id: row.deviceId,
-        severity: normalizeSeverity(row.severity),
+        severity: normalizeRecentIncidentSeverity(row.severity),
         metric: row.metric,
         value: row.value,
         opened_at:
