@@ -227,4 +227,63 @@ These were created/modified to get from "broken dev stack" → "working dev stac
 | `packages/api/Dockerfile`                           | Added `--ignore-scripts` + `pnpm rebuild bcrypt` (passes the husky `prepare` hook) |
 | `tmp/probe.mjs`                                     | NEW — diagnostic script that probes every incident endpoint after login            |
 
+---
+
+## 11. Monthly critique cadence (`/impeccable`)
+
+The detector (`pnpm lint:impeccable`) catches drift at PR time. The
+critique command catches drift between stories. The two are
+complementary — the detector is mechanical and narrow; the critique
+is heuristic and broad (Nielsen's 10 heuristics, scored 0–4, with
+P0/P1 findings triaged into follow-up stories).
+
+### Cadence
+
+- **Monthly**, on the 1st, against both `packages/web` and
+  `packages/api/src`. The
+  `.github/workflows/impeccable-critique-reminder.yml` workflow
+  opens a single `impeccable-critique` issue on the maintainer's
+  queue on the 1st of each month so the cadence is visible
+  without anyone having to remember it.
+- **After any story** that touches `IncidentDetailPage`,
+  `KanbanBoard`, `RbacDenied`, `AdminNotificationsPage`, or the
+  api `transitionRoutes` / `recentRouter` / `applyTransition`
+  surfaces — those are the surfaces the August critiques found
+  most likely to drift.
+
+### How to run it
+
+The critique command is **agent-driven** (dual-agent heuristic
+review); it cannot run headless in CI. Open Claude Code (or your
+AI harness of choice) at the project root and run:
+
+```
+/impeccable critique packages/web
+/impeccable critique packages/api/src
+```
+
+Each run writes an artifact to
+`.impeccable/critique/<timestamp>__<slug>.md` (committed alongside
+the triage PR). The slug is stable across runs (`packages-web`,
+`packages-api-src-index-ts`); the timestamp is what makes the
+trend legible in `git log .impeccable/critique/`.
+
+### Triage policy
+
+- **P0** — must be closed before the next release. Open a
+  follow-up story immediately; PR-block on landing.
+- **P1** — must be closed in the current sprint. Attach to the
+  next web/api-touching story or open a new one.
+- **P2** — back of the queue. Add to the next polish pass.
+- **P3** — record in `.impeccable/critique/` only; close
+  opportunistically.
+
+### Why this is here, not in AGENTS.md
+
+AGENTS.md §4.1 covers the per-story critique flow (run it before
+opening the PR). This section covers the _cadence_ — when to run
+it for the codebase as a whole. The detector catches single-PR
+drift; the critique catches cumulative drift across stories. Both
+are needed.
+
 If a future Surakkha agent picks up this runbook cold, start at §3.

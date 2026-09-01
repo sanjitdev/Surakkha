@@ -40,7 +40,7 @@ validation:
       - move: "Story 6.10 → Epic 1 as 1.10 (Single-Secret JWT Rotation Policy)"
       - drop: "Story 4.15 (Auto-Reopen split — clarification already in 4.11)"
       - reorder: "Story 1.6 stays at slot 6 (no change required — was already in forward position)"
-    net_story_count: 55
+    net_story_count: 56
   deferred_to_v2:
     - NFR-7 (per-frame crypto signing, JWKS/RS256, hash-chain audit)
     - NFR-10 (Bangla locale content)
@@ -59,7 +59,7 @@ This document decomposes the requirements from the BRD, PRD, UX spine pair, refi
 The 36 FRs (FR-1 through FR-36) below are authoritative from `docs/Surakkha-BRD.md` §8.1–§8.10. PRD §4 groups them by MoSCoW priority (P0=must, P1=should, P2=could, W=won't-have v1).
 
 **FR-1.** Every device has a stable UUIDv4 `device_id` generated at factory provisioning; the `device_id` is referenced in every reading, event, and command, and persists across SIM/MAC changes.
-**FR-2.** Telemetry frames MUST validate against the schema (device_id, ts, fw, seq, metrics with `ph`, `tds_ppm`, `turbidity_ntu`, `temp_c`, `chlorine_ppm`, `water_level_cm`). These six metrics are the v1 seed; the rules engine, charts, simulator, and tests know them by name, and the platform stores them in a `jsonb` blob so v2 metric additions require no data migration.
+**FR-2.** Telemetry frames MUST validate against the schema (device*id, ts, fw, seq, metrics with `ph`, `tds_ppm`, `turbidity_ntu`, `temp_c`, `chlorine_ppm`, `water_level_cm`). These six metrics are the v1 seed; the rules engine, charts, simulator, and tests know them by name, and the platform stores them in a `jsonb` blob so v2 metric additions require no data migration.
 **FR-3.** Unknown fields MUST be ignored; missing required fields MUST cause a `400` response.
 **FR-4.** Each device MUST transmit `server_received_at` (server time) separately from device `ts`, and clock-skew MUST be exposed to ops.
 **FR-5.** Each frame MUST carry a monotonically increasing per-device `seq` counter; the server MUST detect dropped and reordered readings.
@@ -85,7 +85,7 @@ The 36 FRs (FR-1 through FR-36) below are authoritative from `docs/Surakkha-BRD.
 **FR-25.** v1 uses a single secret with no key rotation; JWKS / RS256 is a v2 requirement.
 **FR-26.** v1 has no SSO or MFA; documented as a v2 item.
 **FR-27.** v1 notifications are UI-only (toast + banner); no real SMS, email, or push.
-**FR-28.** The platform MUST record every notification that _would_ have been sent to a `Notification` table, visible on `/admin/notifications`.
+**FR-28.** The platform MUST record every notification that \_would* have been sent to a `Notification` table, visible on `/admin/notifications`.
 **FR-29.** Users with export permission MUST be able to download 30 days of readings for any sensor as CSV.
 **FR-30.** All state changes, threshold changes, and simulator events MUST appear in a queryable audit log viewable only by Admin role.
 **FR-31.** Raw readings older than 30 days MUST be aggregated into 5-minute mean/min/max rows and the raw rows deleted.
@@ -1930,3 +1930,50 @@ So that the NFR-1 SLA is enforced on every PR. (Moved from Epic 3 to keep SLA te
 **Then** the test skips with a clear "Simulator not running" message rather than failing
 
 **Covers:** NFR-1.
+
+### Story 6.10: `/impeccable critique` Findings Triage Pipeline
+
+As a maintainer,
+I want every critique artifact in `.impeccable/critique/` to flow into the epics backlog as discrete, triaged follow-ups,
+So that critique findings never get lost between monthly runs and the project's health score trends visibly upward over time.
+
+**Acceptance Criteria:**
+
+**Given** a critique artifact exists at `.impeccable/critique/<timestamp>__<slug>.md`
+**When** the triage pipeline runs (manual workflow, monthly cadence per RUNBOOK.md §11)
+**Then** every P0 and P1 finding in the artifact has a corresponding story stub appended to this section
+**And** every P2 and P3 finding has a single-line entry under "Carried in critique only" so the trend is visible without becoming story spam
+
+**Given** a P0 finding has been triaged into a story stub
+**When** the story is closed
+**Then** the artifact frontmatter `p0_count` reflects the closure (one fewer P0 outstanding)
+**And** the trend table at the bottom of this story shows the score moving upward over consecutive runs
+
+**Given** three consecutive monthly runs have shipped with no new P0/P1 findings
+**When** a critique completes
+**Then** the maintainer is encouraged (in RUNBOOK.md §11) to relax the cadence from monthly to quarterly
+**And** the workflow file `.github/workflows/impeccable-critique-reminder.yml` is updated to reflect the new cron
+
+**Covers:** the binding contract from `AGENTS.md §4.1` + `RUNBOOK.md §11`.
+
+#### Carried in critique only (P2/P3 — recorded for trend, not blocking)
+
+<!-- Entries here are appended by the triage workflow per critique run. Format:
+     - <artifact-timestamp> <slug> · <finding-title> · <heuristic-id> · <closed-by-commit-sha-or-"open">
+-->
+
+#### Trend
+
+<!-- Entries here are appended by the triage workflow per critique run. Format:
+     | YYYY-MM | Target | Score | P0 | P1 | P2 | P3 | Commit |
+-->
+
+| Month   | Target             | Score | P0  | P1  | P2  | P3  | Commit                                                                     |
+| ------- | ------------------ | ----- | --- | --- | --- | --- | -------------------------------------------------------------------------- |
+| 2026-08 | `packages/web`     | 26/32 | 2   | 2   | 2   | 3   | `fb606cb` (Riley back-link + shadcn disavowal), `c2b7e17` (tailwind error) |
+| 2026-08 | `packages/api/src` | 12/16 | 0   | 0   | 0   | 0   | `ffd3fcf` (Idempotency-Key + canonical 409), `013ee66` (index.ts distill)  |
+
+**Given** an additional critique run lands (artifact `2026-XX-XX__<slug>.md`)
+**When** the triage is committed
+**Then** a new row appears in the Trend table above with the new score + finding counts
+**And** any closed P0/P1 finding references the closing commit SHA

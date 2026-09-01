@@ -15,7 +15,7 @@
     "lint": "pnpm -r lint && pnpm lint:rbac && pnpm lint:prose && pnpm lint:impeccable",
     "lint:rbac": "node scripts/lint-rbac-matrix.mjs",
     "lint:prose": "node scripts/lint-prose.mjs",
-    "lint:impeccable": "node .claude/skills/impeccable/scripts/detect.mjs --quiet packages/web/src",
+    "lint:impeccable": "node .claude/skills/impeccable/scripts/detect.mjs --quiet packages/web/src packages/shared/src",
     "lint:staged": "lint-staged",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

@@ -2,7 +2,7 @@
   "buildPath": "code",
   "detector": {
     "ignoreRules": [],
-    "ignoreFiles": ["packages/api/**", "packages/shared/**"],
+    "ignoreFiles": ["packages/api/**"],
     "ignoreValues": [
       {
         "rule": "side-tab",

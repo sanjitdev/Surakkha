@@ -1,0 +1,103 @@
+# Surakkha — Monthly critique-reminder issue.
+#
+# The `/impeccable critique` command is agent-driven (dual-agent
+# heuristic review), so it cannot run autonomously in CI. This
+# workflow opens a single reminder issue on the first of each
+# month so the cadence is visible in the maintainer's queue.
+#
+# The reminder is idempotent: it closes any stale reminders from
+# previous months before opening a fresh one, so the queue never
+# accumulates duplicates.
+#
+# Local trigger: `gh workflow run impeccable-critique-reminder.yml`
+# (or "Run workflow" from the Actions tab).
+name: impeccable-critique-reminder
+
+on:
+  schedule:
+    # 06:00 UTC on the 1st of every month (Surakkha is UTC-anchored).
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  remind:
+    name: Open (or refresh) the monthly critique reminder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale reminders from prior months
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const since = new Date();
+            since.setMonth(since.getMonth() - 1);
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'impeccable-critique',
+              per_page: 100,
+            });
+            for (const issue of issues.data) {
+              const opened = new Date(issue.created_at);
+              if (opened < since) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                });
+              }
+            }
+
+      - name: Open this month's reminder
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const now = new Date();
+            const yyyy = now.getUTCFullYear();
+            const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+            const title = `Monthly /impeccable critique — ${yyyy}-${mm}`;
+            const body = [
+              'Reminder to run a fresh critique this month.',
+              '',
+              '## What to run',
+              '',
+              '```',
+              '/impeccable critique packages/web',
+              '/impeccable critique packages/api/src',
+              '```',
+              '',
+              '## Where artifacts land',
+              '',
+              'Each run writes `.impeccable/critique/<timestamp>__<slug>.md`.',
+              'Commit the artifact alongside the triage PR so the audit',
+              'trail shows when each critique ran and what was found.',
+              '',
+              '## Triage policy',
+              '',
+              '- **P0** — must be closed before next release. Open a',
+              '  follow-up story immediately; PR-block on landing.',
+              '- **P1** — must be closed in the current sprint. Open a',
+              '  follow-up story or attach to the next web-touching story.',
+              '- **P2** — back of the queue. Add to the next polish pass.',
+              '- **P3** — record in `.impeccable/critique/` only; close',
+              '  opportunistically.',
+              '',
+              'See `AGENTS.md §4.1` for the binding contract.',
+              '',
+              '---',
+              '',
+              '_This issue was opened by `.github/workflows/impeccable-critique-reminder.yml`._',
+              '_Close it once the monthly critique lands._',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['impeccable-critique'],
+            });
