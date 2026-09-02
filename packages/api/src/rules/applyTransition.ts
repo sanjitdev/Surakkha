@@ -1,11 +1,10 @@
 /**
- * `applyTransition.ts` — IO helpers extracted from `hooks.ts`.
- * `applyOpenTransition` + `applyClearTransition` wrap
- * (findOpenAlert, alert.{create|update}, ruleDebounceState.upsert)
- * in `$transaction` so the Alert row + state row commit as one
- * unit. The socket emit (open only) happens AFTER the transaction
- * commits; if `AlertOpenedEventSchema.safeParse` fails, the emit
- * is skipped and `console.warn` logs the wire drift.
+ * IO helpers for the rule engine's open/clear transitions. The two
+ * helpers wrap (findOpenAlert, alert.{create|update}, ruleDebounceState.upsert)
+ * in `$transaction` so the Alert row + state row commit atomically.
+ * The socket emit (open only) happens AFTER the transaction commits.
+ * If `AlertOpenedEventSchema.safeParse` fails, the emit is skipped
+ * and `console.warn` logs the wire drift.
  */
 import {
   AlertOpenedEventSchema,
@@ -47,10 +46,7 @@ export const applyTransition = async (
 
 /** Open path: `$transaction` wraps (findOpenAlert, alert.create,
  *  ruleDebounceState.upsert). The real alertId is resolved inside
- *  the transaction; the post-commit emit uses that alertId.
- *  `transition` is typed as the full `BreachTransition` union
- *  (TS cannot narrow through a function boundary; the kind check
- *  at the top of `applyTransition` does the narrow). */
+ *  the transaction; the post-commit emit uses that alertId. */
 const applyOpenTransition = async (
   deps: InstallRuleEngineHooksDeps,
   args: {
@@ -65,16 +61,15 @@ const applyOpenTransition = async (
   const { broadcast, ctx, slot } = args;
   const { deviceId, metricValue } = ctx;
   let alertId: string | null = null;
-  // Story 4.2 — capture the auto-created Incident's id so the
-  // post-commit `incident:opened` emit + the `notification:warning`
-  // write site can reference it.
+  // Capture the auto-created Incident's id for the post-commit
+  // `incident:opened` emit + the `notification:warning` write site.
   let incidentId: string | null = null;
   let suppressedExisting = false;
 
   await deps.alertState.$transaction(async (tx) => {
-    // Idempotency fast path: check `findOpenAlert` first.
-    // The partial unique index is the safety net for the race;
-    // this lookup avoids the unnecessary INSERT attempt.
+    // Idempotency fast path: check `findOpenAlert` first. The
+    // partial unique index is the safety net for the race; this
+    // lookup avoids the unnecessary INSERT attempt.
     const existing = await findOpenAlert(tx as PrismaAlertReader, {
       deviceId,
       metric: transition.metric,
@@ -85,14 +80,10 @@ const applyOpenTransition = async (
         `[alerts] duplicate open suppressed device=${deviceId} alertId=${existing.id} metric=${transition.metric} severity=${transition.severity}`,
       );
       suppressedExisting = true;
-      // Patch (spec-3-4 review 2026-08-27, P-L2-4 / BH-09): even when
-      // the alert is suppressed, still advance the slot's
+      // Even when the alert is suppressed, still advance the slot's
       // `inViolationSince` so subsequent frames' de-bounce window
-      // math sees the freshest violation start. The pre-patch code
-      // returned early, leaving the timer stale until the alert
-      // cleared. The state row update is idempotent — same primary
-      // key, same values — so re-running on every suppressed frame
-      // is safe.
+      // math sees the freshest violation start. The state row
+      // update is idempotent.
       await tx.ruleDebounceState.upsert({
         where: {
           deviceId_metric_severity: {
@@ -129,18 +120,13 @@ const applyOpenTransition = async (
       createdAlertId = created.id;
     } catch (err) {
       // Race: another concurrent insert beat us; the partial
-      // unique index raised P2002. Treat as "already-open, skip".
-      // The P2002 catch returns BEFORE the incident auto-create
-      // (AC3 — losing writers do not create duplicate Incidents).
+      // unique index raised P2002. Treat as "already-open, skip" —
+      // losing writers do not create duplicate Incidents.
       if (isPrismaP2002(err)) {
         console.warn(
           `[alerts] duplicate open suppressed (race) device=${deviceId} metric=${transition.metric} severity=${transition.severity}`,
         );
         suppressedExisting = true;
-        // Same P-L2-4 reasoning as the idempotency fast path above:
-        // the partial unique index means another writer created the
-        // alert row. Still advance our slot's `inViolationSince` so
-        // the de-bounce window math is correct on subsequent frames.
         await tx.ruleDebounceState.upsert({
           where: {
             deviceId_metric_severity: {
@@ -165,27 +151,18 @@ const applyOpenTransition = async (
       throw err;
     }
 
-    // Story 3.6 — auto-create Incident from warning/critical Alert.
-    // Lives inside the same `$transaction` so the Incident row
-    // commits atomically with the Alert row + state upsert (AC1,
-    // AC6). Info-severity alerts do NOT create Incidents (AC2).
-    // The decision is made via the type-guard helper so a future
-    // drift on the wire enum (e.g. a new severity literal) is a
-    // closed-set refusal — the Incident is NOT created for unknown
-    // severities.
+    // Auto-create Incident from warning/critical Alert. Lives inside
+    // the same `$transaction` so the Incident row commits atomically
+    // with the Alert row + state upsert. Info-severity alerts do NOT
+    // create Incidents.
     //
-    // Story 4.2 — the auto-created Incident lands in `state: "OPEN"`
-    // (the schema's default; we pass it explicitly for self-documentation).
-    // The Incident id is captured for the post-commit
-    // `incident:opened` emit + the `notification:warning` write site.
+    // Wrap the Incident + Notification writes in try/catch so a
+    // non-P2002 error here does NOT propagate and abort the entire
+    // `$transaction` (which would also roll back the already-
+    // committed Alert row). Authors still get the Alert and the
+    // open emit fires; the Incident auto-create surfaces as a
+    // warning so ops can manually create one.
     if (shouldCreateIncident(transition.severity)) {
-      // Patch (spec-3-4 review 2026-08-27, P-L2-14 / ECH-07): wrap
-      // the Incident + Notification writes in try/catch so a
-      // non-P2002 error here does NOT propagate and abort the
-      // entire `$transaction` (which would also roll back the
-      // already-committed Alert row). Authors still get the Alert
-      // alert and the open emit fires; the Incident auto-create
-      // surfaces as a warning so ops can manually create one.
       try {
         const created = await tx.incident.create({
           data: buildIncidentPayload({
@@ -198,18 +175,15 @@ const applyOpenTransition = async (
         });
         incidentId = created.id;
 
-        // Story 4.9 — `notification:warning` write site. Lives
-        // INSIDE the same `$transaction` so the (Alert + Incident +
-        // Notification) rows commit as one unit. Idempotency via the
-        // partial unique index — see `notificationWriter.ts` AC5.
+        // `notification:warning` write site. Lives INSIDE the same
+        // `$transaction` so the (Alert + Incident + Notification)
+        // rows commit as one unit. Idempotency via the partial
+        // unique index.
         await writeWarningNotification(tx as unknown as NotificationWriterRepository, {
           incidentId: created.id,
           alertId: createdAlertId,
         });
       } catch (err) {
-        // P2002 (idempotency race on Incident) is the only "expected"
-        // error. Any other error is a transient / schema / DB
-        // problem — log it but keep the Alert path alive.
         console.warn(
           `[alerts] incident auto-create failed; alert path continues device=${deviceId} metric=${transition.metric} severity=${transition.severity}`,
           err,
@@ -218,8 +192,7 @@ const applyOpenTransition = async (
     }
 
     // Atomic with the alert row creation: both commit together or
-    // both roll back. If `upsert` fails, the alert row also
-    // rolls back — no orphan alert with no corresponding state.
+    // both roll back.
     await tx.ruleDebounceState.upsert({
       where: {
         deviceId_metric_severity: {
@@ -249,8 +222,7 @@ const applyOpenTransition = async (
 
   // Post-commit emit. The transaction resolved; if it had rolled
   // back, we wouldn't reach this line. If the emit itself fails,
-  // the Alert row exists and the next eval pass can re-emit
-  // (idempotent on `alertId`).
+  // the Alert row exists and the next eval pass can re-emit.
   const resolvedAlertId = alertId;
   const payload = {
     alert_id: resolvedAlertId,
@@ -265,40 +237,23 @@ const applyOpenTransition = async (
   if (parsed.success) {
     broadcast.to(`device:${deviceId}`).emit("alert:opened", parsed.data);
   } else {
-    // Story 3.4 review-finding #7: surface the wire drift so
-    // operators can diagnose. The Alert row IS committed; the
-    // client just won't see the emit. The hook logs the parse
-    // error so the schema drift shows up in the boot log
-    // pipeline.
+    // Surface the wire drift so operators can diagnose. The Alert
+    // row IS committed; the client just won't see the emit.
     console.warn(
       `[alerts] opened emit skipped: AlertOpenedEventSchema parse failed device=${deviceId} alertId=${resolvedAlertId} metric=${transition.metric} severity=${transition.severity}`,
       parsed.error,
     );
-    // Patch (spec-3-4 review 2026-08-27, P-L2-8 / BH-19): if the
-    // alert emit parse failed and the Incident emit would also
-    // fail, we still want the Incident emit to ATTEMPT. The two
-    // emissions are independent — the alert schema drift should
-    // not be a reason to suppress the incident notification that
-    // ops subscribers care about. The original code path fell
-    // through to the incident block already, but the inner
-    // suppress flag was a single variable. We keep them
-    // independent now: each emit path tracks its own outcome.
   }
   console.warn(
     `[alerts] opened device=${deviceId} alertId=${resolvedAlertId} ruleId=${transition.ruleId} severity=${transition.severity} openedAt=${transition.openedAt.toISOString()}`,
   );
 
-  // Story 4.2 — `incident:opened` socket emit (AI-3.3 closure).
-  // Fires ONLY when an Incident row was auto-created from this
-  // transition (warning or critical). The payload shape is locked
-  // in `IncidentOpenedEventSchema` (`@surakkha/shared/events.ts`).
-  // Listeners: Story 4.4 detail page (deferred), dashboard
-  // incidents preview.
-  //
-  // P-L2-8: the incident emit is INDEPENDENT of the alert emit's
-  // outcome — a parse failure on `AlertOpenedEventSchema` does NOT
-  // short-circuit this block. The two schemas drift on different
-  // axes (alert has `alert_id`, `value`; incident has `incident_id`,
+  // `incident:opened` socket emit. Fires ONLY when an Incident row
+  // was auto-created from this transition (warning or critical). The
+  // incident emit is INDEPENDENT of the alert emit's outcome — a
+  // parse failure on `AlertOpenedEventSchema` does NOT short-
+  // circuit this block. The two schemas drift on different axes
+  // (alert has `alert_id`, `value`; incident has `incident_id`,
   // `alert_id` correlation) so a failure on one is no evidence of
   // a failure on the other.
   if (incidentId !== null) {
@@ -310,23 +265,18 @@ const applyOpenTransition = async (
       value: metricValue,
       opened_at: transition.openedAt.toISOString(),
       alert_id: resolvedAlertId,
-      // Patch (code review 2026-08-27 #15): parity with
-      // `IncidentStateChangedEventSchema`. The auto-create path is
-      // system-driven (rule engine, not an operator), so this is
-      // always null in v1 — but pinning the field shape keeps the
-      // socket-emit record uniform across the lifecycle and future-
-      // proofs a manual-create path. Missing this field surfaces as
-      // `IncidentOpenedEventSchema` parse drift — the
-      // `incident:opened` emit is silently dropped on
-      // device/incident rooms.
+      // Parity with `IncidentStateChangedEventSchema`. The auto-
+      // create path is system-driven (rule engine, not an
+      // operator), so this is always null in v1 — but pinning the
+      // field shape keeps the socket-emit record uniform across the
+      // lifecycle.
       actor_user_id: null,
     };
     const parsedIncident = IncidentOpenedEventSchema.safeParse(incidentPayload);
     if (parsedIncident.success) {
       broadcast.to(`device:${deviceId}`).emit("incident:opened", parsedIncident.data);
-      // Also broadcast on the per-incident room so the detail
-      // page (Story 4.4) can refresh without a separate device
-      // subscription.
+      // Also broadcast on the per-incident room so the detail page
+      // can refresh without a separate device subscription.
       broadcast.to(`incident:${incidentId}`).emit("incident:opened", parsedIncident.data);
     } else {
       console.warn(
@@ -334,13 +284,10 @@ const applyOpenTransition = async (
         parsedIncident.error,
       );
     }
-    // AC4 (AI-3.2 closure) — observability log on every auto-created
-    // Incident. The same shape as the router-level
-    // `incident_transition` log; `verb: "auto_create"` distinguishes
-    // system-driven from operator-driven transitions. `console.warn`
-    // is intentional — `console.info` is not in the lint allow-list
-    // (the no-console rule allows `console.warn` for explicit
-    // observability signals).
+    // Observability log on every auto-created Incident. Same shape
+    // as the router-level `incident_transition` log;
+    // `verb: "auto_create"` distinguishes system-driven from
+    // operator-driven transitions.
     console.warn(
       JSON.stringify({
         event: "incident_transition",
@@ -355,17 +302,10 @@ const applyOpenTransition = async (
   }
 };
 
-/**
- * Story 3.4 review-finding #4 + #6: clear path — `$transaction`
- * wraps (findOpenAlert, alert.update, ruleDebounceState.upsert).
- * The pure module's `clear` transition carries the slot's
- * `(deviceId, metric, severity)` — the IO layer resolves the
- * real alertId via the partial-index lookup INSIDE the
- * transaction. This is the resolution of the `BreachTransition`
- * clear-shape mismatch from loopback-1 (Finding #6): the
- * transition carries the slot key; the IO layer supplies the
- * real alertId.
- */
+/** Clear path: `$transaction` wraps (findOpenAlert, alert.update,
+ *  ruleDebounceState.upsert). The transition carries the slot's
+ *  `(deviceId, metric, severity)` — the IO layer resolves the real
+ *  alertId via the partial-index lookup INSIDE the transaction. */
 const applyClearTransition = async (
   deps: InstallRuleEngineHooksDeps,
   args: {
@@ -389,19 +329,12 @@ const applyClearTransition = async (
       severity: transition.severity,
     });
     if (existing === null) {
-      // Story 3.4 review-finding #8: a clear transition for a
-      // slot with no open row is a no-op (timer fires but no row
-      // to update). Log the anomaly so operators can diagnose
-      // drift between the de-bounce timer and the Alert table.
-      //
-      // Patch (spec-3-4 review 2026-08-27, P-L2-9 / ECH-02): the
-      // state upsert now runs INSIDE this transaction (not as a
-      // best-effort `persistStateSlot` outside) so the Alert row
-      // + state row commit as one unit. The pre-patch code path
-      // ran the upsert outside the transaction; a tx failure
-      // would leave the state row inconsistent with the
-      // (correctly-rolled-back) alert row. Inside the tx, both
-      // commit or both roll back together — atomicity per spec.
+      // A clear transition for a slot with no open row is a no-op
+      // (timer fires but no row to update). Log the anomaly so
+      // operators can diagnose drift between the de-bounce timer
+      // and the Alert table. The state upsert runs INSIDE the tx
+      // so the (correctly-rolled-back) Alert + state row commit as
+      // one unit.
       console.warn(
         `[alerts] clear transition with no open alert device=${deviceId} metric=${transition.metric} severity=${transition.severity}`,
       );
@@ -429,8 +362,8 @@ const applyClearTransition = async (
       return;
     }
 
-    // Atomic with the state upsert: alert.update + state row
-    // commit together or both roll back.
+    // Atomic with the state upsert: alert.update + state row commit
+    // together or both roll back.
     await tx.alert.update({
       where: { id: existing.id },
       data: { clearedAt: transition.clearedAt },
@@ -459,13 +392,6 @@ const applyClearTransition = async (
   });
 
   if (suppressedNull || clearedAlertId === null) {
-    // Patch (spec-3-4 review 2026-08-27, P-L2-9 / ECH-02): the
-    // state upsert for the no-open-row branch already ran INSIDE
-    // the transaction above; this is now a no-op branch. The
-    // pre-patch code called `persistStateSlot` here as a
-    // best-effort fallback; with the upsert inside the tx we no
-    // longer need the outer write. The transaction commits (or
-    // rolls back) the state row atomically.
     return;
   }
   const resolvedAlertId = clearedAlertId;
@@ -474,13 +400,10 @@ const applyClearTransition = async (
   );
 };
 
-/**
- * Persist one slot of `DebounceState` to Postgres. Best-effort
- * outside the transaction — a transient DB outage logs but does
- * not fail the eval path. Exported because `hooks.ts` calls it
- * for slots whose state changed but didn't transition (e.g. a
- * quiet frame that only resets the rising-edge timer).
- */
+/** Persist one slot of `DebounceState` to Postgres. Best-effort
+ *  outside the transaction — a transient DB outage logs but does
+ *  not fail the eval path. Called by `hooks.ts` for slots whose
+ *  state changed but didn't transition. */
 export const persistStateSlot = async (
   deps: InstallRuleEngineHooksDeps,
   ctx: {
@@ -519,25 +442,9 @@ export const persistStateSlot = async (
   }
 };
 
-// `AlertStateRepository` and `InstallRuleEngineHooksDeps` are
-// imported for their types only; they appear in the function
-// signatures. No runtime reference is needed.
-
-// Patch (spec-3-4 review 2026-08-27, P-L2-23 / BH-04): drop the
-// cargo-cult `_AlertStateRef` alias. The `AlertStateRepository`
-// import is already used by `InstallRuleEngineHooksDeps` in
-// `hooks.ts` (which `applyTransition.ts` consumes), so the lint
-// rule no longer flags the import as unused. Removing the alias
-// drops 4 lines of dead code and a misleading comment that
-// implied a `// Without this, eslint may flag...` problem that
-// doesn't actually exist any more.
-
-/**
- * Narrow type guard for Prisma's P2002 (unique-constraint
- * violation) error. The shape varies across Prisma versions; this
- * minimal `code` check is what the engine + de-bounce modules rely
- * on.
- */
+/** Narrow type guard for Prisma's P2002 (unique-constraint violation)
+ *  error. The shape varies across Prisma versions; the minimal
+ *  `code` check is what the engine + de-bounce modules rely on. */
 export const isPrismaP2002 = (err: unknown): boolean => {
   if (typeof err !== "object" || err === null) return false;
   const { code } = err as { code?: unknown };

@@ -1,19 +1,15 @@
 /**
- * alertStateRepository.ts — Story 3.4 (de-bouncing IO).
+ * Narrow Prisma slice for the alert + de-bounce state IO. Extracted
+ * from `hooks.ts` so the hook module stays under the lint
+ * `max-lines` ceiling. The interface shape is unchanged — it just
+ * lives in its own file now. `hooks.ts` re-exports the type for
+ * back-compat.
  *
- * The narrow Prisma slice `AlertStateRepository` plus its
- * `resolveAlertStateRepository` adapter. Extracted from
- * `hooks.ts` so the hook module stays under the lint
- * `max-lines` ceiling. The interface is unchanged — it just
- * lives in its own file now. `hooks.ts` re-exports the type
- * for back-compat.
- *
- * Story 3.4 review-finding #3 + #4: the `$transaction` method
- * exposes the callback form so the hook wraps the (Alert write
- * + state upsert) pair atomically. The transaction's `tx`
- * object is itself shaped as `AlertStateRepository` so the same
- * `tx.alert.create` / `tx.alert.findFirst` / `tx.ruleDebounceState.upsert`
- * calls work inside the callback without re-binding.
+ * The `$transaction` method exposes the callback form so the hook
+ * wraps the (Alert write + state upsert) pair atomically. The
+ * transaction's `tx` object is itself shaped as `AlertStateRepository`
+ * so the same `tx.alert.create` / `tx.alert.findFirst` /
+ * `tx.ruleDebounceState.upsert` calls work inside the callback.
  */
 import type { RuleMetric } from "@surakkha/shared";
 
@@ -24,12 +20,8 @@ export interface AlertStateRepository {
         readonly deviceId: string;
         readonly OR: ReadonlyArray<{
           readonly metric: RuleMetric;
-          // Patch (spec-3-4 review 2026-08-27, P-L2-6 / BH-11): the
-          // narrow seam accepted only the `{ in: [...] }` form
-          // even though every caller passes a single severity.
-          // Accept the direct-equality form too so Prisma doesn't
-          // have to build a one-element IN clause, and so the
-          // call-site reads naturally.
+          /** Accept the direct-equality form in addition to `{ in: [...] }`
+           *  so Prisma doesn't have to build a one-element IN clause. */
           readonly severity:
             | "info"
             | "warning"
@@ -80,17 +72,6 @@ export interface AlertStateRepository {
       readonly where: { readonly id: string };
       readonly data: { readonly clearedAt: Date };
     }): Promise<unknown>;
-    /**
-     * Story 3.4 review-finding #3 + #4 + #6: the
-     * `findOpenAlert` lookup now runs INSIDE the
-     * `$transaction` (so the resolved `alertId` is the one
-     * committed atomically with the state upsert). The
-     * transaction's `tx` object must therefore expose
-     * `alert.findFirst`. Production: `tx.alert.findFirst`
-     * is the same Prisma method the outer `deps.alertReader`
-     * uses. Tests: the rig exposes the same mock on `tx`
-     * so the same `alertReaderFindFirst` mock drives both.
-     */
     findFirst(args: {
       readonly where: {
         readonly deviceId: string;
@@ -100,18 +81,10 @@ export interface AlertStateRepository {
       };
     }): Promise<{ readonly id: string } | null>;
   };
-  /**
-   * Story 3.6 — auto-create Incident from warning/critical Alert.
-   * Lives on the SAME `$transaction` so the Alert row + Incident
-   * row + state upsert commit as one unit. The `tx` object inside
-   * `$transaction`'s callback exposes this slice via the
-   * `AlertStateRepository` shape. Production forwards to
-   * `tx.incident.create(...)`; tests inject a stub.
-   *
-   * Atomicity: any throw inside the `$transaction` callback rolls
-   * back the entire transaction (Alert row + Incident row + state
-   * row). No orphan alerts on Incident-write failure (AC6).
-   */
+  /** Auto-create Incident from warning/critical Alert on the SAME
+   *  `$transaction` so the Alert + Incident + state row commit as one
+   *  unit. Any throw inside the callback rolls back the entire
+   *  transaction. */
   readonly incident: {
     create(args: {
       readonly data: {
@@ -127,13 +100,9 @@ export interface AlertStateRepository {
       };
     }): Promise<{ readonly id: string }>;
   };
-  /**
-   * Story 4.9 — `notification:warning` write site. Lives on the
-   * SAME `$transaction` as the (Alert + Incident) pair so all
-   * three rows commit as one unit. The idempotent partial-unique
-   * index is the safety net for the race; the writer's P2002 catch
-   * is the deterministic outcome.
-   */
+  /** `notification:warning` write site. Lives on the SAME
+   *  `$transaction` as the (Alert + Incident) pair. The idempotent
+   *  partial-unique index is the safety net for the race. */
   readonly notification: {
     create(args: {
       readonly data: {
@@ -151,20 +120,14 @@ export interface AlertStateRepository {
       };
     }): Promise<{ readonly id: string } | null>;
   };
-  /**
-   * Story 3.4 review-finding #3 + #4: `$transaction` wrapper.
-   * The callback runs the IO pair (Alert write + state upsert)
-   * atomically. Production forwards to `prisma.$transaction(cb)`.
-   * The return type matches Prisma's: a callback form returns
-   * the callback's return value; tests use the same shape.
-   */
+  /** `$transaction` wrapper. The callback runs the IO pair (Alert
+   *  write + state upsert) atomically. Production forwards to
+   *  `prisma.$transaction(cb)`. */
   $transaction<T>(cb: (tx: AlertStateRepository) => Promise<T>): Promise<T>;
 }
 
-/**
- * Adapter — narrow the real `@prisma/client` to the
- * `AlertStateRepository` slice.
- */
+/** Adapter — narrow the real `@prisma/client` to the
+ *  `AlertStateRepository` slice. */
 export const resolveAlertStateRepository = (prisma: unknown): AlertStateRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;
@@ -186,16 +149,9 @@ export const resolveAlertStateRepository = (prisma: unknown): AlertStateReposito
       update: (args) => client.alert.update(args) as Promise<unknown>,
       findFirst: (args) => client.alert.findFirst(args) as Promise<{ readonly id: string } | null>,
     },
-    // Story 3.6 — incident auto-create lives in the same
-    // `$transaction` as the alert write. Production forwards to
-    // `client.incident.create(...)` (the same Prisma client the
-    // rest of the call uses); tests inject a stub.
     incident: {
       create: (args) => client.incident.create(args) as Promise<{ readonly id: string }>,
     },
-    // Story 4.9 — `notification:warning` write site. Production
-    // forwards to `client.notification.create(...)`; tests inject
-    // a stub that returns a stable row id.
     notification: {
       create: (args) => client.notification.create(args) as Promise<{ readonly id: string }>,
       findFirst: (args) =>

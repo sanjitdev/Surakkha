@@ -1,26 +1,19 @@
 /**
- * Prisma-side reader slice — Story 3.2.
+ * Narrow Prisma slice for the `Rule` reader. The engine is read-only
+ * against the `Rule` table at runtime. To avoid coupling the engine
+ * to `@prisma/client`'s generated type surface, this module declares
+ * a narrow slice interface that captures only the call site the engine
+ * needs. The adapter (`resolvePrismaRuleReader`) narrows the real
+ * client at boot; tests inject a hand-rolled stub.
  *
- * The engine is read-only against the `Rule` table at runtime. To
- * avoid coupling the engine to `@prisma/client`'s generated type
- * surface (which is enormous), we declare a NARROW slice interface
- * here that captures only the call site the engine needs. The
- * adapter (`resolvePrismaRuleReader`) narrows the real client at
- * boot; tests inject a hand-rolled stub.
- *
- * Why a slice interface (not a `PrismaClient` import):
- *   - The engine is a pure module — tests must be able to swap the
- *     reader without `vi.mock("@prisma/client")` at the package level.
- *   - Story 3.7's hot-reload will need the same slice; the boundary
- *     stays stable across both.
+ * Slice interface (not `PrismaClient` import) — tests can swap the
+ * reader without `vi.mock("@prisma/client")` at the package level.
  */
 import type { RuleMetric, RuleOperator, RuleRuleType, RuleSeverity } from "@surakkha/shared";
 
-/**
- * The subset of `Rule` row columns the cache needs to build an
- * `EngineRule`. Mirrors the Prisma model — adding a column here
- * forces a cache update, so drift is loud.
- */
+/** The subset of `Rule` row columns the cache needs to build an
+ *  `EngineRule`. Mirrors the Prisma model — adding a column here
+ *  forces a cache update. */
 export interface RuleRow {
   readonly id: string;
   readonly deviceId: string | null;
@@ -29,21 +22,17 @@ export interface RuleRow {
   readonly threshold: number;
   readonly severity: RuleSeverity;
   readonly ruleType: RuleRuleType;
-  // Story 3.4 — `minDurationSeconds` is the rising-edge timer (FR-14).
-  // Required by `EngineRule` (projected in `cache.ts`); the de-bounce
-  // layer reads this field from the cache, not from Prisma, so the
-  // cache is the canonical source of de-bounce configuration.
+  /** The rising-edge timer. Required by `EngineRule` (projected in
+   *  `cache.ts`); the de-bounce layer reads this field from the
+   *  cache, not from Prisma, so the cache is the canonical source
+   *  of de-bounce configuration. */
   readonly minDurationSeconds: number;
   readonly hysteresisSeconds: number;
   readonly isActive: boolean;
 }
 
-/**
- * Narrow slice of the Prisma client — just `rule.findMany` with the
- * `isActive` filter the engine needs. Production calls
- * `resolvePrismaRuleReader(prisma)` once to narrow the real client;
- * tests pass a `{ rule: { findMany: vi.fn() } }` stub.
- */
+/** Narrow slice of the Prisma client — just `rule.findMany` with the
+ *  `isActive` filter the engine needs. */
 export interface PrismaRuleReader {
   readonly rule: {
     findMany(args: {
@@ -64,11 +53,9 @@ export interface PrismaRuleReader {
   };
 }
 
-/**
- * Adapter — narrow the real `@prisma/client` to the
- * `PrismaRuleReader` slice. The cast is contained to one file so
- * future Prisma type drifts don't ripple into the engine module.
- */
+/** Adapter — narrow the real `@prisma/client` to the
+ *  `PrismaRuleReader` slice. The cast is contained to one file so
+ *  future Prisma type drifts don't ripple into the engine module. */
 export const resolvePrismaRuleReader = (prisma: unknown): PrismaRuleReader => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;

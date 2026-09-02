@@ -1,34 +1,14 @@
 /**
- * Rules evaluation engine — Story 3.2.
- *
- * Pure (no IO) evaluation of a single observation against a set of
- * rules. The engine is the single authority on which semantic of
- * `hysteresisSeconds` applies (instant/rate → clearing grace;
- * absence → fire-after-no-readings window) and on the rate-slope
- * formula (simple linear regression on `(ts.getTime() in ms, value)`
- * pairs; units are `value/ms`).
- *
- * The hook (`./hooks.ts`) is the only place that touches the DB on
- * the eval path. It queries `Reading.findMany` for the rate-rule
- * window, pre-filters (sort ascending, drop future-ts, dedupe by
- * ts, slice to last 5), and hands the array as
- * `EngineObservation.recentReadings`. Keeping the math pure means
- * `engine.spec.ts` runs without any Prisma mock.
- *
- * The `OPERATOR_COMPARATORS` table is the ONLY site where camel-case
- * Prisma enum tokens (`gte | gt | lte | lt | eq`) reach JS comparators.
- * Declared as `Record<RuleOperator, ...>` so tsc rejects a missing
- * entry if the enum ever grows (closed lookup pin per Story 3.1's
- * invariant I-5).
+ * Pure rules-evaluation engine. No IO. The hook (`./hooks.ts`) is
+ * the only caller that touches the DB — it queries `Reading.findMany`
+ * for the rate-rule window, pre-filters the rows, and hands them as
+ * `EngineObservation.recentReadings`. Pure means `engine.spec.ts` runs
+ * without `vi.mock("@prisma/client")`.
  */
 import type { RuleMetric, RuleOperator, RuleRuleType, RuleSeverity } from "@surakkha/shared";
 
-/**
- * Closed operator→comparator lookup table. Story 3.1's invariant
- * I-5 makes this a `Record<RuleOperator, ...>` so a future enum
- * addition that forgets this file fails tsc at compile time (the
- * runtime completeness pin lives in `engine.spec.ts`).
- */
+/** Closed operator→comparator lookup. Declared as `Record<RuleOperator,
+ *  ...>` so tsc rejects a missing entry when the enum grows. */
 export const OPERATOR_COMPARATORS: Record<RuleOperator, (a: number, b: number) => boolean> = {
   gte: (a, b) => a >= b,
   gt: (a, b) => a > b,
@@ -37,20 +17,10 @@ export const OPERATOR_COMPARATORS: Record<RuleOperator, (a: number, b: number) =
   eq: (a, b) => a === b,
 };
 
-/**
- * The shape the engine consumes at eval time. Deliberately excludes
- * `createdAt / updatedAt / version / isActive / createdBy` — the
- * engine doesn't need them; cache hydration (`./cache.ts`) projects
- * the Prisma row down to this shape.
- *
- * Story 3.4 — adds `minDurationSeconds` to the projected shape.
- * The engine itself does NOT consume `minDurationSeconds` (its surface
- * is unchanged); the field is passed through so the de-bounce layer
- * (`./debounce.ts`) can read it without re-querying Prisma or
- * re-projection. The presence of the field on `EngineRule` is the
- * deliberate signal that the cache is the canonical source of
- * de-bounce configuration.
- */
+/** The projected rule shape the engine evaluates. Cache hydration
+ *  (`./cache.ts`) projects the Prisma row down to this shape.
+ *  `minDurationSeconds` is consumed by the de-bounce layer
+ *  (`./debounce.ts`), not the engine — the field is passed through. */
 export interface EngineRule {
   readonly id: string;
   readonly deviceId: string | null;
@@ -63,14 +33,11 @@ export interface EngineRule {
   readonly hysteresisSeconds: number;
 }
 
-/**
- * A single observation the engine evaluates rules against. The hook
- * builds this from the inbound `TelemetryFrame.metrics[metric]` plus
- * a recent-readings window queried for rate rules. The `recentReadings`
- * array MUST already be sorted ascending, future-ts-dropped,
- * ts-deduplicated, and sliced to the last 5 readings by the hook
- * — the engine treats it as opaque post-condition input.
- */
+/** A single observation the engine evaluates rules against. The hook
+ *  builds this from the inbound `TelemetryFrame.metrics[metric]` plus
+ *  a recent-readings window queried for rate rules. `recentReadings`
+ *  is opaque to the engine — the hook is responsible for sorting
+ *  ascending, future-ts-dropping, ts-deduping, slicing to last 5. */
 export interface EngineObservation {
   readonly deviceId: string;
   readonly metric: RuleMetric;
@@ -79,20 +46,12 @@ export interface EngineObservation {
   readonly recentReadings: ReadonlyArray<{ readonly ts: Date; readonly value: number }>;
 }
 
-/**
- * The wire shape of a breach. Uniform across all rule types:
- *   - `observedAt` is always `observation.observedAt` (frame's
- *     wire timestamp converted to Date) so Story 3.5's alert
- *     manager has one timestamping rule.
- *   - `value` carries the triggering observation value (instant =
- *     reading value; rate = computed slope; absence = 0 sentinel —
- *     downstream distinguishes via `ruleType === "absence"`).
- *   - `deviceId` is always `observation.deviceId` regardless of
- *     whether the firing rule was global or per-device.
- *
- * Intentionally omits `threshold`, `operator`, `hysteresisSeconds`
- * — Story 3.5 re-derives those by `ruleId` from the cache.
- */
+/** Wire shape of a breach. Uniform across all rule types:
+ *  `observedAt` is always `observation.observedAt`; `value` is the
+ *  triggering observation value (instant = reading value; rate =
+ *  computed slope; absence = 0 sentinel — distinguished via
+ *  `ruleType`). `threshold` / `operator` / `hysteresisSeconds` are
+ *  NOT included — the alert manager re-derives those by `ruleId`. */
 export interface BreachResult {
   readonly ruleId: string;
   readonly deviceId: string;
@@ -103,14 +62,9 @@ export interface BreachResult {
   readonly observedAt: Date;
 }
 
-/**
- * Internal projection used by `evaluateRule` to make the per-rule
- * helper's output explicit. `evaluateRules` projects each non-null
- * `BreachCandidate` into a fully-populated `BreachResult` using
- * `observation.observedAt` and `observation.deviceId`. NOT exported
- * — it is a private engine type that exists so the field-provenance
- * pin in `engine.spec.ts` can assert on a single source of truth.
- */
+/** Internal projection used by `evaluateRule`. NOT exported — the
+ *  field-provenance pin in `engine.spec.ts` asserts on a single source
+ *  of truth for the per-rule helper's output. */
 interface BreachCandidate {
   readonly ruleId: string;
   readonly metric: RuleMetric;
@@ -119,24 +73,14 @@ interface BreachCandidate {
   readonly ruleType: RuleRuleType;
 }
 
-/**
- * Compute the linear-regression slope over `(x = ts.getTime() in ms,
- * y = value)` pairs. Returns `null` if the input has fewer than 5
- * points OR if the time-axis denominator is zero (all readings share
- * the same `ts` — degenerate column).
+/** Linear-regression slope over `(x = ts.getTime() ms, y = value)`
+ *  pairs. Returns `null` if the input has fewer than 5 points OR
+ *  if the time-axis denominator is zero.
  *
- * Formula (mean-centered for numerical stability):
- *   x̄ = Σx / n, ȳ = Σy / n
- *   slope = Σ(xᵢ − x̄)(yᵢ − ȳ) / Σ(xᵢ − x̄)²
- *
- * Units: `value / ms`. Tests use ms-scale thresholds or pre-scale
- * the slope; the engine math is unchanged (per Story 3.2 AC #5).
- *
- * Mean-centering avoids catastrophic cancellation when `x` is a
- * Unix epoch millisecond (~10¹²) and the spread is small relative
- * to `x²`. The textbook `n*Σx² − (Σx)²` formula loses precision in
- * the same regime; the mean-centered form is the textbook fix.
- */
+ *  Mean-centered for numerical stability:
+ *    x̄ = Σx / n, ȳ = Σy / n
+ *    slope = Σ(xᵢ − x̄)(yᵢ − ȳ) / Σ(xᵢ − x̄)²
+ *  Units: `value / ms`. */
 export const computeSlope = (
   points: ReadonlyArray<{ readonly ts: Date; readonly value: number }>,
 ): number | null => {
@@ -162,12 +106,9 @@ export const computeSlope = (
   return numer / denom;
 };
 
-/**
- * Evaluate a single rule against a single observation. Returns a
- * `BreachCandidate` (without `observedAt`/`deviceId`) when the rule
- * fires, or `null` otherwise. The per-rule evaluator carries the
- * per-ruleType dispatch so `evaluateRules` stays a simple map.
- */
+/** Evaluate a single rule against a single observation. Returns a
+ *  `BreachCandidate` (without `observedAt`/`deviceId`) when the rule
+ *  fires, or `null` otherwise. */
 export const evaluateRule = (
   rule: EngineRule,
   observation: EngineObservation,
@@ -201,27 +142,21 @@ export const evaluateRule = (
       return null;
     }
     case "absence": {
-      // The breach fires when no reading exists within the rule's
-      // `hysteresisSeconds` window of `observation.observedAt`. A
-      // reading whose `ts` is at exactly `observedAt −
-      // hysteresisSeconds*1000` (inclusive boundary) clears the
-      // breach — the engine uses `>=` against the threshold.
-      //
       // Defense-in-depth: a non-positive or non-finite
-      // `hysteresisSeconds` (zero seed, DB column drift, or a
-      // poison rule row) would make the window vacuously true,
-      // spamming operators with always-on breaches. The engine
-      // treats such a rule as "no rule" and returns null.
+      // `hysteresisSeconds` would make the window vacuously true,
+      // spamming operators with always-on breaches. Treat as
+      // "no rule" and return null.
       if (!Number.isFinite(rule.hysteresisSeconds) || rule.hysteresisSeconds <= 0) {
         return null;
       }
+      // Inclusive boundary — a reading whose `ts` is at exactly
+      // `observedAt − hysteresisSeconds*1000` clears the breach.
       const cutoffMs = observation.observedAt.getTime() - rule.hysteresisSeconds * 1000;
       const hasReadingInWindow = observation.recentReadings.some((r) => r.ts.getTime() >= cutoffMs);
       if (!hasReadingInWindow) {
         return {
           ruleId: rule.id,
           metric: rule.metric,
-          // Sentinel — downstream distinguishes absence via ruleType.
           value: 0,
           severity: rule.severity,
           ruleType: "absence",
@@ -230,37 +165,23 @@ export const evaluateRule = (
       return null;
     }
     default: {
-      // Exhaustiveness — `rule.ruleType` is `RuleRuleType` and the
-      // switch above covers all 3 cases. A future enum addition
-      // surfaces here at compile time.
+      // Exhaustiveness — a future enum addition surfaces here at compile time.
       const _exhaustive: never = rule.ruleType;
       throw new Error(`unsupported_rule_type: ${_exhaustive as string}`);
     }
   }
 };
 
-/**
- * Multi-rule entry point. Projects each non-null `BreachCandidate`
- * into a fully-projected `BreachResult` using `observation.observedAt`
- * and `observation.deviceId` (the same source for all rule types —
- * uniform timestamping + deviceId per Story 3.2's design notes).
- */
+/** Multi-rule entry point. Projects each non-null `BreachCandidate`
+ *  into a fully-projected `BreachResult` using `observation.observedAt`
+ *  and `observation.deviceId`. */
 export const evaluateRules = (
   rules: readonly EngineRule[],
   observation: EngineObservation,
 ): readonly BreachResult[] => {
-  // Patch (spec-3-4 review 2026-08-27, P-L2-12 / ECH-05): the
-  // engine's type signature declares `value: number` on
-  // `EngineObservation`, but the wire format is JSON so a NaN,
-  // null, or string can arrive when an upstream sensor misbehaves.
-  // The previous behaviour was to silently return
-  // EMPTY_BREACH_RESULTS because every comparison returned false
-  // (NaN compared to anything is false). Now we log a warn so
-  // operators see the poison reading in the ingest log, then
-  // short-circuit to the empty result. The signature stays
-  // `number` because the public contract is "the engine never
-  // produces a non-number"; the warn is observability for the
-  // rejection.
+  // Wire format is JSON — a NaN, null, or string can arrive when an
+  // upstream sensor misbehaves. Warn so operators see the poison
+  // reading in the ingest log, then short-circuit to empty result.
   if (typeof observation.value !== "number" || !Number.isFinite(observation.value)) {
     console.warn(
       `[engine] non-number metric value rejected: deviceId=${observation.deviceId} metric=${observation.metric} value=${JSON.stringify(observation.value)}`,
@@ -285,33 +206,19 @@ export const evaluateRules = (
   return out;
 };
 
-/**
- * Runtime exhaustiveness check for `RuleRuleType`. Throws
- * `Error("unsupported_rule_type: " + value)` if `value` is not one
- * of `instant | rate | absence`. Used by `cache.ts` to skip +
- * `console.warn` rows whose `ruleType` is anything else (per-row
- * rejection; valid rows still load). Also exported for direct use
- * by any future site that needs the same guard.
+/** Runtime exhaustiveness check for `RuleRuleType`. Throws if `value`
+ *  is not one of `instant | rate | absence`. Used by `cache.ts` to
+ *  skip rows whose `ruleType` is anything else (per-row rejection).
  *
- * This is a regular throwing function rather than an
- * `asserts value is RuleRuleType` signature so it can be called on
- * a property-access expression (`row.ruleType`) without hitting
- * TypeScript's TS2775 constraint that every name in the call target
- * of an assertion function must have an explicit type annotation.
- * The trade-off is the caller can't narrow `row.ruleType` to
- * `RuleRuleType` from the assertion alone — `cache.ts` re-types it
- * explicitly.
- */
+ *  Throwing function (not `asserts value is RuleRuleType`) so it can
+ *  be called on a property-access expression without TS2775. */
 export const requireRuleType = (value: string): void => {
   if (value !== "instant" && value !== "rate" && value !== "absence") {
     throw new Error(`unsupported_rule_type: ${value}`);
   }
 };
 
-/**
- * Frozen empty tuple. The no-op `IngestHooks.onRuleEvaluation` default
- * returns this so the type contract (`Promise<readonly BreachResult[]>`)
- * is satisfied without allocating. Consumers can compare by identity
- * but MUST NOT mutate.
- */
+/** Frozen empty tuple. The no-op `IngestHooks.onRuleEvaluation` default
+ *  returns this so the type contract (`Promise<readonly BreachResult[]>`)
+ *  is satisfied without allocating. Consumers MUST NOT mutate. */
 export const EMPTY_BREACH_RESULTS: readonly BreachResult[] = Object.freeze([]);
