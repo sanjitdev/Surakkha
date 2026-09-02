@@ -1,12 +1,7 @@
 /**
- * Idempotency-Key middleware. Caches the response (status + body)
- * per `(user_id, method, path, key)` for `IDEMPOTENCY_TTL_MS`. A
- * duplicate POST with the same key within the window replays the
- * cached response byte-for-byte. Missing header → pass-through
- * (the route is idempotent by state-machine machinery). Malformed
- * key → 400 `invalid_idempotency_key`. 5xx is NOT cached so
- * transient failures don't poison the cache. State is process-local
- * (same as the ingest rate-limit / sequence stores).
+ * Idempotency-Key middleware. Caches (status, body) per
+ * `(user_id, method, path, key)` for `IDEMPOTENCY_TTL_MS`. Missing
+ * header → pass-through; malformed key → 400; 5xx NOT cached.
  */
 import { isUuidV4 } from "@surakkha/shared";
 
@@ -25,12 +20,9 @@ interface CachedResponse {
   readonly expiresAtMs: number;
 }
 
-/**
- * Process-local cache of `(user_id, route, key) → (status, body, expiresAt)`.
- * Backed by `Map` for O(1) lookup + TTL eviction on access.
- *
- * State lives in process memory (I-9 single-process assumption).
- */
+/** Process-local cache of `(user_id, method, path, key) → (status,
+ *  body, expiresAt)`. Backed by `Map` for O(1) lookup + TTL
+ *  eviction on access. */
 export class IdempotencyStore {
   private readonly cache = new Map<string, CachedResponse>();
 
@@ -60,11 +52,9 @@ export class IdempotencyStore {
   }
 }
 
-/**
- * Default process-wide singleton. Created once at module load; the
- * `IncidentsRouterDeps` bag passes the same instance to every transition
- * route via the factory below.
- */
+/** Default process-wide singleton. The `IncidentsRouterDeps` bag
+ *  passes the same instance to every transition route via the
+ *  factory below. */
 const defaultStore = new IdempotencyStore();
 
 /**
@@ -103,16 +93,11 @@ export const idempotency =
       return;
     }
 
-    // Wrap `res.json` to capture the outbound body before sending. After
-    // the handler resolves, we record (status, body) for any 2xx/4xx
-    // response — 5xx is excluded so transient failures don't poison the
-    // cache (the client should be allowed to retry on 5xx with the same key).
+    // Wrap `res.json` to capture the outbound body for any
+    // 2xx/4xx response. 5xx is excluded so transient failures
+    // don't poison the cache (client retries on 5xx with the
+    // same key must NOT replay a 500).
     const originalJson = res.json.bind(res);
-    // The cast to `any` is unavoidable — Express's `res.json` overload
-    // returns `Response` only in newer typings, and we need a wider
-    // body type to cache whatever the handler emitted.
-    // `no-param-reassign` is suppressed: mutating `res.json` is the
-    // idiomatic Express pattern for response-shape interception.
     // eslint-disable-next-line no-param-reassign, @typescript-eslint/no-explicit-any
     res.json = (body: any): Response => {
       if (res.statusCode >= 200 && res.statusCode < HTTP_STATUS_MAX_CACHEABLE) {
