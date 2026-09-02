@@ -1,8 +1,8 @@
 /**
- * `notificationRouter.ts` — three routes on `/api/notifications`:
- *   - GET    /api/notifications              — role-scoped unread list (take: 50)
+ * Three routes on `/api/notifications`:
+ *   - GET    /api/notifications               — role-scoped unread list (take: 50)
  *   - PATCH  /api/notifications/:id/acknowledge — idempotent mark-as-read
- *   - GET    /api/notifications/admin/list  — Admin-only audit surface (take: 100)
+ *   - GET    /api/notifications/admin/list   — Admin-only audit surface (take: 100)
  *
  * The PATCH handler is idempotent on already-acknowledged rows
  * (200 with the existing row, NOT 409). Cross-role RBAC lives
@@ -48,6 +48,7 @@ const VALID_RECIPIENT_ROLES: readonly NotificationRecipientRole[] = [
 ];
 
 const NOTIFICATION_TAKE_LIMIT = 50;
+const ADMIN_NOTIFICATION_TAKE_LIMIT = 100;
 
 const pathParamsSchema = idPathSchema;
 
@@ -179,8 +180,6 @@ const renderAckResponse = (args: {
   res.status(HTTP_OK).json(body);
 };
 
-const ADMIN_NOTIFICATION_TAKE_LIMIT = 100;
-
 const adminQuerySchema = z.object({
   severity: z
     .union([z.string(), z.array(z.string())])
@@ -188,8 +187,8 @@ const adminQuerySchema = z.object({
     .transform((raw) => {
       if (raw === undefined) return undefined;
       const arr = Array.isArray(raw) ? raw : [raw];
-      // De-duplicate + drop empties; a chip toggle off means
-      // "all severities" (an empty array is the canonical signal).
+      // De-duplicate + drop empties; an empty array is the canonical
+      // "all severities" signal (chip toggle off).
       const dedup = new Set(arr.filter((s) => s.length > 0));
       return Array.from(dedup);
     }),

@@ -1,19 +1,9 @@
 /**
- * `routerWiring.ts` — Story 4.10.
- *
- * Lazily-resolves the production `NotificationRepository` and wraps
- * the `buildNotificationRouter` so the api can boot without
- * `DATABASE_URL` set (mirrors the `buildIncidentsRouterMount`
- * pattern at `packages/api/src/incidents/routerWiring.ts:132-165`).
- * A transient DB outage at boot does NOT crash the api — the
- * wrapper rejects on first request and the router's per-handler
- * catch surfaces 500 instead of leaking a stack trace.
- *
- * Lives outside `index.ts` because Story 4.10's mount block pushed
- * that file past the `max-lines: 500` ESLint rule. Extracting the
- * helper here keeps `index.ts` under the limit without dropping the
- * router registration (a spec AC: `/api/notifications` must mount
- * in the api process — not just exist as a dead file).
+ * Lazy-resolve the production `NotificationRepository` and wrap
+ * `buildNotificationRouter` so the api can boot without
+ * `DATABASE_URL` set. A transient DB outage at boot does NOT crash
+ * the api — the wrapper rejects on first request and the router's
+ * per-handler catch surfaces 500 instead of leaking a stack trace.
  */
 import { type Router } from "express";
 
@@ -26,17 +16,11 @@ import {
 
 import { buildNotificationRouter } from "./index.js";
 
-/**
- * Mount the `/api/notifications` (GET) and
- * `/api/notifications/:id/acknowledge` (PATCH) routes on `app`.
- * Defers the Prisma client resolution until first request.
- *
- * Pattern mirrors `buildIncidentsRouterMount` at
- * `packages/api/src/incidents/routerWiring.ts:132` — takes
- * `resolvePrismaClient` as an injected dep so this file does not
- * need to know the actual location of the Prisma singleton
- * (defense-in-depth against a future relocation of `db/prisma.ts`).
- */
+/** Mount the `/api/notifications` (GET) and
+ *  `/api/notifications/:id/acknowledge` (PATCH) routes on `app`.
+ *  Defers the Prisma client resolution until first request. Takes
+ *  `resolvePrismaClient` as an injected dep so this file does not
+ *  need to know the actual location of the Prisma singleton. */
 export const mountNotificationRouter = (args: {
   readonly app: { readonly use: (handler: Router) => void };
   readonly audit: AuditLogger;
