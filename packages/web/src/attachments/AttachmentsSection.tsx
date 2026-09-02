@@ -1,36 +1,16 @@
 /**
- * `AttachmentsSection` — Story 4.13.
- *
- * The orchestrator mounted on `<IncidentDetailPage />` below the
- * audit timeline. Renders the read-side `<AttachmentList />` plus
- * the inline `<AttachmentForm />` (button-gated for non-Viewer
- * roles). Empty state renders "No attachments yet." (mirrors the
- * audit-timeline's empty-state copy shape).
- *
- * Wire shape (canonical from `@surakkha/shared/attachment`):
- *
- *   GET    /api/incidents/:id/attachments  → AttachmentListEnvelope
- *   POST   /api/incidents/:id/attachments  → AttachmentPayload (201) / error (4xx/5xx)
- *   DELETE /api/attachments/:id            → 204 / error (4xx/5xx)
+ * Read + create + delete orchestrator for the per-incident attachments.
+ * Mounted on `<IncidentDetailPage />` below the audit timeline.
  *
  * RBAC contract:
- *   - Viewer: list is visible (read-only); the "Add attachment"
- *     button AND per-row delete buttons are absent (matrix
- *     `create.Attachment = N` + the per-row ownership gate).
- *     The form mounts only for Admin / Operator / Technician.
- *   - Admin: full create + delete any (matrix `delete.Attachment
- *     = Y` for Admin; the per-row check is "Admin bypasses").
- *   - Operator / Technician: create + delete own (matrix grants
- *     `create`; per-row check `uploadedByUserId === self`).
+ *   - Viewer: list visible (read-only); create + delete buttons absent.
+ *   - Admin: full create + delete any.
+ *   - Operator / Technician: create + delete own (per-row ownership).
  *
- * The section receives `incidentId` as a prop (not from
- * `useParams`) so it's testable with a stub id and reusable on
- * future surfaces (e.g., a per-event attachment panel in a
- * follow-up story).
- *
- * Tailwind-class constraint (Story 2.8 VG-1 lesson): every class
- * string here is a literal. Template-literal interpolation would
- * silently leave the class out of the JIT bundle.
+ * `incidentId` is a prop (not from `useParams`) so the section is
+ * testable with a stub id and reusable on future per-entity panels.
+ * `pushToast` is optional — when omitted the section reads `useToasts()`
+ * directly; the toast region itself is owned by each page mount.
  */
 import { type AttachmentPayload } from "@surakkha/shared/attachment";
 import { type Role } from "@surakkha/shared/rbac";
@@ -49,77 +29,30 @@ const VIEWER: Role = "Viewer";
 const ADMIN: Role = "Admin";
 
 export interface AttachmentsSectionProps {
-  /**
-   * The parent incident's id. Passed as a prop (not read from
-   * `useParams`) so the section is testable with a stub id and
-   * reusable on future surfaces.
-   */
   readonly incidentId: string;
-  /**
-   * Optional test escape hatch — the section reads `useToasts()`
-   * by default, but a parent may inject its own `pushToast` so
-   * the section can share the parent's toast queue (avoids two
-   * separate `useToasts` instances whose state doesn't sync).
-   * The toast region itself is owned by each page mount, not
-   * the section.
-   */
   readonly pushToast?: (tone: "success" | "error", message: string) => void;
 }
 
-/**
- * `AttachmentsSection` — the read + create + delete orchestrator.
- *
- * State owned here:
- *   - `formOpen` (boolean) — toggled by the "Add attachment"
- *     button. Local state because the form's lifecycle is
- *     scoped to the section mount, not the parent page.
- *
- * Hooks owned here:
- *   - `useAttachments(incidentId)` — the list query.
- *   - `useCreateAttachment(incidentId)` — the create mutation.
- *   - `useDeleteAttachment(incidentId)` — the delete mutation.
- *   - `useToasts()` — the page-scoped toast queue; the section
- *     wires `pushToast` into both mutations so the failure
- *     messages live on the section's lifetime.
- *
- * RBAC helpers (closure-captured):
- *   - `canCreate` — true when `role !== Viewer`. Admin /
- *     Operator / Technician all see the "Add attachment" button.
- *   - `canDelete(attachment)` — true when the role is Admin OR
- *     the viewer uploaded the row. This is the per-row ownership
- *     gate that mirrors the api's `enforceDeleteOwnership`
- *     helper (4.13 `attachmentRouter.ts:enforceDeleteOwnership`).
- *     Keeping this client-side means a malicious Operator who
- *     tampers with the DOM still gets a 403 from the api — the
- *     server is the security boundary.
- */
 export const AttachmentsSection = ({
   incidentId,
   pushToast: pushToastProp,
 }: AttachmentsSectionProps) => {
   const role = useCurrentRole();
   const viewerUserId = useCurrentUserId();
-  // `useCurrentRole` may be `null` (unauthenticated). Treat that as
-  // Viewer (no create + no delete affordance; the auth gate handles
-  // real unauthenticated navigation separately).
+  // `useCurrentRole` may be `null` (unauthenticated); fall back to
+  // Viewer (no create + no delete affordance). The auth gate handles
+  // real unauthenticated navigation separately.
   // `useToasts()` is consumed only when no external `pushToast` was
   // injected — keeps the hook count stable across the optional-prop
-  // boundary (always either 0 or 1 call to `useToasts`, never
-  // conditional). React's hook-order guard requires this.
+  // boundary. React's hook-order guard requires this.
   const fallback = useToasts();
   const pushToast = pushToastProp ?? fallback.pushToast;
   const { attachments, query } = useAttachments(incidentId);
   const [formOpen, setFormOpen] = useState(false);
-  // Pending delete ids (kept as a Set so the list can disable
-  // the per-row button while the mutation is in flight). The set
-  // is keyed on the attachment id; multiple concurrent deletes
-  // stay independent.
   const [pendingDeleteIds, setPendingDeleteIds] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
 
-  // Viewer gating: when no role is set (unauthenticated), fall
-  // back to Viewer (no create + no delete affordance).
   const viewerRole: Role = role ?? VIEWER;
   const canCreate = viewerRole !== VIEWER;
 

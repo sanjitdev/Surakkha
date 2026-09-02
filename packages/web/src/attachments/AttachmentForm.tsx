@@ -1,74 +1,30 @@
 /**
- * `AttachmentForm` — Story 4.13.
- *
- * The inline "Add attachment" form (URL + optional label +
- * optional MIME override). Matches 4.6's `AssignControl` inline
- * pattern — no modal library, no portal. The form mounts inline
- * below the list when the user clicks "Add attachment"; submit
- * fires `useCreateAttachment` mutation; success closes the form
- * and the list refetches.
- *
- * Client-side URL validation mirrors the server's
- * `validateHttpUrl` for fast inline feedback (the server is the
- * authority — the api's Zod schema + URL validator are the
- * security boundary). The shared `validateHttpUrl` helper from
- * `@surakkha/shared/urlValidation` is the single source of truth;
- * the api uses it for the security check, the form uses it for
- * the inline UX (no drift between the two surfaces).
+ * Inline "Add attachment" form (URL + optional label). URL validation
+ * shares `@surakkha/shared/urlValidation` with the api — the api is
+ * the security boundary, this form mirrors it for fast inline
+ * feedback. The form is presentational: it does NOT call the mutation
+ * directly; the parent `<AttachmentsSection />` wires `onSubmit` to
+ * `useCreateAttachment`.
  *
  * Form contract:
- *   - URL field is required (Zod `min(1)` on the api's body
- *     schema); empty submit is blocked client-side.
- *   - Label field is optional (max 200 chars — api's Zod bound);
- *     a client-side `maxLength` attribute enforces the bound
- *     inline so the operator sees the limit before submit.
- *   - MIME field is optional; the api auto-detects from the URL
- *     extension when omitted.
+ *   - URL required (empty submit is blocked client-side).
+ *   - Label optional, `maxLength={200}` matches the api's Zod bound.
+ *   - MIME optional (api auto-detects from the URL extension).
  *
- * Submit feedback:
- *   - The button shows "Adding..." while the mutation is pending
- *     so the operator knows the click registered.
- *   - The form is disabled while pending (URL + label inputs +
- *     submit button) — a second click during the in-flight
- *     request would otherwise fire a duplicate POST.
- *   - On success the form closes + clears the inputs (the
- *     mutation's `onSuccess` triggers the close; the parent
- *     section owns the open-state).
+ * `type="text"` (not `"url"`) on the URL input — the browser's
+ * built-in URL validation is inconsistent across engines and would
+ * block submit on empty values before the React `validateUrl` helper
+ * runs.
  */
 import { InvalidUrlError, validateHttpUrl } from "@surakkha/shared/urlValidation";
 import { type ChangeEvent, type FormEvent, useCallback, useState } from "react";
 
 export interface AttachmentFormProps {
-  /**
-   * Submit handler. Wired by `<AttachmentsSection />` to the
-   * `useCreateAttachment` mutation. The form does NOT call the
-   * mutation directly — keeps the component presentational and
-   * testable with a stub `onSubmit`.
-   */
   readonly onSubmit: (input: { readonly url: string; readonly label?: string }) => void;
-  /** Whether the underlying mutation is pending. */
   readonly isPending: boolean;
-  /**
-   * Inline close handler. Fires when the operator clicks
-   * "Cancel" or after a successful submit. The form does NOT
-   * own its own open-state — the parent section does.
-   */
   readonly onClose: () => void;
 }
 
-/**
- * `AttachmentForm` — the inline create-attachment form.
- *
- * Local state: `url` + `label` strings + `clientError` (the
- * inline validation message when the URL is malformed). The
- * `clientError` is set on the URL's `blur` event so the operator
- * sees the failure BEFORE they try to submit (better UX than
- * blocking submit + waiting for the server's 400).
- *
- * On submit: validate inline → clear error → call `onSubmit`.
- * The mutation's `onError` is owned by the parent section so the
- * toast queue lives on the section's lifetime.
- */
 export const AttachmentForm = ({ onSubmit, isPending, onClose }: AttachmentFormProps) => {
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
@@ -115,10 +71,9 @@ export const AttachmentForm = ({ onSubmit, isPending, onClose }: AttachmentFormP
       const trimmedLabel = label.trim();
       onSubmit(trimmedLabel === "" ? { url } : { url, label: trimmedLabel });
       // Reset on submit — the parent section closes the form on
-      // mutation success. If the mutation fails, the parent's
-      // error toast surfaces the classified message; the form
-      // remains open with the operator's input intact (the
-      // operator can fix the URL/label and retry).
+      // mutation success; on failure, the parent's toast surfaces
+      // the classified message and the form keeps the operator's
+      // input so they can fix + retry.
       setUrl("");
       setLabel("");
       setClientError(null);
@@ -134,13 +89,6 @@ export const AttachmentForm = ({ onSubmit, isPending, onClose }: AttachmentFormP
     >
       <label className="flex flex-col gap-1 text-xs text-neutral-secondary">
         URL
-        {/* `type="text"` (not `"url"`) on purpose — the browser's
-            built-in URL validation is inconsistent across engines
-            and would block our `onSubmit` handler on an empty
-            value before the React `validateUrl` helper runs. The
-            shared `validateHttpUrl` is the single source of truth
-            for the URL contract; this input is plain text + the
-            helper validates on submit. */}
         <input
           type="text"
           maxLength={2000}

@@ -1,50 +1,15 @@
 /**
- * RBAC denied empty state — Surakkha web (Story 1.6).
- *
- * Visual + behavioural contract: EXPERIENCE.md §RBAC denied — "full-page
- * empty state with a 403-style message: 'You don't have access to this
- * page. Contact an Admin.' and a link back to /dashboard."
- *
- * Rendered in two cases:
- *   1. The route is gated (per `nav.ts`) and the current role lacks
- *      the matching permission.
- *   2. Story 1.5's RBAC middleware on the api returns 403 and the SPA
- *      routes the response to this surface (wired in Story 1.7).
- *
- * Accessibility (EXPERIENCE.md §Accessibility Floor):
- *   - Semantic HTML: `<main>` wraps the content, `<h1>` is the headline
- *   - `role="status"` so the denied reason is announced politely
- *   - Visible focus ring on the back-link (`color.primary`, 2px, 2px
- *     offset — see `{accessibility.focus_ring}` in the design substrate)
- *   - Keyboard reachable: the link is the only interactive element
- *     and lands in the natural tab order
- *
- * The page intentionally avoids the word "403" in the rendered copy —
- * EXPERIENCE.md calls it "403-style" prose, not a literal status code,
- * because end users don't recognise the status. The server still
- * emits the canonical 403 (Story 1.5).
- *
- * Story 6.11 — Riley persona fix. The previous default back-label
- * was "Back to dashboard" for every role; a Viewer who arrived from
- * a deep link into /admin/notifications would land on a generic
- * back-link that didn't reflect their actual nav surface (they may
- * never have visited /dashboard). The `viewerRole` prop lets the
- * caller pass `useCurrentRole()` so the label picks the destination
- * the role actually has — Admins/Operators land on `/dashboard`,
- * Technicians land on `/devices` (their key journey surface), and
- * the fallback stays `/dashboard` when no role is known.
+ * RBAC-denied empty state. Renders a calm `main` with the 403-style
+ * message and a back-link whose destination depends on the viewer's
+ * role (Technician → /devices; Admin / Operator / Viewer → /dashboard).
+ * The back-link is overridable; explicit `backHref` / `backLabel` win
+ * over the role-aware default.
  */
 import { type Role } from "@surakkha/shared/rbac";
 import { Link } from "react-router-dom";
 
 export const RBAC_DENIED_MESSAGE = "You don't have access to this page. Contact an Admin.";
 
-/**
- * Map the viewer's role to the surface they actually navigate
- * from. Key journeys per EXPERIENCE.md §Personas — Technicians
- * live on /devices; Operators and Viewers on /dashboard. Admins
- * are ops-and-overview, also /dashboard.
- */
 const ROLE_BACK_LABEL: Readonly<Record<Role, { readonly href: string; readonly label: string }>> = {
   Admin: { href: "/dashboard", label: "Back to dashboard" },
   Operator: { href: "/dashboard", label: "Back to dashboard" },
@@ -52,16 +17,6 @@ const ROLE_BACK_LABEL: Readonly<Record<Role, { readonly href: string; readonly l
   Viewer: { href: "/dashboard", label: "Back to dashboard" },
 };
 
-/**
- * Resolve the back-link destination. Explicit props win (Kanban /
- * IncidentDetail pass their own); the role-aware table is the
- * default; the hard-coded `/dashboard` + "Back to dashboard"
- * is the final fallback for legacy / unauthenticated callers.
- *
- * Extracted so the parent `RbacDenied` body stays under the
- * `complexity: 10` ESLint ceiling — the prop destructure alone
- * pushes the inline version over.
- */
 const DEFAULT_BACK_HREF = "/dashboard";
 const DEFAULT_BACK_LABEL = "Back to dashboard";
 
@@ -82,12 +37,6 @@ export interface RbacDeniedProps {
   readonly message?: string;
   readonly backHref?: string;
   readonly backLabel?: string;
-  /**
-   * Story 6.11 — the viewer's role (sourced from `useCurrentRole()`).
-   * When provided, the back-link uses the role-aware destination;
-   * when omitted (legacy callers, tests), the back-link defaults
-   * to the generic `/dashboard` "Back to dashboard" copy.
-   */
   readonly viewerRole?: Role | null;
 }
 
@@ -98,13 +47,6 @@ export const RbacDenied = ({
   backLabel,
   viewerRole,
 }: RbacDeniedProps) => {
-  // Role-aware default (Story 6.11); callers that pass an explicit
-  // backHref/backLabel (the Kanban / IncidentDetail override paths)
-  // keep their custom destination. The role lookup is a no-op when
-  // the role is null/undefined — falls back to the previous defaults.
-  // Extracted to a helper so the parent component's complexity stays
-  // under the lint ceiling (the prop destructure alone pushes us
-  // over the limit if the resolver is inline).
   const { href: resolvedBackHref, label: resolvedBackLabel } = resolveBackTarget(
     backHref,
     backLabel,

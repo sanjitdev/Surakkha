@@ -1,81 +1,28 @@
 /**
- * `AttachmentList` — Story 4.13.
+ * Per-incident attachments read view. Each row shows the label (or
+ * the URL when no label), a `↗` external-link icon, the MIME badge
+ * (or "unknown" when `mime` is null), the uploader id (or
+ * "anonymous"), and an RBAC-gated delete button.
  *
- * The read-side render of the per-incident attachments. Each
- * `<li>` row shows the label (or the URL itself when no label),
- * a `↗` external-link icon, the MIME badge (or "unknown" when
- * `mime` is null), the uploader's user-id (or "anonymous" when
- * null), and a per-row delete button gated by RBAC.
- *
- * Defensive rendering (per the spec's `XSS_LABEL` row):
- *   - The `label` is rendered as text content via `{label}` —
- *     React escapes HTML entities; no `dangerouslySetInnerHTML`.
- *     An attacker who posts `{ label: "<script>alert(1)</script>" }`
- *     gets the literal text in the DOM, not a script element.
- *   - The URL is rendered via `<a href={url}>` with
- *     `rel="noopener noreferrer"` + `target="_blank"`. The api
- *     enforces `validateHttpUrl` (rejects `javascript:`, `data:`,
- *     `file:`, `vbscript:`); even if a `javascript:` URL slipped
- *     past the server, the `noopener` mitigates tab-nabbing and
- *     the `target="_blank"` keeps the navigation off the SPA.
- *
- * RBAC per-row delete:
- *   - The button is hidden when `canDelete === false` (Viewer
- *     role; OR a non-Admin user viewing another user's row).
- *   - The button is disabled while the mutation is pending so a
- *     double-click doesn't fire two DELETEs.
- *   - The mutation lives in `<AttachmentsSection />`; this
- *     component receives `onDelete(id)` and `isDeleting(id)` as
- *     props so the list stays presentational.
- *
- * Tailwind-class constraint (Story 2.8 VG-1 lesson): every class
- * string here is a literal. Template-literal interpolation would
- * silently leave the class out of the JIT bundle.
+ * The label is rendered as text content (React escapes HTML entities)
+ * — no `dangerouslySetInnerHTML`. The URL is rendered via
+ * `<a href rel="noopener noreferrer" target="_blank">`; the api
+ * rejects `javascript:` / `data:` / `file:` / `vbscript:` schemes
+ * via `validateHttpUrl`, and `noopener` mitigates tab-nabbing.
  */
 import { type AttachmentPayload } from "@surakkha/shared/attachment";
 
 export interface AttachmentListProps {
   readonly attachments: readonly AttachmentPayload[];
-  /**
-   * Per-row RBAC predicate. Returns `true` when the current viewer
-   * may delete the row (Admin OR the uploader). The list renders
-   * the delete button only when this returns `true`; Viewer
-   * viewers get a read-only surface (no buttons).
-   */
   readonly canDelete: (attachment: AttachmentPayload) => boolean;
-  /**
-   * Delete click handler. Wired by `<AttachmentsSection />` to
-   * the `useDeleteAttachment` mutation. The list does NOT call
-   * the mutation directly — keeps the component presentational
-   * and testable with a stub `onDelete`.
-   */
   readonly onDelete: (id: string) => void;
-  /**
-   * Per-row pending flag. Returns `true` while the delete mutation
-   * for that specific row is in flight. The button's `disabled`
-   * is wired to this so a double-click doesn't fire two DELETEs.
-   */
   readonly isDeleting: (id: string) => boolean;
 }
 
 const formatActorOrAnonymous = (id: string | null): string => (id === null ? "anonymous" : id);
 
-/**
- * Render the MIME badge. Returns "unknown" when `mime` is null —
- * the api stamps `application/octet-stream` as the server-side
- * default, but the wire field is nullable so a future schema
- * change can omit it without breaking this consumer.
- */
 const formatMimeOrUnknown = (mime: string | null): string => (mime === null ? "unknown" : mime);
 
-/**
- * `AttachmentList` — the per-incident attachments renderer.
- *
- * Renders an empty-state placeholder when `attachments.length === 0`
- * (the section's "No attachments yet." copy). Each row links to
- * the attachment URL via `<a rel="noopener noreferrer" target="_blank">`
- * and exposes the label as plain text (no HTML interpretation).
- */
 export const AttachmentList = ({
   attachments,
   canDelete,
@@ -105,11 +52,6 @@ export const AttachmentList = ({
           >
             <div className="flex min-w-0 flex-col gap-1">
               <div className="flex items-center gap-2">
-                {/* The `<a>` link uses the URL only — even if a
-                    `javascript:` URL slipped past the server
-                    (it can't), the `noopener noreferrer` mitigates
-                    tab-nabbing and `target="_blank"` keeps the
-                    navigation off the SPA. */}
                 <a
                   href={a.url}
                   rel="noopener noreferrer"

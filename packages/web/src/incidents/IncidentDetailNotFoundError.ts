@@ -1,10 +1,7 @@
 /**
- * `IncidentDetailNotFoundError.ts` — Story 4.4.
- *
- * Tagged error for not-found responses on the detail page.
- * Distinct from a generic `Error` so the parent page can
- * render `<NotFound />` for 404s while keeping the generic
- * 500/empty path separate.
+ * Tagged 404 error for the detail page. The page's `isError`
+ * branch renders `<NotFound />` on this class; 5xx / generic
+ * paths stay separate.
  */
 export class IncidentDetailNotFoundError extends Error {
   constructor() {

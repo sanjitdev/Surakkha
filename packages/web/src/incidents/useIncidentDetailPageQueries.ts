@@ -1,21 +1,7 @@
 /**
- * `useIncidentDetailPageQueries` — extract the two TanStack queries
- * (row + timeline) and the projected `incident` / `timeline` values
- * from `<IncidentDetailPage />` so the page component stays under
- * the `complexity: 10` lint ceiling.
- *
- * Returns the page's data-fetch layer in one bag:
- *   - `rowQuery` (TanStack Query result for `/api/incidents/:id`)
- *   - `timelineQuery` (TanStack Query result for `/api/incidents/:id/events`)
- *   - `incident` (extracted row, `undefined` while loading)
- *   - `timeline` (events array, `[]` while loading)
- *
- * No JSX, no socket subscription, no toast wiring. The page
- * composes these primitives with the rest of its render tree.
- *
+ * Two TanStack queries (row + timeline) for the detail page.
  * Timeline query is gated on `id !== undefined && !rowQuery.isError`
- * so we don't fire a second request when the parent row already
- * 403'd or 404'd.
+ * so a 403 / 404 on the parent row suppresses the second request.
  */
 import { type IncidentEventPayload } from "@surakkha/shared/incident";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
@@ -56,11 +42,6 @@ export const useIncidentDetailPageQueries = (
   });
 
   const incident = rowQuery.data?.incident;
-
-  // Project events into timeline rows. `useMemo` because the
-  // projection is O(N) over the events array; re-running on every
-  // render is wasteful for an operator that may park on this page
-  // for minutes while inspecting a single incident.
   const timeline = useMemo<readonly IncidentEventPayload[]>(
     () => timelineQuery.data?.events ?? [],
     [timelineQuery.data?.events],

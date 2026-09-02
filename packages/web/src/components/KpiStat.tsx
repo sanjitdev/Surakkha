@@ -1,22 +1,6 @@
 /**
- * KpiStat — Surakkha web (Story 1.9).
- *
- * A KPI card that renders the saturated severity palette (Story 1.2a)
- * and the motion tokens (DESIGN.md §Components, §Layout & Spacing).
- * The component is the visible proof that the design system is wired
- * to the authenticated canvas — without it, the tokens would be
- * defined but never rendered.
- *
- * Token consumption (no duplicated literals — every value is a token):
- *   - severity.<sev>.value / text / fill / bg / glow
- *   - radius.card, density.card_padding, elevation.card
- *   - fontSize.kpi-numeral (40px) / kpi-numeral-critical (44px)
- *   - motion.critical_pulse_ms (1500ms via .animate-critical-pulse)
- *
- * The component is intentionally tiny: a surface card, a left stripe,
- * a label, a numeral, and a sub-label. Every future KPI overlay (live
- * pulse, hover, etc.) extends this base without changing the token
- * contract.
+ * KPI card. Renders the saturated severity palette + motion tokens
+ * (critical pulse on `severity === "critical"`).
  */
 import { type ReactNode } from "react";
 
@@ -29,21 +13,7 @@ export interface KpiStatProps {
   readonly sub?: ReactNode;
 }
 
-/**
- * Tailwind className per severity. Each entry is the exact token
- * the design mandates — no inline literals.
- *
- * - card border: 1px neutral
- * - left stripe: severity value (4px critical, 3px healthy, 2px warning, 3px offline)
- * - background: severity bg
- * - shadow: elevation.card
- * - critical pulse: animate-critical-pulse (1500ms)
- * - numeral: kpi-numeral-critical (44px) for critical, kpi-numeral (40px) otherwise
- */
-const SEVERITY_CLASS: Record<
-  KpiSeverity,
-  { card: string; numeral: string; pulse: string }
-> = {
+const SEVERITY_CLASS: Record<KpiSeverity, { card: string; numeral: string; pulse: string }> = {
   healthy: {
     card: [
       "border-l-3",
@@ -106,16 +76,10 @@ export const KpiStat = ({ severity, label, value, sub }: KpiStatProps) => {
   const sc = SEVERITY_CLASS[severity];
   return (
     <div data-testid="kpi-stat" className={`${baseCardClass} ${sc.card}`}>
-      <span
-        data-testid="kpi-stat-label"
-        className="text-sm font-medium uppercase tracking-wide"
-      >
+      <span data-testid="kpi-stat-label" className="text-sm font-medium uppercase tracking-wide">
         {label}
       </span>
-      <span
-        data-testid="kpi-stat-numeral"
-        className={`font-semibold tabular-nums ${sc.numeral}`}
-      >
+      <span data-testid="kpi-stat-numeral" className={`font-semibold tabular-nums ${sc.numeral}`}>
         {value}
       </span>
       {sub !== undefined ? (

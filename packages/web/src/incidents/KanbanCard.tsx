@@ -1,39 +1,10 @@
 /**
- * `KanbanCard` — Story 4.3.
- *
- * Minimal preview card for the Kanban board. Renders the same shape
- * Epic 2's `RecentIncidentsRegion` uses (severity dot + state label
- * + opened_at + metric + value) so Story 4.4's eventual
- * `<IncidentCard />` swap is mechanical — the column container stays;
- * only the per-card component changes.
- *
- * Read-only: NO action affordances (deferred to Story 4.4). The
- * `onClick` callback is the future detail-page navigation hook;
- * 4.3 wires the slot but does not implement the route.
- *
- * Why this component is not `<IncidentCard />`: Story 4.1's
- * contract defines `<IncidentCard />` as a typed primitive that
- * renders action affordances derived from `state + role`. Story
- * 4.4 ships the actual component. 4.3 ships the static preview
- * that 4.4 will replace in-place.
+ * Minimal preview card for the Kanban board (severity dot +
+ * state label + opened_at + metric + value). Read-only; the
+ * optional `onClick` slot is the detail-page navigation hook.
  */
 import { type IncidentPayload } from "@surakkha/shared/incident";
 
-/**
- * Severity dot palette — Story 4.4 re-exports these so the detail
- * page reuses the SAME palette without duplication. Tailwind
- * class strings (not hex literals) so a future token rename
- * propagates by construction. The `IncidentPayload["severity"]`
- * 3-bucket maps to the dashboard's `MapSeverity` 4-bucket as:
- *   - info   → healthy (project colour: `severity.healthy.value`)
- *   - warning → warning (`severity.warning.value`)
- *   - critical → critical (`severity.critical.value`)
- *
- * Critique 2026-08-31 Round 2 finding: the prior version used raw
- * hex strings (`#1E5BB8` / `#D97706` / `#DC2626`) that drifted
- * silently if a designer retuned a token. Re-keying off the
- * class names ties the dot to the design substrate end-to-end.
- */
 export const SEVERITY_DOT_BG: Record<IncidentPayload["severity"], string> = {
   info: "bg-severity-healthy-value",
   warning: "bg-severity-warning-value",
@@ -57,11 +28,6 @@ export const STATE_LABEL: Record<IncidentPayload["state"], string> = {
   REOPENED: "Reopened",
 };
 
-// Named constants for the relative-time buckets (eslint
-// `no-magic-numbers`). One minute / hour / day / week in ms;
-// `BUCKETS_PER_MINUTE` is the per-bucket divisor (60_000 ms in
-// a minute → `delta / (thresholdMs / 60)` converts the bucket
-// size to a per-minute count).
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 86_400_000;
@@ -76,11 +42,6 @@ const RELATIVE_THRESHOLDS_MS: ReadonlyArray<readonly [number, string]> = [
   [MS_PER_WEEK, "d"],
 ];
 
-/**
- * Best-effort relative-time formatter. Pure function; no Intl
- * dependency so the test rig (which mocks Date.now) can pin the
- * exact string.
- */
 const formatRelativeOpenedAt = (iso: string, nowMs: number): string => {
   const opened = Date.parse(iso);
   if (Number.isNaN(opened)) return iso;
@@ -97,17 +58,9 @@ const formatRelativeOpenedAt = (iso: string, nowMs: number): string => {
 
 export interface KanbanCardProps {
   readonly incident: IncidentPayload;
-  /**
-   * Test seam: pin the clock for relative-time formatting. Defaults
-   * to `Date.now()` in production. The board passes this through
-   * from the test rig when it needs to assert the exact string.
-   */
+  /** Test seam — pin the clock for relative-time formatting. */
   readonly now?: number;
-  /**
-   * Future detail-page navigation. Wired here so 4.4 can add an
-   * `onClick={() => navigate(`/incidents/${incident.id}`)}` prop
-   * without changing the column layout.
-   */
+  /** Optional detail-page navigation callback. */
   readonly onClick?: (id: string) => void;
 }
 
@@ -122,10 +75,6 @@ export const KanbanCard = ({ incident, now, onClick }: KanbanCardProps) => {
       data-testid={`kanban-card-${incident.id}`}
       data-severity={incident.severity}
       data-state={incident.state}
-      // The column React-key (set by the parent) drives React's
-      // per-cell identity, not this DOM id. This card moves between
-      // columns when its `projectKanbanColumn(state, severity)`
-      // resolves to a new column.
       className="rounded-input border border-neutral-border bg-neutral-surface p-3 text-sm text-neutral-body"
     >
       <header className="flex items-center justify-between">

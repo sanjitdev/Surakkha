@@ -1,18 +1,7 @@
 /**
- * FormField — Surakkha web (Stories 1.3 + Epic 4).
- *
- * Visual contract: EXPERIENCE.md §Components → `FormField`
- * (label above input, helper text below, error inline using
- * `color.severity.critical.text`).
- *
- * Copy discipline: the required-indicator is the literal text
- * "(required)" — no asterisks (EXPERIENCE.md §FormField / PRD F-5,
- * F-12, F-13). Strings rendered to the user never contain exclamation
- * marks or marketing language (Story 1.3 AC + DESIGN.md voice).
- *
- * The primitive is generic over the underlying input element so login,
- * incident forms, settings, and the simulator (Story 3.5) can share
- * the same critical-first visual rhythm.
+ * FormField — label-above-input primitive. Renders an error in
+ * `text-severity-critical-text` when present, otherwise helper text.
+ * The required indicator is the literal "(required)" (no asterisks).
  */
 import { type InputHTMLAttributes, type ReactNode, useId } from "react";
 
@@ -62,10 +51,7 @@ export const FormField = ({
         "aria-invalid": error === undefined ? "false" : "true",
         "aria-describedby": describedBy,
       })}
-      {/* eslint-disable react/forbid-dom-props -- the helper <p> and
-          error <p> are deliberately the targets of aria-describedby; the
-          rule's intent (avoid duplicate / colliding DOM ids) does not
-          apply to unique useId-derived values. */}
+      {/* eslint-disable react/forbid-dom-props -- useId-derived ids can't collide. */}
       {error === undefined ? (
         helperText === undefined ? null : (
           <p id={helperId} className="text-md text-neutral-secondary">
@@ -82,11 +68,8 @@ export const FormField = ({
   );
 };
 
-/**
- * Convenience wrapper that renders a `<input type="text"|"email"|"password"|
- * "search" ...>` with the FormField render-prop wiring applied. Other
- * primitives (select, textarea) use the render-prop API directly.
- */
+/** Convenience wrapper for plain text inputs; other primitives use
+ *  the render-prop API directly. */
 export const FormTextInput = ({
   type,
   className,

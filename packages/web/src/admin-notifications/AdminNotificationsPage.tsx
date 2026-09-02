@@ -1,35 +1,13 @@
 /**
- * `AdminNotificationsPage` — Story 5.1.
+ * Admin audit-lens read view at `/admin/notifications`. Renders the
+ * most-recent 100 Notification rows with severity multi-select chips
+ * (info / warning / critical) and a date-range selector (24h / 7d /
+ * 30d; custom is a deferred no-op stub).
  *
- * The admin-facing `/admin/notifications` read surface. Renders
- * the most-recent 100 Notification rows in a table with:
- *
- *   - Severity multi-select chips (`info`, `warning`, `critical`).
- *   - A date-range selector (last 24h / 7d / 30d / custom) — v1
- *     surfaces the preset buttons; custom date inputs are deferred
- *     to a follow-up story.
- *   - An expandable row panel that shows the row's metadata as JSON
- *     (id, severity, incidentId, alertId, recipientRole, createdAt,
- *     acknowledgedAt, acknowledgedByUserId) and a link to
- *     `/incidents/{incidentId}` when `incidentId` is set (or a
- *     "no incident" hint when null).
- *
- * The chip row is the Loop-1 fix surface — selecting 2 or 3 chips
- * produces a `severity: readonly NotificationSeverity[]` of length
- * 2 or 3, the hook serializes it as repeated `?severity=` params,
- * and the api coerces it into a Prisma `{ in: [...] }` IN-list.
- *
- * RBAC double-defense:
- *
- *   - Page wrapped in `<RbacRoute>` (Story 1.6) so a non-Admin
- *     direct URL hit renders `<RbacDenied />` without mounting the
- *     hook.
- *   - `queryFn` throws `AdminNotificationsRbacDeniedError` on 403
- *     (mid-session token expiry or matrix drift). The page's
- *     `isError` branch renders `<RbacDenied />` as the defense in
- *     depth fallback.
- *
- * Read-only. No mark-as-read affordance — the bell owns that.
+ * Wrapped in `<RbacRoute>` so a non-Admin direct URL hit renders
+ * `<RbacDenied />`. The hook's `queryFn` throws
+ * `AdminNotificationsRbacDeniedError` on 403; the page's `isError`
+ * branch renders the same surface as defense-in-depth.
  */
 import {
   type AdminNotificationPayload,
@@ -45,18 +23,15 @@ import {
   useAdminNotificationList,
 } from "../notifications/useAdminNotificationList";
 
-/** Severity chip order — critical first (highest signal). */
 const SEVERITY_ORDER: readonly NotificationSeverity[] = ["critical", "warning", "info"];
 
-/** Date-range presets; `custom` is a no-op v1 stub for the date inputs. */
 type DateRangePreset = "24h" | "7d" | "30d" | "custom";
 const DATE_RANGE_PRESETS: readonly DateRangePreset[] = ["24h", "7d", "30d", "custom"];
 
-/** Date-range window lengths in milliseconds (the `custom` preset has none). */
 const HOURS_PER_DAY = 24;
 const MINUTES_PER_HOUR = 60;
 const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1000;
+const MS_PER_SECOND = 1_000;
 const WINDOW_DAYS_24H = 1;
 const WINDOW_DAYS_7D = 7;
 const WINDOW_DAYS_30D = 30;
@@ -67,20 +42,10 @@ const WINDOW_MS_7D =
 const WINDOW_MS_30D =
   WINDOW_DAYS_30D * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
-/** Number of hex characters shown for ID columns (8 ≈ 32 bits of entropy). */
 const ID_SHORT_PREFIX_LENGTH = 8;
-
-/** Number of characters in an ISO-8601 datetime stamp (yyyy-mm-ddTHH:MM:SS). */
 const ISO_DATETIME_PREFIX_LENGTH = 19;
 
-/**
- * Resolve the date-range preset to a window length in milliseconds
- * for the hook to recompute `since` per fetch. Returns undefined
- * for `custom` (no auto-fill) — the date input is deferred.
- *
- * Loop 2 hardening: the hook re-derives `since = now - windowMs`
- * inside `queryFn` so 30s polling slides the lower bound forward.
- */
+/** `custom` returns `undefined` (no auto-fill; date inputs are deferred). */
 const sincePresetMsForPreset = (preset: DateRangePreset): number | undefined => {
   if (preset === "custom") return undefined;
   if (preset === "24h") return WINDOW_MS_24H;
@@ -88,21 +53,18 @@ const sincePresetMsForPreset = (preset: DateRangePreset): number | undefined => 
   return WINDOW_MS_30D;
 };
 
-/** Severity → Tailwind dot color class (mirrors 4.10's SEVERITY_DOT_BG). */
 const SEVERITY_DOT_CLASS: Record<NotificationSeverity, string> = {
   critical: "bg-severity-critical-value",
   warning: "bg-severity-warning-value",
   info: "bg-primary",
 };
 
-/** Severity → human label. */
 const SEVERITY_LABEL: Record<NotificationSeverity, string> = {
   critical: "Critical",
   warning: "Warning",
   info: "Info",
 };
 
-/** Recipient-role → pill color class. */
 const RECIPIENT_PILL_CLASS: Record<string, string> = {
   Admin: "bg-severity-critical-bg text-severity-critical-text",
   Operator: "bg-severity-warning-bg text-severity-warning-text",
@@ -110,7 +72,6 @@ const RECIPIENT_PILL_CLASS: Record<string, string> = {
   Viewer: "bg-neutral-bg text-neutral-secondary",
 };
 
-/** Format a Date / ISO string for the table. */
 const formatDate = (iso: string): string => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -118,12 +79,6 @@ const formatDate = (iso: string): string => {
     : d.toISOString().replace("T", " ").slice(0, ISO_DATETIME_PREFIX_LENGTH);
 };
 
-/**
- * Toggle a severity in / out of the chip filter. The chip row is
- * multi-select; `severity` is an array. Loop 1 fix: the array is
- * the wire shape end-to-end so 2- and 3-chip selections produce a
- * coherent `?severity=critical&severity=warning` URL.
- */
 const toggleSeverity = (
   current: readonly NotificationSeverity[],
   next: NotificationSeverity,
@@ -134,12 +89,6 @@ export interface AdminNotificationsPageProps {
   readonly testId?: string;
 }
 
-/**
- * The page component. Mirrors the Story 4.4 `IncidentDetailPage`
- * shape: local `useState` for the chip row + date-range UI,
- * `useAdminNotificationList` for the data, defensive error +
- * RBAC branches.
- */
 export const AdminNotificationsPage = ({
   testId = "admin-notifications-page",
 }: AdminNotificationsPageProps) => {
@@ -147,22 +96,14 @@ export const AdminNotificationsPage = ({
   const [preset, setPreset] = useState<DateRangePreset>("30d");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Compose the filter object. Crucially: severity is the FULL
-  // array (not a single value or a `length === 1` collapse) — see
-  // Loop 1 fix in the spec's Spec Change Log.
-  //
-  // Loop 2 hardening: pass `sincePresetMs` (a fixed window length)
-  // instead of a frozen `since` ISO string. The hook re-derives
-  // `since = now - sincePresetMs` on every fetch, so the lower
-  // bound slides forward during 30s polling — otherwise the window
-  // is frozen at first paint and rows created after the slide are
-  // missed.
-  //
-  // Memoized on `[severity, preset]` so the *reference* is stable
-  // across re-renders that don't actually change the filters.
-  // Without useMemo the IIFE would return a fresh object every
-  // render, which would change TanStack Query's `queryKey` and
-  // trigger an infinite refetch loop.
+  // `severity` is the FULL array (not collapsed) so 2- and 3-chip
+  // selections produce a coherent `?severity=critical&severity=warning`
+  // URL. `sincePresetMs` (a window length) is passed instead of a
+  // frozen `since` so the hook re-derives `since = now - sincePresetMs`
+  // on every fetch and the lower bound slides forward during 30s
+  // polling. Memoized on `[severity, preset]` so the reference is
+  // stable across re-renders that don't actually change filters;
+  // without `useMemo` the IIFE would churn TanStack's queryKey.
   const filters: AdminNotificationFilters = useMemo<AdminNotificationFilters>(() => {
     const out: AdminNotificationFilters = {};
     if (severity.length > 0) {
@@ -177,14 +118,8 @@ export const AdminNotificationsPage = ({
 
   const { notifications, query } = useAdminNotificationList(filters);
 
-  // Story 6.11 — read the viewer's role for the role-aware back
-  // link on the 403 surface (Riley persona fix).
   const viewerRole = useCurrentRole();
 
-  // Defense-in-depth: route-level `<RbacRoute>` already gates the
-  // non-Admin path; this branch handles the rare case where the
-  // matrix drifts mid-session. Identical class identity to the
-  // page-level check.
   if (query.isError && query.error instanceof AdminNotificationsRbacDeniedError) {
     return <RbacDenied viewerRole={viewerRole} />;
   }
@@ -201,7 +136,7 @@ export const AdminNotificationsPage = ({
         className="mb-4 flex flex-wrap items-center gap-2"
         data-testid="severity-filter"
       >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
+        {/* eslint-disable-next-line react/forbid-dom-props -- id is the aria-labelledby target. */}
         <h2 id="severity-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
           Severity
         </h2>
@@ -235,27 +170,14 @@ export const AdminNotificationsPage = ({
         className="mb-6 flex flex-wrap items-center gap-2"
         data-testid="date-range-filter"
       >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
+        {/* eslint-disable-next-line react/forbid-dom-props -- id is the aria-labelledby target. */}
         <h2 id="date-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
           Range
         </h2>
         {DATE_RANGE_PRESETS.map((p) => {
-          // Loop 1 review finding E3: the `custom` preset is a
-          // no-op v1 stub — clicking it would silently drop the
-          // `since` filter and return ALL rows, which is a
-          // confusing UX (the user clicks "Custom" expecting a
-          // narrower result, gets the broadest). Disable the
-          // button with a tooltip until a future story ships the
-          // custom date inputs.
-          //
-          // Critique 2026-08-31 finding: a tooltip alone is invisible
-          // to screen readers and to anyone using keyboard nav
-          // (hover-only). The button now ALSO carries
-          // `aria-describedby="range-custom-coming-soon"` pointing
-          // at the description rendered inside the button group;
-          // when focus lands on the disabled button the AT
-          // announces "Custom — coming soon" without requiring a
-          // hover. WCAG 1.3.1 (info & relationships).
+          // `custom` is a no-op v1 stub — disabled with both a title
+          // (hover) and an `aria-describedby` (AT/announce) so
+          // keyboard users learn the constraint without hovering.
           const isStub = p === "custom";
           return (
             <button
@@ -283,11 +205,7 @@ export const AdminNotificationsPage = ({
             </button>
           );
         })}
-        {/* Visually-hidden description consumed by the disabled
-            Custom button's `aria-describedby`. sr-only utility is
-            standard a11y pattern; placed adjacent to the buttons so
-            the AT picks it up when focus lands on the button. */}
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-describedby` (ARIA spec). */}
+        {/* eslint-disable-next-line react/forbid-dom-props -- id is the aria-describedby target. */}
         <span id="range-custom-coming-soon" className="sr-only">
           Custom date range inputs are deferred to a future story.
         </span>
@@ -306,12 +224,6 @@ export const AdminNotificationsPage = ({
         </div>
       ) : notifications.length === 0 ? (
         <div data-testid="admin-notifications-empty" className="text-md text-neutral-secondary">
-          {/* When the operator hasn't touched any filter the
-              "match the current filters" phrasing is presumptuous
-              (critique 2026-08-31 valley finding) — it reads as
-              the user's fault when the system has nothing to
-              surface. Detect "any filter active" and pick the
-              copy that matches the operator's mental model. */}
           {severity.length === 0 && preset === "30d"
             ? "No notifications in the last 30 days."
             : "No notifications match the current filters."}
@@ -365,11 +277,6 @@ const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) =>
       <tr
         data-testid={`admin-notification-row-${row.id}`}
         onClick={onToggle}
-        // Loop 1 review finding E6 + E7: keyboard users must be
-        // able to expand rows; screen readers must announce the
-        // expansion state. `role="button"` + `tabIndex={0}` + the
-        // keydown handler covers keyboard navigation; `aria-expanded`
-        // + `aria-controls` link the row to its detail panel.
         role="button"
         tabIndex={0}
         aria-expanded={isExpanded}
@@ -405,7 +312,7 @@ const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) =>
       </tr>
       {isExpanded && (
         <tr
-          // eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-controls` (ARIA spec).
+          // eslint-disable-next-line react/forbid-dom-props -- id is the aria-controls target.
           id={`admin-notification-detail-${row.id}`}
           data-testid={`admin-notification-detail-${row.id}`}
           className="bg-neutral-bg"
@@ -439,14 +346,6 @@ const NotificationRow = ({ row, isExpanded, onToggle }: NotificationRowProps) =>
                 <a
                   data-testid={`admin-notification-incident-link-${row.id}`}
                   href={`/incidents/${row.incidentId}`}
-                  // Loop 1 review finding E15: clicking the
-                  // incident link bubbles to the row's `onClick`
-                  // (which toggles expansion). The link is
-                  // inside a sibling `<tr>` so the toggle does
-                  // NOT collapse the row, but `stopPropagation`
-                  // is the defensive guard against a future
-                  // refactor that nests the link inside the
-                  // toggle row.
                   onClick={(e) => e.stopPropagation()}
                   className="text-md text-primary underline"
                 >
