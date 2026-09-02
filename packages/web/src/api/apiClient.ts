@@ -1,35 +1,18 @@
 /**
- * apiClient — Surakkha web (Story 1.7).
+ * Thin fetch wrapper for the Surakkha SPA.
  *
- * Thin fetch wrapper that:
  *   1. Attaches `Authorization: Bearer <token>` from the tokenStore
  *      on every request.
  *   2. On 401, calls `POST /auth/refresh` exactly once (relies on the
- *      httpOnly `surakkha_refresh` cookie). If the refresh succeeds,
- *      the original request is retried exactly once with the new
- *      access token. If the refresh also fails (401 or network
- *      error), the SPA navigates to `/login?next=<current path>`
- *      (network error path also surfaces the offline state — see
- *      AC4 in epics.md §Story 1.7).
+ *      httpOnly refresh cookie). If the refresh succeeds, the original
+ *      request is retried once with the new token. If the refresh
+ *      401's, the SPA navigates to `/login?next=<current path>`.
  *   3. Concurrent 401s share a single refresh promise via a module-
- *      scoped lock so we never fan out multiple refresh calls from
- *      parallel queries (Story 1.7: "does not retry refresh more
- *      than once per API call" — we extend that to "once per concurrent
- *      burst" for the same reason).
+ *      scoped lock so parallel queries never fan out multiple refreshes.
  *
- * AC mapping (epics.md §Story 1.7):
- *   - AC1: apiClient retries the original request once with the new
- *          access token (this file).
- *   - AC2: refresh failure → `navigate("/login?next=<path>")`
- *          (configured via `configureApiClient`).
- *   - AC3: socket layer uses `refreshSession()` + `getAccessToken()`
- *          to reconnect with a fresh token without unmounting.
- *   - AC4: network error during refresh → `onOffline()` and bail; no
- *          retry loop.
- *
- * The `configureApiClient` injection point keeps the client testable
- * (we override `navigate` + `onOffline` from `main.tsx`) and decouples
- * it from `react-router-dom` so unit tests do not need a Router.
+ * `configureApiClient` injects `navigate` + `onOffline` at app boot so
+ * the client stays decoupled from `react-router-dom` and testable
+ * without a Router.
  */
 import { AccessTokenSchema, REFRESH_TOKEN_COOKIE } from "@surakkha/shared/auth";
 
@@ -94,20 +77,16 @@ const performRefresh = async (): Promise<string | null> => {
     });
     return parsed.data.access_token;
   } catch {
-    // Network error during refresh — AC4 says we surface offline
-    // state and do NOT clear tokens / navigate. The caller will
-    // raise onOffline and bubble the original request's failure.
     throw new Error("refresh_network_error");
   }
 };
 
 /**
- * Public helper used by the socket layer (Story 1.7 AC3). Returns
- * the current access token, refreshing silently if needed. Returns
- * `null` if refresh fails for a non-network reason (in which case the
- * caller should reconnect without a token; the socket's auth gate
- * will then receive a 401 which the apiClient will handle on the
- * REST surface).
+ * Public helper used by the socket layer. Returns the current access
+ * token, refreshing silently if needed. Returns `null` if refresh
+ * fails for a non-network reason; the caller should then reconnect
+ * without a token (the socket's auth gate will receive a 401 which
+ * the apiClient handles on the REST surface).
  */
 export const refreshSession = async (): Promise<string | null> => {
   if (inflightRefresh !== null) return inflightRefresh;
@@ -166,15 +145,10 @@ const computeNextPath = (): string => {
 };
 
 /**
- * Wrapper around fetch that:
- *   - attaches the Bearer token from the store
- *   - on 401, refreshes once, retries the request once
- *   - on refresh failure, navigates to /login?next=<current path>
- *   - on network error during refresh, surfaces offline state without
- *     logging out
- *
- * The `skipAuth` flag is used by the login form (POST /auth/login),
- * which runs before any token exists.
+ * Wrapper around fetch that attaches the Bearer token, refreshes once
+ * on 401, and retries the original request once with the new token.
+ * `skipAuth` short-circuits the Bearer header (used by the login POST,
+ * which runs before any token exists).
  */
 export const apiFetch = async (path: string, init: ApiRequestInit = {}): Promise<Response> => {
   if (config === null) {
@@ -213,7 +187,6 @@ const retryAfterRefresh = async (args: RetryArgs): Promise<Response> => {
     newToken = await refreshSession();
   } catch (err) {
     if (err instanceof Error && err.message === "refresh_network_error") {
-      // AC4: surface offline state, do NOT clear tokens or navigate.
       config.onOffline();
       return args.first;
     }
@@ -221,7 +194,6 @@ const retryAfterRefresh = async (args: RetryArgs): Promise<Response> => {
   }
 
   if (newToken === null) {
-    // AC2: refresh itself 401'd → log out, navigate to /login?next=...
     useTokenStore.getState().clearTokens();
     config.navigate(`/login?next=${encodeURIComponent(computeNextPath())}`);
     return args.first;
