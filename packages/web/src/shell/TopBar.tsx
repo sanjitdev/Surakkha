@@ -1,20 +1,7 @@
 /**
- * TopBar — Surakkha web (Story 1.2b, 4.10).
- *
- * Visual contract: DESIGN.md §Components → `TopBar`
- * (56px tall, sticky, color.neutral.surface background, brand mark +
- * primary gradient, role pill + user avatar; elevation.topbar shadow).
- *
- * On viewports < 1024px, the AppShell reveals a hamburger button here
- * that opens the Sidebar drawer (Story 1.2b AC for < 1024px).
- *
- * Slots:
- *   - global search input (placeholder-only v1)
- *   - NotificationBell (Story 4.10 — mounts inside its own
- *     `data-testid="notification-bell-slot"` wrapper so the bell is
- *     independently swappable without disturbing the rest of the
- *     right cluster)
- *   - role pill + user avatar menu (Story 1.4)
+ * `TopBar` — sticky 56px-tall header. Hamburger (visible < 1024px),
+ * brand mark + wordmark, placeholder-only search, and the
+ * NotificationBell slot. Visual contract: DESIGN.md §TopBar.
  */
 import { NotificationBell } from "../notifications/NotificationBell";
 
@@ -32,9 +19,6 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
     className="sticky top-0 z-30 flex items-center gap-3 bg-neutral-surface px-4 shadow-elevation-topbar lg:px-6"
     style={{ height: `${TOPBAR_HEIGHT_PX}px` }}
   >
-    {/* Hamburger — visible below 1024px (lg breakpoint). The button
-        carries aria-label so screen-readers describe the toggle
-        (EXPERIENCE.md §Accessibility → Tab order). */}
     <button
       type="button"
       aria-label="Open navigation"
@@ -47,8 +31,6 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
       <span aria-hidden className="mt-1 block h-0.5 w-5 bg-current" />
     </button>
 
-    {/* Brand mark — 32x32 rounded-8 with primary_gradient fill and a
-        white "S". The mark sits next to the wordmark. */}
     <div className="flex items-center gap-2">
       <div
         aria-hidden
@@ -63,8 +45,6 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
       <span className="font-semibold text-md text-neutral-body">Surakkha</span>
     </div>
 
-    {/* Search slot — placeholder-only in v1 (EXPERIENCE.md: "Receives
-        a placeholder-only search input"). Filled in Story 1.7. */}
     <div className="ml-6 hidden flex-1 md:block">
       <input
         type="search"
@@ -74,15 +54,7 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
       />
     </div>
 
-    {/* Right cluster — notification bell + role pill + avatar (Story 1.4
-        brings the authenticated state; the bell is the first slot here
-        — Story 4.10 mounts it inside its own slot wrapper for
-        independent test surfacing). */}
     <div className="ml-auto flex items-center gap-3">
-      {/* Story 4.10 — NotificationBell lives inside its own slot
-          wrapper so the bell is independently swappable (the wrapper
-          is the test seam pinned by `TopBar.spec.tsx`). NOT inside
-          AppShell's slot hierarchy — TopBar is its own layout block. */}
       <div data-testid="notification-bell-slot">
         <NotificationBell />
       </div>

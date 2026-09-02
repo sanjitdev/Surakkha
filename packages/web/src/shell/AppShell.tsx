@@ -1,21 +1,9 @@
 /**
- * AppShell — Surakkha web (Story 1.2b).
- *
- * The authenticated layout shell:
- *   - SeverityBanner slot (above TopBar; lands in Story 1.8 / Epic 4)
- *   - TopBar (sticky, 56px)
- *   - Sidebar (240px fixed at >=1024px; hamburger drawer below)
- *   - Main canvas with the documented horizontal padding per breakpoint
- *
- * Breakpoint padding (DESIGN.md §Layout & Spacing):
- *   - >= 1024px (lg): 24px
- *   - 768 - 1023px (md): 16px
- *   - < 768px (mobile): 12px
- *
- * Viewport detection uses `window.matchMedia` so the layout reacts to
- * the actual rendered width rather than a fixed prop. The initial render
- * assumes `lg` and the effect upgrades / downgrades after hydration
- * (Story 1.2b AC only applies after mount).
+ * `AppShell` — authenticated layout: connection + severity banner
+ * slots, TopBar, fixed Sidebar (>= 1024px) or hamburger drawer
+ * (< 1024px), main canvas with breakpoint-driven horizontal padding.
+ * Initial render assumes `lg`; the resize effect upgrades / downgrades
+ * after hydration (Story 1.2b AC only applies after mount).
  */
 import { type Role } from "@surakkha/shared/rbac";
 import { type PropsWithChildren, useEffect, useState } from "react";
@@ -39,11 +27,15 @@ const detectBreakpoint = (): Breakpoint => {
   return "sm";
 };
 
-const CANVAS_PADDING: Record<Breakpoint, string> = {
-  lg: "px-6" /* 24px */,
-  md: "px-4" /* 16px */,
-  sm: "px-3" /* 12px */,
+// Horizontal canvas padding per breakpoint (DESIGN.md §Layout & Spacing).
+// `lg: 24px / md: 16px / sm: 12px` — kept as Tailwind classes so the JIT
+// scanner picks them up.
+const CANVAS_PADDING_CLASS: Record<Breakpoint, string> = {
+  lg: "px-6",
+  md: "px-4",
+  sm: "px-3",
 };
+const CANVAS_MIN_HEIGHT = "calc(100vh - 56px)";
 
 interface AppShellProps extends PropsWithChildren {
   readonly currentRole?: Role | null;
@@ -62,7 +54,6 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Close drawer with Esc (EXPERIENCE.md §Tab order).
   useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -74,22 +65,11 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
 
   return (
     <div data-testid="app-shell" className="min-h-screen bg-neutral-page">
-      {/* ConnectionStateBanner slot — Story 2.9. Renders the
-          Reconnecting banner while `isConnected === false`. The
-          slot mounts ABOVE the severity-banner-slot so the realtime
-          signal gets operator priority when both are visible (Epic 4
-          future). `ConnectionStateBanner` is the direct child of the
-          slot — no wrapper elements — so the DOM-tree position test
-          stays a simple slot-vs-slot comparison. */}
+      {/* Connection banner mounts above severity banner — realtime
+          signal gets operator priority when both are visible. */}
       <div data-testid="connection-state-banner-slot">
         <ConnectionStateBanner />
       </div>
-
-      {/* SeverityBanner slot — Story 4.8 wires the real sticky
-          banner here. The banner is its own direct child of the
-          slot — no wrapper elements — so the DOM-tree position
-          test stays a simple slot-vs-slot comparison (matches the
-          2.9 stacking convention for ConnectionStateBanner above). */}
       <div data-testid="severity-banner-slot">
         <SeverityBanner />
       </div>
@@ -97,9 +77,6 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
       <TopBar onHamburger={() => setDrawerOpen(true)} />
 
       <div className="flex">
-        {/* Fixed sidebar at lg; the element exists in the DOM at all
-            sizes so the test-id is queryable, but Tailwind's `lg:block`
-            hides it under 1024px. */}
         <Sidebar
           currentRole={effectiveRole}
           mode="fixed"
@@ -109,15 +86,12 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
 
         <main
           data-testid="app-canvas"
-          className={["min-h-[calc(100vh-56px)] flex-1", CANVAS_PADDING[breakpoint]].join(" ")}
+          className={`min-h-[${CANVAS_MIN_HEIGHT}] flex-1 ${CANVAS_PADDING_CLASS[breakpoint]}`}
         >
           {children}
         </main>
       </div>
 
-      {/* Drawer sidebar — present in the DOM but hidden via translate
-          until the hamburger opens it. Rendered only below the lg
-          breakpoint. */}
       {breakpoint !== "lg" ? (
         <Sidebar
           currentRole={effectiveRole}

@@ -1,17 +1,8 @@
 /**
- * Sidebar — Surakkha web (Story 1.2b).
- *
- * Behavioural contract: EXPERIENCE.md §Sidebar Component Pattern.
- * Visual contract: DESIGN.md §Components → `Sidebar` (240px, dark surface,
- * brand-tinted active icon, active row tint).
- *
- * The sidebar is fixed at 240px on viewports >= 1024px; on smaller widths
- * it is hidden behind a hamburger in the topbar and the AppShell reveals
- * it as a drawer via the `drawerOpen` prop.
- *
- * Role-aware item hiding: `filterNav` removes every item the role lacks
- * permission for. The RBAC denied state for direct URL hits is in
- * EXPERIENCE.md §RBAC denied.
+ * `Sidebar` — 240px navigation rail. Fixed at >= 1024px; below that,
+ * `AppShell` reveals it as a drawer via the `drawerOpen` prop. Items
+ * are filtered by role (see `nav.filterNav`). Visual contract:
+ * DESIGN.md §Sidebar.
  */
 import { NavLink } from "react-router-dom";
 
@@ -115,8 +106,6 @@ export const Sidebar = ({ currentRole, mode, isOpen, onClose }: SidebarProps) =>
   if (mode === "drawer") {
     return (
       <>
-        {/* Overlay — clicking it closes the drawer (EXPERIENCE.md
-            §Tab order: Esc closes the drawer). */}
         <div
           aria-hidden
           data-testid="sidebar-overlay"
