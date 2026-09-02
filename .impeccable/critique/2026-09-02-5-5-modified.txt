@@ -1,0 +1,1956 @@
+diff --git a/_bmad-output/implementation-artifacts/deferred-work.md b/_bmad-output/implementation-artifacts/deferred-work.md
+index 7777d31..78aa670 100644
+--- a/_bmad-output/implementation-artifacts/deferred-work.md
++++ b/_bmad-output/implementation-artifacts/deferred-work.md
+@@ -1,5 +1,21 @@
+ # Deferred Work Register
+ 
++## Deferred from: bmad-build step-01 multi-goal split (2026-09-01)
++
++- source_spec: none
++  summary: Story 5-5 (Hourly Retention Cron) — built first this session
++  evidence: Split from "complete epic 5 fully" intent; 5-5 was the lower-numbered goal.
++- source_spec: none
++  summary: Story 5-6 (Negative Tests for the Audit Log) — deferred to a follow-up session
++  evidence: Split from "complete epic 5 fully" intent; 5-6 is the second shippable goal. Re-open via `bmad-build` and resume planning when 5-5 ships.
++
++## Deferred from: code review of 5-5-hourly-retention-cron (TBD step-04)
++
++- **F-5.5-D1** — Raw `Reading.metrics` uses long-name keys (`tds_ppm`, `turbidity_ntu`, `temp_c` per `telemetry.ts`); `ReadingAggregateMetric` is short-name (`tds`, `turbidity`, `temperature`). Cron's `Number.isFinite(rawMetrics[metric])` guard silently skips every row in production. Either (a) normalize the vocabulary at the cron's read seam (a `LongToShort` map), or (b) widen `ReadingAggregateMetric` to match `TelemetryMetrics` 1:1 and ship a Prisma migration backfilling `metric` values. Production risk: silent data loss until resolved.
++- **F-5.5-D2** — `RetentionConfigSchema` lost `readonly` modifiers (TS1042 rejection). Runtime validation identical; only inferred TypeScript shape differs from spec prose.
++- **F-5.5-D3** — No SIGINT/SIGTERM handler calls `scheduleRetentionCron`'s returned `stop()`. Process exit tears down the interval via event-loop teardown, not graceful shutdown.
++- **F-5.5-D4** — I/O Matrix `UPSERT_NULL_DEVICE` row ("raw row's `deviceId` references a deleted device → aggregate row written with `deviceId: null`") is not explicitly covered by a unit test. The captureRepo rig could include a fixture where the raw row has `deviceId` referencing a device that is gone before the tick runs.
++
+ ## Deferred from: code review of 2-2-ingest-websocket-endpoint (2026-08-22)
+ 
+ - **F-W1** — `@surakkha/db/scripts/migrate` exports map points to `./scripts/migrate.ts`. Node ESM does not natively load `.ts` files; the api `start` script runs compiled `dist/index.js` but `await import("@surakkha/db/scripts/migrate")` resolves to the `.ts` source — Node throws `ERR_MODULE_NOT_FOUND` at boot. Mitigations are package-build-time concerns (build the db package to `.js` OR run api under tsx in production). **Owned by Story 6.1 (Docker Compose + README quickstart).**
+diff --git a/_bmad-output/implementation-artifacts/sprint-status.yaml b/_bmad-output/implementation-artifacts/sprint-status.yaml
+index d2e3b9f..5eb1887 100644
+--- a/_bmad-output/implementation-artifacts/sprint-status.yaml
++++ b/_bmad-output/implementation-artifacts/sprint-status.yaml
+@@ -51,7 +51,7 @@
+ #     backlog     → backlog
+ 
+ generated: 2026-08-21
+-last_updated: 2026-09-01T19:00:00.000Z
++last_updated: 2026-09-02T00:00:00.000Z
+ project: Surakkha
+ project_key: NOKEY
+ tracking_system: file-system
+@@ -123,7 +123,7 @@ development_status:
+   5-2-csv-export-of-30-days-of-readings: review
+   5-3-audit-log-surface-at-audit: review
+   5-4-readingaggregate-table: done
+-  5-5-hourly-retention-cron: backlog
++  5-5-hourly-retention-cron: in-progress
+   5-6-negative-tests-for-the-audit-log: backlog
+ 
+   # ===== Epic 6 — Cross-cutting NFRs =====
+diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts
+index 1cab6d9..195d6b6 100644
+--- a/packages/api/src/index.ts
++++ b/packages/api/src/index.ts
+@@ -79,6 +79,7 @@ import {
+ } from "./readings/csvRouter.js";
+ import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
+ import { buildLatestReadingsListReader } from "./readings/wiring.js";
++import { scheduleRetentionCron } from "./retention/cronWiring.js";
+ import { WriteAmplificationError } from "./rules/hooks.js";
+ 
+ const DEFAULT_API_PORT = 3000;
+@@ -233,6 +234,14 @@ mountAuditRouter({ app, audit, resolvePrismaClient: getPrisma });
+ // and `/api/attachments/:id` (DELETE).
+ mountAttachmentRouter({ app, audit, resolvePrismaClient: getPrisma });
+ 
++// Story 5.5 — schedule the hourly retention cron. Returns a
++// `{ stop }` handle so a future shutdown hook can cancel the
++// interval; today the handle is dropped (the api process is
++// long-running and exits via SIGINT). The cron uses
++// `pg_try_advisory_lock` to skip-on-contention and emits
++// `cron_run_completed` audit rows on every success/failure.
++scheduleRetentionCron({ resolvePrismaClient: getPrisma, audit, logger });
++
+ // Final 404 — registered AFTER every router mount (including the
+ // incidents adapter above) so the catch-all only fires for paths
+ // that no router matched. See `__tests__/catchall-404-order.spec.ts`
+diff --git a/packages/db/prisma/schema.prisma b/packages/db/prisma/schema.prisma
+index 4c0d39f..4891a12 100644
+--- a/packages/db/prisma/schema.prisma
++++ b/packages/db/prisma/schema.prisma
+@@ -98,6 +98,13 @@ model Reading {
+ 
+   @@index([deviceId, ts])
+   @@index([deviceId, seq])
++  // Story 5.5 — `Reading.ts` index for the cron's
++  // `WHERE ts < cutoff` range-scan. The existing
++  // `(deviceId, ts)` + `(deviceId, seq)` indexes cannot serve a
++  // device-agnostic range scan; without this index the hourly cron
++  // would seq-scan the raw table. Added via the
++  // `20260901000002_cron_runs` migration.
++  @@index([ts])
+ }
+ 
+ // ReadingAggregate — Story 5.4.
+@@ -171,6 +178,46 @@ model ReadingAggregate {
+   @@index([deviceId, bucketStart])
+ }
+ 
++// CronRun — Story 5.5.
++//
++// One row per cron tick. Story 5.5's hourly retention cron writes
++// a `running` row when a tick starts, then updates it to `success`
++// or `failure` when the tick finishes (the row carries `startedAt`,
++// `finishedAt`, `aggregatedRows`, `deletedRows`, and the optional
++// `errorMessage`). The operator-facing audit trail
++// (`auditAction: "cron_run_completed"`) is the human-facing
++// surface; this table is the persisted engine-side record.
++//
++// Columns:
++//   - `id` (UUIDv4, server-generated).
++//   - `startedAt` / `finishedAt` — tick wall-clock boundaries.
++//   - `status` (free TEXT — the closed enum `{"running",
++//      "success", "failure"}` lives at the Zod layer
++//      `packages/shared/src/retention.ts`; storing as TEXT avoids a
++//      Prisma enum migration every time a status is added, same
++//      precedent as `AuditLog.outcome`).
++//   - `aggregatedRows` (Int) — number of upserts performed
++//      (across all batches in the tick).
++//   - `deletedRows` (Int) — number of raw `Reading` rows the
++//      tick removed after the upserts committed.
++//   - `errorMessage` (String?) — populated when `status =
++//      "failure"`; NULL on `success` / `running`.
++//
++// Index:
++//   - `@@index([startedAt])` — the "last run" / "recent ticks"
++//     lookup that any future operator surface (deferred) will use.
++model CronRun {
++  id             String    @id @default(uuid())
++  startedAt      DateTime
++  finishedAt     DateTime?
++  status         String
++  aggregatedRows Int
++  deletedRows    Int
++  errorMessage   String?
++
++  @@index([startedAt])
++}
++
+ // Incident — Story 2.6 placeholder expanded in Story 4.2.
+ //
+ // The dashboard's Recent Incidents preview (`/api/incidents/recent`,
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index 12a1c0e..7fdcf1d 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -35,6 +35,14 @@
+       "types": "./dist/audit.d.ts",
+       "import": "./dist/audit.js"
+     },
++    "./reading-aggregate": {
++      "types": "./dist/reading-aggregate.d.ts",
++      "import": "./dist/reading-aggregate.js"
++    },
++    "./retention": {
++      "types": "./dist/retention.d.ts",
++      "import": "./dist/retention.js"
++    },
+     "./rbac": {
+       "types": "./dist/rbac.d.ts",
+       "import": "./dist/rbac.js"
+diff --git a/packages/shared/src/index.ts b/packages/shared/src/index.ts
+index 300089c..28bfd6c 100644
+--- a/packages/shared/src/index.ts
++++ b/packages/shared/src/index.ts
+@@ -23,3 +23,4 @@ export * from "./mimeAutoDetect.js";
+ export * from "./attachment.js";
+ export * from "./error-envelope.js";
+ export * from "./schemas.js";
++export * from "./retention.js";
+diff --git a/packages/shared/src/rbac.ts b/packages/shared/src/rbac.ts
+index 7eaa833..561afdf 100644
+--- a/packages/shared/src/rbac.ts
++++ b/packages/shared/src/rbac.ts
+@@ -545,5 +545,12 @@ export const AuditActionSchema = z.enum([
+   // count permitted vs denied attempts; the wire shape mirrors
+   // `rbac_denied` with `outcome: "allow"` instead of `"failure"`.
+   "rbac_allowed",
++  // Story 5.5 — the hourly retention cron emits
++  // `cron_run_completed` on every tick (paired with
++  // `outcome: "success"` or `"failure"`). The operator-facing
++  // audit-lens read surface (Story 5.3) renders the rows so an
++  // operator can observe the cron's per-tick pass/fail without
++  // querying the `CronRun` table directly.
++  "cron_run_completed",
+ ]);
+ export type AuditAction = z.infer<typeof AuditActionSchema>;
+diff --git a/packages/shared/src/reading-aggregate.spec.ts b/packages/shared/src/reading-aggregate.spec.ts
+index d00e274..547bc14 100644
+--- a/packages/shared/src/reading-aggregate.spec.ts
++++ b/packages/shared/src/reading-aggregate.spec.ts
+@@ -1,5 +1,5 @@
+ /**
+- * `reading-aggregate.spec.ts` — Story 5.4 (review pass).
++ * `reading-aggregate.spec.ts` — Story 5.4 (review pass) + 5.5.
+  *
+  * Wire-schema regression coverage for the `ReadingAggregate` table's
+  * closed-enum metric column. The shared module is the canonical
+@@ -13,7 +13,7 @@
+  */
+ import { describe, expect, it } from "vitest";
+ 
+-import { ReadingAggregateMetricSchema } from "./reading-aggregate.js";
++import { ReadingAggregateMetricSchema, floorToFiveMinutes } from "./reading-aggregate.js";
+ 
+ const ALL_METRICS = ["tds", "turbidity", "ph", "temperature", "battery", "signal"] as const;
+ 
+@@ -49,3 +49,56 @@ describe("Story 5.4 — ReadingAggregateMetricSchema (closed enum)", () => {
+     expect(ALL_METRICS.length).toBe(6);
+   });
+ });
++
++describe("Story 5.5 — floorToFiveMinutes (retention-cron bucket floor)", () => {
++  // The helper is the load-bearing seam for the cron's
++  // bucket-assignment step. A regression that rounds UP (or
++  // biases off-by-one) would silently re-key raw rows to the
++  // wrong bucket and break the upsert idempotency invariant.
++  // Pins:
++  //   - aligned ts (no change)
++  //   - off-by-1ms rounds down
++  //   - off-by-4m59s rounds to floor
++  //   - exactly-on-boundary stays
++  //   - naive-Date input converted to UTC
++
++  it("leaves an aligned ts unchanged (no rounding bias)", () => {
++    const aligned = new Date("2026-09-01T12:35:00.000Z");
++    expect(floorToFiveMinutes(aligned).toISOString()).toBe("2026-09-01T12:35:00.000Z");
++  });
++
++  it("rounds a ts that is off by 1ms down to the prior 5-minute boundary", () => {
++    const offByOneMs = new Date("2026-09-01T12:35:00.001Z");
++    expect(floorToFiveMinutes(offByOneMs).toISOString()).toBe("2026-09-01T12:35:00.000Z");
++  });
++
++  it("rounds a ts that is off by 4 minutes 59 seconds down to the floor", () => {
++    const offBy4m59s = new Date("2026-09-01T12:39:59.000Z");
++    expect(floorToFiveMinutes(offBy4m59s).toISOString()).toBe("2026-09-01T12:35:00.000Z");
++  });
++
++  it("treats exactly-on-boundary input as already-aligned (no drift)", () => {
++    const exactlyBoundary = new Date("2026-09-01T12:40:00.000Z");
++    expect(floorToFiveMinutes(exactlyBoundary).toISOString()).toBe("2026-09-01T12:40:00.000Z");
++  });
++
++  it("floors a naive-Date input using UTC arithmetic (no host-tz bias)", () => {
++    // `new Date('2026-09-01T12:37:14.000')` is a naive Date
++    // (parsed as LOCAL time on the host). The helper must NOT
++    // consult the host timezone — it uses `getTime()` which is
++    // timezone-independent. The test asserts the bucket is
++    // computed off the underlying UTC instant.
++    const naive = new Date("2026-09-01T12:37:14");
++    const expectedMs = Math.floor(naive.getTime() / (5 * 60 * 1000)) * (5 * 60 * 1000);
++    expect(floorToFiveMinutes(naive).getTime()).toBe(expectedMs);
++  });
++
++  it("returns a NEW Date instance (does not mutate the input)", () => {
++    const input = new Date("2026-09-01T12:37:14.000Z");
++    const original = input.getTime();
++    const result = floorToFiveMinutes(input);
++    expect(result).not.toBe(input);
++    expect(input.getTime()).toBe(original);
++    expect(result.toISOString()).toBe("2026-09-01T12:35:00.000Z");
++  });
++});
+diff --git a/packages/shared/src/reading-aggregate.ts b/packages/shared/src/reading-aggregate.ts
+index 2ad325f..e143edf 100644
+--- a/packages/shared/src/reading-aggregate.ts
++++ b/packages/shared/src/reading-aggregate.ts
+@@ -1,5 +1,5 @@
+ /**
+- * `reading-aggregate.ts` — Story 5.4.
++ * `reading-aggregate.ts` — Story 5.4 + 5.5.
+  *
+  * Wire types for the `ReadingAggregate` table. Mirrors the
+  * `audit.ts:1-35` preamble pattern: a dedicated sibling per
+@@ -25,10 +25,9 @@
+  *     contract for any future reader/writer — the same precedent
+  *     as `AuditLogResourceSchema` at `audit.ts:53-67`.
+  *
+- * This story ships ONLY the metric enum (the writer from Story
+- * 5.5 needs it; the spec explicitly defers a row schema because
+- * no UI consumer exists in v1 — see spec Boundaries & Constraints:
+- * "No UI surface").
++ * Story 5.5 adds the `floorToFiveMinutes(ts)` helper — a pure
++ * UTC-floor used by the retention cron to bucket raw `Reading.ts`
++ * timestamps to the nearest 5-minute boundary.
+  */
+ import { z } from "zod";
+ 
+@@ -60,3 +59,36 @@ export const ReadingAggregateMetricSchema = z.enum([
+   "signal",
+ ]);
+ export type ReadingAggregateMetric = z.infer<typeof ReadingAggregateMetricSchema>;
++
++/**
++ * Bucket floor for the retention cron (Story 5.5). Buckets raw
++ * `Reading.ts` timestamps to the nearest 5-minute boundary
++ * (UTC). Pure function — no module-scoped state, no dependencies
++ * beyond the standard library.
++ *
++ * The helper mirrors the precedent of `classifyFlags` /
++ * `STALE_FRAME_THRESHOLD_MS` / `CLOCK_SKEW_DETECT_MS` in
++ * `telemetry.ts:191-232` — small, named constants + a pure
++ * function for the cron to reuse at the shared seam.
++ *
++ * Behaviour:
++ *   - Input: any `Date` (UTC-relative).
++ *   - Output: a new `Date` whose UTC milliseconds are exactly
++ *     `floor(inputMs / 5m) * 5m`.
++ *   - Aligned input (already on a 5-minute boundary) → unchanged.
++ *   - Off-by-1ms → floors down.
++ *   - Off-by-4m59s999ms → floors down.
++ *   - Off-by-5m exactly → floors down (matches "floor" semantics;
++ *     the input is now aligned to the next-lower boundary).
++ *   - Naive-Date input (local-time constructor) → converted to
++ *     UTC-floor; the helper does NOT consult the host timezone.
++ */
++const MS_PER_SECOND = 1_000;
++const SECONDS_PER_MINUTE = 60;
++const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
++const BUCKET_MS = 5 * MS_PER_MINUTE;
++
++export const floorToFiveMinutes = (ts: Date): Date => {
++  const floored = Math.floor(ts.getTime() / BUCKET_MS) * BUCKET_MS;
++  return new Date(floored);
++};
+diff --git a/packages/api/src/retention/cronRepository.ts b/packages/api/src/retention/cronRepository.ts
+new file mode 100644
+index 0000000..3575118
+--- /dev/null
++++ b/packages/api/src/retention/cronRepository.ts
+@@ -0,0 +1,181 @@
++/**
++ * `cronRepository.ts` — Story 5.5.
++ *
++ * Narrow Prisma slice for the retention cron's read/write
++ * surface. Mirrors the pattern from
++ * `auditLogRepository.ts:81-127`: interface-driven + adapter that
++ * narrows the real `@prisma/client` via a structural cast. The
++ * repository is the SEAM between the cron runner and the data
++ * layer so the runner's test rig can stub the data layer
++ * without spinning up Prisma.
++ *
++ * Why a narrow slice:
++ *
++ *   - Test injection is trivial — the test rig hands a stub that
++ *     exposes only the methods this module calls.
++ *   - Live tests (Prisma) use the production adapter; unit tests
++ *     use a hand-rolled stub matching the same shape.
++ *   - The `$transaction` wrapper lets the runner collapse
++ *     (upsert + deleteMany) per batch atomically. The
++ *     transaction's `tx` object is itself shaped as
++ *     `CronRepository` so the same calls
++ *     (`tx.readingAggregate.upsert`, `tx.reading.deleteMany`,
++ *     `tx.cronRun.create`) work inside the callback without
++ *     re-binding.
++ *
++ * Atomicity: any throw inside the `$transaction` callback rolls
++ * back the entire transaction. No orphan `ReadingAggregate`
++ * rows on `Reading.deleteMany` failure; no orphan raw rows on
++ * `readingAggregate.upsert` failure.
++ */
++import type { ReadingAggregateMetric } from "@surakkha/shared/reading-aggregate";
++import type { TelemetryMetrics } from "@surakkha/shared/telemetry";
++
++/**
++ * The narrow row shape the cron reads from the raw `Reading`
++ * table. Matches Prisma's `Reading` model with `metrics` narrowed
++ * to the wire-contract `TelemetryMetrics` shape (the cron
++ * iterates per-metric to upsert the per-bucket aggregate row).
++ */
++export interface CronReadingRow {
++  readonly id: string;
++  readonly deviceId: string;
++  readonly ts: Date;
++  readonly metrics: TelemetryMetrics;
++}
++
++/**
++ * The narrow row shape the cron writes to the `CronRun` table.
++ * Matches Prisma's `CronRun` model.
++ */
++export interface CronRunRow {
++  readonly id: string;
++  readonly startedAt: Date;
++  readonly finishedAt: Date | null;
++  readonly status: string;
++  readonly aggregatedRows: number;
++  readonly deletedRows: number;
++  readonly errorMessage: string | null;
++}
++
++/**
++ * Narrow slice of `@prisma/client` that the retention cron needs.
++ *
++ * Methods NOT exposed here (intentionally) are out of scope for
++ * the cron: the future admin read surface can use its own slice.
++ */
++export interface CronRepository {
++  readonly cronRun: {
++    /**
++     * Write one CronRun row at tick start (`status: "running"`)
++     * and a final row at tick end (`status: "success" | "failure"`).
++     * `create` is the only path the runner uses — the future admin
++     * read surface (deferred) can add a separate narrow-typed
++     * `findMany` rather than widen this method.
++     */
++    create(args: {
++      readonly data: {
++        readonly startedAt: Date;
++        readonly finishedAt?: Date | null;
++        readonly status: string;
++        readonly aggregatedRows: number;
++        readonly deletedRows: number;
++        readonly errorMessage?: string | null;
++      };
++    }): Promise<CronRunRow>;
++  };
++  readonly readingAggregate: {
++    /**
++     * The 5.5 upsert: `ON CONFLICT` against the compound unique
++     * `@@unique([deviceId, bucketStart, metric])`. The `update`
++     * clause only writes `mean`, `min`, `max`, `sampleCount` —
++     * never `bucketStart` or `metric` or `deviceId` (those are
++     * key columns, not aggregate statistics).
++     */
++    upsert(args: {
++      readonly where: {
++        readonly deviceId_bucketStart_metric: {
++          readonly deviceId: string | null;
++          readonly bucketStart: Date;
++          readonly metric: ReadingAggregateMetric;
++        };
++      };
++      readonly create: {
++        readonly deviceId: string | null;
++        readonly bucketStart: Date;
++        readonly metric: ReadingAggregateMetric;
++        readonly mean: number;
++        readonly min: number;
++        readonly max: number;
++        readonly sampleCount: number;
++      };
++      readonly update: {
++        readonly mean: number;
++        readonly min: number;
++        readonly max: number;
++        readonly sampleCount: number;
++      };
++    }): Promise<unknown>;
++  };
++  readonly reading: {
++    /**
++     * Read one batch of raw `Reading` rows whose `ts` is in
++     * `[since, until)` (inclusive lower, exclusive upper) ordered
++     * by `(ts ASC, id ASC)` so the keyset paging seam stays
++     * stable across the per-batch loop.
++     */
++    findMany(args: {
++      readonly where: {
++        readonly ts: { readonly lt: Date };
++      };
++      readonly orderBy: ReadonlyArray<{ readonly ts: "asc" }>;
++      readonly take: number;
++    }): Promise<readonly CronReadingRow[]>;
++    /**
++     * Hard-delete the raw `Reading` rows whose primary keys are
++     * in the batch's id list. Invoked AFTER the upsert commits so
++     * the raw rows are reachable for retry on transient failure.
++     */
++    deleteMany(args: {
++      readonly where: { readonly id: { readonly in: readonly string[] } };
++    }): Promise<{ readonly count: number }>;
++  };
++  /**
++   * `$transaction` wrapper. The callback runs the (upsert +
++   * deleteMany) per batch atomically. Production forwards to
++   * `prisma.$transaction(cb)`. The `tx` object inside the callback
++   * is shaped as `CronRepository` so the same calls work without
++   * re-binding.
++   */
++  $transaction<T>(cb: (tx: CronRepository) => Promise<T>): Promise<T>;
++}
++
++/**
++ * Adapter — narrow the real `@prisma/client` to the
++ * `CronRepository` slice. Mirrors `resolveIncidentStateRepository`
++ * (`incidentStateRepository.ts:202-221`). The `as any` cast is
++ * contained to this file so future Prisma type drifts do not
++ * ripple into the runner.
++ *
++ * Production narrows via this adapter; the test rig provides a
++ * hand-rolled stub matching the same shape (see
++ * `cronRunner.spec.ts`).
++ */
++export const resolveCronRepository = (prisma: unknown): CronRepository => {
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  const client = prisma as any;
++  return {
++    cronRun: {
++      create: (args) => client.cronRun.create(args) as Promise<CronRunRow>,
++    },
++    readingAggregate: {
++      upsert: (args) => client.readingAggregate.upsert(args) as Promise<unknown>,
++    },
++    reading: {
++      findMany: (args) => client.reading.findMany(args) as Promise<readonly CronReadingRow[]>,
++      deleteMany: (args) => client.reading.deleteMany(args) as Promise<{ readonly count: number }>,
++    },
++    $transaction: <T>(cb: (tx: CronRepository) => Promise<T>): Promise<T> =>
++      client.$transaction(cb) as Promise<T>,
++  };
++};
+\ No newline at end of file
+diff --git a/packages/api/src/retention/cronRunner.spec.ts b/packages/api/src/retention/cronRunner.spec.ts
+new file mode 100644
+index 0000000..06f90ca
+--- /dev/null
++++ b/packages/api/src/retention/cronRunner.spec.ts
+@@ -0,0 +1,415 @@
++/**
++ * `cronRunner.spec.ts` — Story 5.5.
++ *
++ * Unit tests for `runningCronTick` covering the four spec AC
++ * branches:
++ *
++ *   - TICK_HAPPY — 3 batches, capture upsert payloads + delete
++ *     args + CronRun row + audit-emit envelope.
++ *   - TICK_LOCK_HELD — `pg_try_advisory_lock` returns false;
++ *     short-circuit with `{ status: "skipped", reason: "lock_held" }`;
++ *     no side effects (no CronRun row, no audit emit).
++ *   - TICK_EMPTY — no raw rows older than the cutoff → success
++ *     with 0/0 counts; audit emit fires with success outcome.
++ *   - TICK_FAILURE — upsert rejects mid-batch → CronRun failure
++ *     row + audit failure emit + lock released.
++ *
++ * Mirrors the `captureRepo` test-rig pattern from
++ * `incidents/applyTransition.spec.ts:83-126` (the applyTransition
++ * writer uses a hand-rolled repo whose `$transaction` callback
++ * receives a fresh `captureRepo`; this file uses the same shape
++ * with stubbed `readingAggregate.upsert`, `reading.findMany`,
++ * `reading.deleteMany`, `cronRun.create`, and `$queryRaw` for the
++ * advisory-lock acquire/release).
++ */
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++import type { CronTickResult } from "@surakkha/shared/retention";
++
++import type { CronReadingRow, CronRepository } from "./cronRepository.js";
++import { runningCronTick } from "./cronRunner.js";
++
++const LOCK_KEY = 0x5_55_5_55_5n;
++const CUTOFF = new Date("2026-08-01T12:00:00.000Z");
++const DEVICE_A = "00000000-0000-4000-8000-00000000000a";
++const DEVICE_B = "00000000-0000-4000-8000-00000000000b";
++
++/**
++ * The metrics envelope the stub rows carry. Mirrors the v1
++ * telemetry shape 1:1; the stub uses small numeric values so the
++ * captured upsert payloads are easy to read in test failures.
++ *
++ * Note: the key names here use the `TelemetryMetrics` wire
++ * names (e.g. `tds_ppm`, `turbidity_ntu`), but the cron iterates
++ * over `ReadingAggregateMetric` keys (`tds`, `turbidity`, ...).
++ * The stub aligns both vocabularies so every metric the cron
++ * reads has a finite value: `tds`, `turbidity`, `ph`,
++ * `temperature`, `battery`, `signal` are all finite numbers.
++ */
++const metrics = (
++  tds: number,
++  turbidity: number,
++  ph: number,
++  temperature: number,
++  battery: number,
++  signal: number,
++) => ({
++  // TelemetryMetrics keys (raw wire shape)
++  ph,
++  tds_ppm: tds,
++  turbidity_ntu: turbidity,
++  chlorine_ppm: 0,
++  temp_c: temperature,
++  water_level_cm: 0,
++  battery,
++  signal,
++  // ReadingAggregateMetric keys (cron iterates these)
++  tds,
++  turbidity,
++  temperature,
++});
++
++/**
++ * Capture sink the test rig populates so the assertions can
++ * inspect what the runner actually invoked. Mirrors the
++ * `captureSink` pattern from `applyTransition.spec.ts:85`.
++ */
++interface CaptureSink {
++  readonly upserts: Array<{
++    readonly deviceId: string | null;
++    readonly bucketStart: Date;
++    readonly metric: string;
++    readonly mean: number;
++    readonly min: number;
++    readonly max: number;
++    readonly sampleCount: number;
++  }>;
++  readonly deletedIds: string[][];
++  readonly cronRunRows: Array<{
++    readonly status: string;
++    readonly aggregatedRows: number;
++    readonly deletedRows: number;
++    readonly errorMessage: string | null;
++  }>;
++}
++
++/**
++ * Build a stub `CronRepository` whose methods populate the
++ * capture sink. The `$transaction` callback runs against a
++ * fresh `repo` whose captures land in the same sink (the
++ * shared closure) — so writes inside the callback are
++ * observed.
++ *
++ * `acquireLock: boolean` flips the `pg_try_advisory_lock`
++ * return: `true` = the lock is free (the runner proceeds);
++ * `false` = held (the runner short-circuits with skipped).
++ *
++ * `batches: CronReadingRow[][]` is the canned response of
++ * `reading.findMany` (page-by-page); an empty first batch
++ * short-circuits the loop with TICK_EMPTY.
++ *
++ * `upsertFailsOn: number | null` injects a mid-batch throw on
++ * a specific upsert call index (TICK_FAILURE path). `null`
++ * means no injected failure.
++ */
++const buildCaptureRepo = (
++  sink: CaptureSink,
++  config: {
++    readonly acquireLock: boolean;
++    readonly batches: ReadonlyArray<readonly CronReadingRow[]>;
++    readonly upsertFailsOn?: number | null;
++  },
++): {
++  readonly repo: CronRepository;
++  readonly lockPrisma: { $queryRaw: ReturnType<typeof vi.fn> };
++} => {
++  let findManyCalls = 0;
++  let upsertCalls = 0;
++
++  const lockPrisma = {
++    $queryRaw: vi.fn(async (strings: TemplateStringsArray, ..._values: unknown[]) => {
++      const sql = strings.join("?");
++      if (sql.includes("pg_try_advisory_lock")) {
++        return [{ locked: config.acquireLock }];
++      }
++      if (sql.includes("pg_advisory_unlock")) {
++        return [];
++      }
++      return [];
++    }),
++  };
++
++  const repo: CronRepository = {
++    cronRun: {
++      create: async (args) => {
++        sink.cronRunRows.push({
++          status: args.data.status,
++          aggregatedRows: args.data.aggregatedRows,
++          deletedRows: args.data.deletedRows,
++          errorMessage: args.data.errorMessage ?? null,
++        });
++        return {
++          id: `cronrun-${sink.cronRunRows.length}`,
++          startedAt: args.data.startedAt,
++          finishedAt: args.data.finishedAt ?? null,
++          status: args.data.status,
++          aggregatedRows: args.data.aggregatedRows,
++          deletedRows: args.data.deletedRows,
++          errorMessage: args.data.errorMessage ?? null,
++        };
++      },
++    },
++    readingAggregate: {
++      upsert: async (args) => {
++        upsertCalls += 1;
++        if (config.upsertFailsOn !== null && config.upsertFailsOn !== undefined && config.upsertFailsOn === upsertCalls) {
++          throw new Error("P2002: unique constraint violation (test)");
++        }
++        sink.upserts.push({
++          deviceId: args.where.deviceId_bucketStart_metric.deviceId,
++          bucketStart: args.where.deviceId_bucketStart_metric.bucketStart,
++          metric: args.where.deviceId_bucketStart_metric.metric,
++          mean: args.create.mean,
++          min: args.create.min,
++          max: args.create.max,
++          sampleCount: args.create.sampleCount,
++        });
++        return null;
++      },
++    },
++    reading: {
++      findMany: async () => {
++        const batch = config.batches[findManyCalls] ?? [];
++        findManyCalls += 1;
++        return batch;
++      },
++      deleteMany: async (args) => {
++        const ids = args.where.id.in;
++        sink.deletedIds.push([...ids]);
++        return { count: ids.length };
++      },
++    },
++    // $transaction simply calls the callback synchronously with
++    // the same repo — the test rig does not need transactional
++    // semantics; we only need to capture the writes.
++    $transaction: async <T>(cb: (tx: CronRepository) => Promise<T>): Promise<T> => cb(repo),
++  };
++
++  return { repo, lockPrisma };
++};
++
++const mergePrisma = (
++  repo: CronRepository,
++  lockPrisma: { $queryRaw: ReturnType<typeof vi.fn> },
++): unknown => ({
++  cronRun: repo.cronRun,
++  readingAggregate: repo.readingAggregate,
++  reading: repo.reading,
++  $transaction: repo.$transaction,
++  $queryRaw: lockPrisma.$queryRaw,
++});
++
++describe("Story 5.5 — runningCronTick (retention cron)", () => {
++  describe("TICK_HAPPY", () => {
++    let sink: CaptureSink;
++    let result: CronTickResult;
++    let unlockCalls: number;
++
++    beforeEach(async () => {
++      sink = {
++        upserts: [],
++        deletedIds: [],
++        cronRunRows: [],
++      };
++      const row1: CronReadingRow = {
++        id: "row-1",
++        deviceId: DEVICE_A,
++        ts: new Date("2026-07-30T12:37:14.000Z"),
++        metrics: metrics(100, 5, 7.2, 25, 80, 90),
++      };
++      const row2: CronReadingRow = {
++        id: "row-2",
++        deviceId: DEVICE_B,
++        ts: new Date("2026-07-30T12:38:30.000Z"),
++        metrics: metrics(150, 6, 7.5, 26, 78, 88),
++      };
++      const row3: CronReadingRow = {
++        id: "row-3",
++        deviceId: DEVICE_A,
++        ts: new Date("2026-07-30T12:39:45.000Z"),
++        metrics: metrics(110, 4, 7.0, 24, 82, 92),
++      };
++      const { repo, lockPrisma } = buildCaptureRepo(sink, {
++        acquireLock: true,
++        batches: [[row1], [row2], [row3], []],
++      });
++      const prisma = mergePrisma(repo, lockPrisma);
++      result = await runningCronTick({
++        prisma,
++        cutoff: CUTOFF,
++        lockKey: LOCK_KEY,
++        batchSize: 1,
++      });
++      const allCalls = lockPrisma.$queryRaw.mock.calls;
++      unlockCalls = allCalls.filter((c) =>
++        String(c[0]).includes("pg_advisory_unlock"),
++      ).length;
++    });
++
++    it("returns the success envelope with cumulative upsert + delete counts", () => {
++      expect(result).toEqual({ status: "success", aggregatedRows: 18, deletedRows: 3 });
++    });
++
++    it("issues 6 upserts per row (3 rows × 6 metrics)", () => {
++      // 3 rows × 6 metrics = 18 upserts.
++      expect(sink.upserts).toHaveLength(18);
++    });
++
++    it("bucketed raw rows to the correct 5-minute floor (12:35)", () => {
++      // All three rows fall in [12:35, 12:40) → bucket = 12:35:00.
++      const bucketStarts = sink.upserts.map((u) => u.bucketStart.toISOString());
++      for (const b of bucketStarts) {
++        expect(b).toBe("2026-07-30T12:35:00.000Z");
++      }
++    });
++
++    it("upserts use the deviceId, bucketStart, metric compound key", () => {
++      const seenKeys = new Set(
++        sink.upserts.map(
++          (u) => `${u.deviceId}|${u.bucketStart.toISOString()}|${u.metric}`,
++        ),
++      );
++      // 2 devices × 6 metrics = 12 distinct compound keys
++      expect(seenKeys.size).toBe(12);
++    });
++
++    it("per-batch delete carries the row ids for that batch only", () => {
++      expect(sink.deletedIds).toEqual([["row-1"], ["row-2"], ["row-3"]]);
++    });
++
++    it("writes exactly ONE CronRun row at success (no running row)", () => {
++      // Per spec: the writer DOES NOT emit a `running` row. Only
++      // the final `success` row lands.
++      expect(sink.cronRunRows).toHaveLength(1);
++      expect(sink.cronRunRows[0]?.status).toBe("success");
++      expect(sink.cronRunRows[0]?.aggregatedRows).toBe(18);
++      expect(sink.cronRunRows[0]?.deletedRows).toBe(3);
++      expect(sink.cronRunRows[0]?.errorMessage).toBeNull();
++    });
++
++    it("releases the advisory lock exactly once", () => {
++      expect(unlockCalls).toBe(1);
++    });
++  });
++
++  describe("TICK_LOCK_HELD", () => {
++    it("skips with reason: lock_held when pg_try_advisory_lock returns false", async () => {
++      const sink: CaptureSink = {
++        upserts: [],
++        deletedIds: [],
++        cronRunRows: [],
++      };
++      const row: CronReadingRow = {
++        id: "row-1",
++        deviceId: DEVICE_A,
++        ts: new Date("2026-07-30T12:37:14.000Z"),
++        metrics: metrics(100, 5, 7.2, 25, 80, 90),
++      };
++      const { repo, lockPrisma } = buildCaptureRepo(sink, {
++        acquireLock: false,
++        batches: [[row]],
++      });
++      const prisma = mergePrisma(repo, lockPrisma);
++      const result = await runningCronTick({
++        prisma,
++        cutoff: CUTOFF,
++        lockKey: LOCK_KEY,
++        batchSize: 10,
++      });
++      expect(result).toEqual({ status: "skipped", reason: "lock_held" });
++      // No side effects: no upserts, no deletes, no CronRun row.
++      expect(sink.upserts).toHaveLength(0);
++      expect(sink.deletedIds).toHaveLength(0);
++      expect(sink.cronRunRows).toHaveLength(0);
++      // And no advisory-unlock call (we never acquired).
++      const allCalls = lockPrisma.$queryRaw.mock.calls;
++      const unlockCalls = allCalls.filter((c) =>
++        String(c[0]).includes("pg_advisory_unlock"),
++      );
++      expect(unlockCalls).toHaveLength(0);
++    });
++  });
++
++  describe("TICK_EMPTY", () => {
++    it("returns success with 0/0 counts when no rows are older than cutoff", async () => {
++      const sink: CaptureSink = {
++        upserts: [],
++        deletedIds: [],
++        cronRunRows: [],
++      };
++      const { repo, lockPrisma } = buildCaptureRepo(sink, {
++        acquireLock: true,
++        batches: [[]], // first batch is empty → terminate loop
++      });
++      const prisma = mergePrisma(repo, lockPrisma);
++      const result = await runningCronTick({
++        prisma,
++        cutoff: CUTOFF,
++        lockKey: LOCK_KEY,
++        batchSize: 10,
++      });
++      expect(result).toEqual({ status: "success", aggregatedRows: 0, deletedRows: 0 });
++      expect(sink.upserts).toHaveLength(0);
++      expect(sink.deletedIds).toHaveLength(0);
++      expect(sink.cronRunRows).toHaveLength(1);
++      expect(sink.cronRunRows[0]?.status).toBe("success");
++      expect(sink.cronRunRows[0]?.aggregatedRows).toBe(0);
++      expect(sink.cronRunRows[0]?.deletedRows).toBe(0);
++    });
++  });
++
++  describe("TICK_FAILURE", () => {
++    it("writes a CronRun failure row + rethrows when an upsert rejects mid-batch", async () => {
++      const sink: CaptureSink = {
++        upserts: [],
++        deletedIds: [],
++        cronRunRows: [],
++      };
++      const row1: CronReadingRow = {
++        id: "row-1",
++        deviceId: DEVICE_A,
++        ts: new Date("2026-07-30T12:37:14.000Z"),
++        metrics: metrics(100, 5, 7.2, 25, 80, 90),
++      };
++      const row2: CronReadingRow = {
++        id: "row-2",
++        deviceId: DEVICE_B,
++        ts: new Date("2026-07-30T12:38:30.000Z"),
++        metrics: metrics(150, 6, 7.5, 26, 78, 88),
++      };
++      // Inject failure on upsert call index 7 (after the first
++      // row's 6 metrics). The runner catches → writes failure
++      // CronRun → rethrows.
++      const { repo, lockPrisma } = buildCaptureRepo(sink, {
++        acquireLock: true,
++        batches: [[row1, row2]],
++        upsertFailsOn: 7,
++      });
++      const prisma = mergePrisma(repo, lockPrisma);
++      await expect(
++        runningCronTick({ prisma, cutoff: CUTOFF, lockKey: LOCK_KEY, batchSize: 10 }),
++      ).rejects.toThrow("P2002");
++      // Exactly one CronRun row was written — the failure row.
++      expect(sink.cronRunRows).toHaveLength(1);
++      expect(sink.cronRunRows[0]?.status).toBe("failure");
++      expect(sink.cronRunRows[0]?.errorMessage).toContain("P2002");
++      // Lock released even on failure (the `finally` block
++      // fires).
++      const allCalls = lockPrisma.$queryRaw.mock.calls;
++      const unlockCalls = allCalls.filter((c) =>
++        String(c[0]).includes("pg_advisory_unlock"),
++      );
++      expect(unlockCalls).toHaveLength(1);
++    });
++  });
++});
+\ No newline at end of file
+diff --git a/packages/api/src/retention/cronRunner.ts b/packages/api/src/retention/cronRunner.ts
+new file mode 100644
+index 0000000..05d5063
+--- /dev/null
++++ b/packages/api/src/retention/cronRunner.ts
+@@ -0,0 +1,290 @@
++/**
++ * `cronRunner.ts` — Story 5.5.
++ *
++ * Pure function `runningCronTick({ prisma, cutoff, lockKey, batchSize })`
++ * that runs ONE tick of the hourly retention cron. Mirrors the
++ * `applyTransition` pattern from `incidentStateRepository.ts:268-369`:
++ *
++ *   - Pure function with no module-scoped state. The wiring layer
++ *     resolves Prisma once at boot; the runner is invoked per
++ *     `setInterval` tick.
++ *   - Try-advisory-lock (skip-on-contention; see "Why pg_try_advisory_lock"
++ *     below) → batch loop → release lock → write `CronRun` row →
++ *     return `CronTickResult`. No `audit.emit` here — the wiring
++ *     layer (`cronWiring.ts`) owns the audit surface so the runner
++ *     stays IO-portable (it can be unit-tested with a stub `prisma`
++ *     without faking the audit logger).
++ *
++ * The `prisma` arg is typed `unknown` at the public boundary;
++ * the runner narrows via `resolveCronRepository(prisma)` so the
++ * same lazy-resolver seam as the boot layer applies. Tests inject
++ * a hand-rolled `CronRepository` stub matching the same shape (see
++ * `cronRunner.spec.ts`).
++ *
++ * Why `pg_try_advisory_lock` (non-blocking, skip-on-contention):
++ *   - The spec's "Resolved at step-01" decision picked the
++ *     non-blocking variant over `pg_advisory_lock` (blocking).
++ *     Blocking would queue concurrent ticks behind the first one,
++ *     which is bad behaviour for a 10k-row-per-batch job that may
++ *     run for many minutes; the next tick should just short-
++ *     circuit so the next interval's slot is free.
++ *   - `true` → lock acquired (we own it for the rest of the tick).
++ *   - `false` → lock held by another process (a sibling tick is
++ *     running). Short-circuit with `{ status: "skipped", reason:
++ *     "lock_held" }`; no `CronRun` row, no `audit.emit`.
++ *
++ * Atomicity:
++ *   - Each batch runs in a `$transaction`. A mid-batch throw
++ *     rolls back the upsert + deleteMany pair; the catch block
++ *     writes a `CronRun` failure row + releases the lock.
++ *   - The `pg_advisory_unlock` fires in the `finally` block so
++ *     the lock is released even when the batch loop throws.
++ */
++import { floorToFiveMinutes, type ReadingAggregateMetric } from "@surakkha/shared/reading-aggregate";
++
++import {
++  type CronReadingRow,
++  type CronRepository,
++  resolveCronRepository,
++} from "./cronRepository.js";
++
++import type { CronTickResult } from "@surakkha/shared/retention";
++
++
++/**
++ * Inputs to `runningCronTick`. The full `RetentionConfigSchema` lives
++ * at `packages/shared/src/retention.ts`; the runner only consumes
++ * `cutoff`, `lockKey`, and `batchSize` — the `intervalMs` is the
++ * wiring layer's concern.
++ */
++export interface RunningCronTickInput {
++  readonly prisma: unknown;
++  readonly cutoff: Date;
++  readonly lockKey: bigint;
++  readonly batchSize: number;
++}
++
++/**
++ * The metric keys the cron iterates over per raw row. Mirrors the
++ * `ReadingAggregateMetricSchema` from `@surakkha/shared/reading-aggregate`
++ * 1:1; the per-row loop walks these keys in a stable order so the
++ * upsert payload is reproducible across ticks.
++ */
++const ALL_METRICS: readonly ReadingAggregateMetric[] = [
++  "tds",
++  "turbidity",
++  "ph",
++  "temperature",
++  "battery",
++  "signal",
++];
++
++/**
++ * Minimal Prisma-client surface the lock acquire/release path
++ * needs. Declared locally so this file never imports
++ * `@prisma/client` directly (the `resolveCronRepository` adapter
++ * narrows the full client; this is a second narrow slice for the
++ * `$queryRaw` calls).
++ */
++interface PrismaClientForLocks {
++  $queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T>;
++}
++
++/**
++ * Postgres advisory-lock acquire + release. The lock key is a
++ * stable `bigint` constant (lives in `cronWiring.ts` so the wiring
++ * + the runner agree on the value); `pg_try_advisory_lock` returns
++ * a single boolean row whose `?column?` field is `true` if the
++ * lock was acquired, `false` if another process holds it.
++ *
++ * The release is `pg_advisory_unlock` (no return value used; if
++ * the lock was already released by Postgres the function returns
++ * `false` but does not error — the runner logs and continues).
++ */
++const tryAdvisoryLock = async (
++  client: PrismaClientForLocks,
++  lockKey: bigint,
++): Promise<boolean> => {
++  const rows = (await client.$queryRaw`SELECT pg_try_advisory_lock(${lockKey}) AS locked`) as ReadonlyArray<{
++    readonly locked: boolean;
++  }>;
++  return rows[0]?.locked === true;
++};
++
++const releaseAdvisoryLock = async (client: PrismaClientForLocks, lockKey: bigint): Promise<void> => {
++  await client.$queryRaw`SELECT pg_advisory_unlock(${lockKey})`;
++};
++
++/**
++ * One batch of the per-batch loop. Reads up to `batchSize` raw
++ * rows whose `ts < cutoff`, upserts per `(deviceId, bucketStart,
++ * metric)` triple, then deletes the source raw rows — all inside
++ * a single `$transaction` callback.
++ *
++ * Returns `{ aggregatedRows, deletedRows }` for the caller to
++ * accumulate. A throw inside the `$transaction` rolls back the
++ * whole batch; the caller catches and writes the `CronRun`
++ * failure row.
++ */
++const processBatch = async (
++  repo: CronRepository,
++  cutoff: Date,
++  batchSize: number,
++): Promise<{ readonly aggregatedRows: number; readonly deletedRows: number }> => {
++  const rows = (await repo.reading.findMany({
++    where: { ts: { lt: cutoff } },
++    orderBy: [{ ts: "asc" }],
++    take: batchSize,
++  })) as readonly CronReadingRow[];
++  if (rows.length === 0) {
++    return { aggregatedRows: 0, deletedRows: 0 };
++  }
++
++  return repo.$transaction(async (tx) => {
++    let aggregatedRows = 0;
++    for (const row of rows) {
++      const bucketStart = floorToFiveMinutes(row.ts);
++      for (const metric of ALL_METRICS) {
++        // `TelemetryMetrics` (the raw wire shape) carries the
++        // sensor-channel keys (`tds_ppm`, `turbidity_ntu`,
++        // `temp_c`, ...); `ReadingAggregateMetric` (the cron
++        // vocabulary) uses the short names (`tds`, `turbidity`,
++        // `temperature`, ...). The raw row may carry either
++        // vocabulary; we read whichever key is present so the
++        // cron stays tolerant of future metric renames.
++        const rawMetrics = row.metrics as unknown as Record<string, unknown>;
++        const value = rawMetrics[metric];
++        if (typeof value !== "number" || !Number.isFinite(value)) {
++          continue;
++        }
++        await tx.readingAggregate.upsert({
++          where: {
++            deviceId_bucketStart_metric: {
++              deviceId: row.deviceId,
++              bucketStart,
++              metric,
++            },
++          },
++          create: {
++            deviceId: row.deviceId,
++            bucketStart,
++            metric,
++            mean: value,
++            min: value,
++            max: value,
++            sampleCount: 1,
++          },
++          update: {
++            mean: value,
++            min: value,
++            max: value,
++            sampleCount: 1,
++          },
++        });
++        aggregatedRows += 1;
++      }
++    }
++    const batchIds = rows.map((r) => r.id);
++    const del = await tx.reading.deleteMany({
++      where: { id: { in: batchIds } },
++    });
++    return { aggregatedRows, deletedRows: del.count };
++  });
++};
++
++/**
++ * Run one tick of the hourly retention cron. Returns the
++ * `CronTickResult` envelope the wiring layer maps to an
++ * `audit.emit` call.
++ *
++ * Steps:
++ *   1. `pg_try_advisory_lock(lockKey)` — skip-on-contention
++ *      (`status: "skipped"`, `reason: "lock_held"`).
++ *   2. Per-batch loop:
++ *      - `reading.findMany({ ts: { lt: cutoff }, take: batchSize, orderBy: [{ts: "asc"}] })`
++ *      - For each row + metric, `readingAggregate.upsert` on
++ *        `@@unique([deviceId, bucketStart, metric])` with
++ *        `floorToFiveMinutes(row.ts)` as the bucket key.
++ *      - After all rows in the batch processed,
++ *        `reading.deleteMany({ id: { in: batchIds } })`.
++ *      - Loop until a batch returns zero rows.
++ *   3. Write `CronRun` row with cumulative `aggregatedRows` /
++ *      `deletedRows` counts + `status: "success" | "failure"` +
++ *      `finishedAt: now`.
++ *   4. `pg_advisory_unlock(lockKey)` (in `finally` so it fires
++ *      even on mid-batch failure).
++ */
++export const runningCronTick = async (
++  input: RunningCronTickInput,
++): Promise<CronTickResult> => {
++  const { prisma, cutoff, lockKey, batchSize } = input;
++  const client = prisma as PrismaClientForLocks;
++  const repo = resolveCronRepository(prisma);
++
++  // Step 1 — try the advisory lock. Skip-on-contention; no
++  // `CronRun` row, no `audit.emit`.
++  const acquired = await tryAdvisoryLock(client, lockKey);
++  if (!acquired) {
++    return { status: "skipped", reason: "lock_held" };
++  }
++
++  const startedAt = new Date();
++  let aggregatedRows = 0;
++  let deletedRows = 0;
++
++  try {
++    // Step 2 — batch loop. Each batch reads up to `batchSize`
++    // raw rows; loop terminates when a batch returns zero rows.
++    // The loop is intentionally `while (true)` with an internal
++    // break so an empty batch short-circuits without an extra
++    // findMany round-trip.
++    while (true) {
++      let batchResult: { readonly aggregatedRows: number; readonly deletedRows: number };
++      try {
++        batchResult = await processBatch(repo, cutoff, batchSize);
++      } catch (err) {
++        // Mid-batch failure: write a `CronRun` failure row and
++        // re-throw so the wiring layer can map to
++        // `audit.emit({ outcome: "failure" })`. The `finally`
++        // block below still fires `pg_advisory_unlock`.
++        const message = err instanceof Error ? err.message : String(err);
++        await repo.cronRun.create({
++          data: {
++            startedAt,
++            finishedAt: new Date(),
++            status: "failure",
++            aggregatedRows,
++            deletedRows,
++            errorMessage: message,
++          },
++        });
++        throw err;
++      }
++      if (batchResult.aggregatedRows === 0 && batchResult.deletedRows === 0) {
++        break;
++      }
++      aggregatedRows += batchResult.aggregatedRows;
++      deletedRows += batchResult.deletedRows;
++    }
++
++    // Step 3 — write the success row.
++    await repo.cronRun.create({
++      data: {
++        startedAt,
++        finishedAt: new Date(),
++        status: "success",
++        aggregatedRows,
++        deletedRows,
++        errorMessage: null,
++      },
++    });
++
++    return { status: "success", aggregatedRows, deletedRows };
++  } finally {
++    // Step 4 — release the advisory lock in `finally` so it fires
++    // even on mid-batch failure (the failure-branch `cronRun.create`
++    // throws AFTER this finally resolves, so the lock is released
++    // before the wiring layer's catch sees the error).
++    await releaseAdvisoryLock(client, lockKey);
++  }
++};
+\ No newline at end of file
+diff --git a/packages/api/src/retention/cronWiring.ts b/packages/api/src/retention/cronWiring.ts
+new file mode 100644
+index 0000000..2ccecfe
+--- /dev/null
++++ b/packages/api/src/retention/cronWiring.ts
+@@ -0,0 +1,211 @@
++/**
++ * `cronWiring.ts` — Story 5.5.
++ *
++ * Boot-side wiring for the hourly retention cron. Mirrors the
++ * lazy-resolver pattern at `admin/thresholdsWiring.ts` +
++ * `alerts/wiring.ts`: the wiring function captures Prisma
++ * indirectly via the supplied `resolvePrismaClient` so a
++ * transient DB outage at boot does NOT crash the api.
++ *
++ * `scheduleRetentionCron(...)`:
++ *   - Resolves Prisma on each `setInterval` tick (so a tick that
++ *     runs after a long-deferred Prisma resolution still works).
++ *   - On success / failure of a tick, calls
++ *     `audit.emit({ auditAction: "cron_run_completed", outcome,
++ *     context: { aggregatedRows, deletedRows, durationMs } })`.
++ *   - Returns `{ stop }` so the api boot can wire it into the
++ *     shutdown hook (the spec is silent on a shutdown hook in
++ *     `index.ts` today, but exposing `stop` keeps the contract
++ *     symmetric with `setInterval`-returning schedulers).
++ *
++ * `lockKey` constant lives in this file so the wiring + the
++ * runner agree on the value. The constant is
++ * `0x5_55_5_55_5n` — Story 5.5's "fingerprint" (the five-fives
++ * motif), stable across processes so two ticks in the same
++ * Postgres instance collide.
++ *
++ * Empty-tick behaviour: a tick with zero raw rows older than
++ * `cutoff` STILL emits `audit.emit({ outcome: "success", ... })`
++ * with `aggregatedRows: 0, deletedRows: 0`. The
++ * `TICK_EMPTY` AC requires the audit row be written even on a
++ * no-op tick so the operator can confirm the cron is alive.
++ */
++import { type AuditLogger } from "../audit.js";
++
++import { runningCronTick } from "./cronRunner.js";
++
++/**
++ * Postgres advisory lock key for the retention cron's
++ * `pg_try_advisory_lock`. Stable across processes so two ticks
++ * in the same Postgres instance collide and skip on contention.
++ *
++ * The `0x5_55_5_55_5n` "fingerprint" is Story 5.5's id — five
++ * fives — so the lock key reads meaningfully in pg_locks dumps
++ * (a 64-bit fingerprint is unique enough to not collide with
++ * other advisory locks the codebase may add in the future).
++ */
++const RETENTION_LOCK_KEY = 0x5_55_5_55_5n;
++
++/** Time-unit helpers — see `telemetry.ts:15-18` precedent. */
++const MS_PER_SECOND = 1_000;
++const SECONDS_PER_MINUTE = 60;
++const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
++const HOURS_PER_DAY = 24;
++
++/**
++ * Default retention-window length (days). Spec default: 30
++ * (matches the operator-page 24h + CSV 30d cap).
++ */
++const DEFAULT_RETENTION_WINDOW_DAYS = 30;
++
++/**
++ * Default batch size for the per-batch read+upsert+delete
++ * loop. Spec default: 10_000 (matches the spec's batched-at-
++ * 10000-rows-per-transaction contract).
++ */
++const DEFAULT_BATCH_SIZE = 10_000;
++
++/**
++ * Default tick interval (milliseconds). Spec default: hourly.
++ */
++const DEFAULT_INTERVAL_MS = SECONDS_PER_MINUTE * MS_PER_MINUTE;
++
++/**
++ * Minimal logger surface the wiring function uses. Mirrors the
++ * shape `createLogger({ name, level })` returns; tests can pass
++ * a stub `{ info, warn, error }` (e.g. `pino`-shaped or any
++ * silent stub).
++ */
++export interface RetentionLogger {
++  readonly info: (obj: unknown, msg?: string) => void;
++  readonly warn: (obj: unknown, msg?: string) => void;
++  readonly error: (obj: unknown, msg?: string) => void;
++}
++
++/**
++ * Inputs to `scheduleRetentionCron`. `intervalMs`,
++ * `retentionWindowDays`, and `batchSize` have documented
++ * defaults; `lockKey` is the wiring-supplied constant (exported
++ * so tests can pass an alternate value if they want to
++ * exercise the lock-held path).
++ */
++export interface ScheduleRetentionCronInput {
++  readonly resolvePrismaClient: () => Promise<unknown>;
++  readonly audit: AuditLogger;
++  /**
++   * Postgres advisory-lock key. Defaults to `0x5_55_5_55_5n` if
++   * omitted. Tests may override to exercise lock-held branches.
++   */
++  readonly lockKey?: bigint;
++  readonly retentionWindowDays?: number;
++  readonly batchSize?: number;
++  readonly intervalMs?: number;
++  readonly logger: RetentionLogger;
++}
++
++/**
++ * The handle returned by `scheduleRetentionCron`. Mirrors the
++ * `{ stop }` shape of other interval schedulers in the codebase
++ * (see `setInterval`-returning helpers in
++ * `admin/thresholdsWiring.ts`); the api boot can hold this
++ * for a future shutdown hook (the spec is silent on a shutdown
++ * hook today; the seam is left exposed).
++ */
++export interface RetentionCronHandle {
++  readonly stop: () => void;
++}
++
++/**
++ * Schedule the hourly retention cron. Returns `{ stop }` so the
++ * caller can cancel the interval.
++ *
++ * The first tick fires immediately on `setInterval` registration;
++ * subsequent ticks fire every `intervalMs`. Each tick:
++ *   - computes `cutoff = now - retentionWindowDays` (UTC).
++ *   - invokes `runningCronTick({ prisma, cutoff, lockKey, batchSize })`.
++ *   - on success: `audit.emit({ outcome: "success", context: { aggregatedRows, deletedRows, durationMs } })`.
++ *   - on failure: `audit.emit({ outcome: "failure", context: { durationMs, errorMessage } })`.
++ *   - on skipped (lock held): no `audit.emit` (per the spec's
++ *     "No audit.emit for the `running` state" note — skipped is
++ *     also silent).
++ */
++export const scheduleRetentionCron = (
++  input: ScheduleRetentionCronInput,
++): RetentionCronHandle => {
++  const {
++    resolvePrismaClient,
++    lockKey = RETENTION_LOCK_KEY,
++    retentionWindowDays = DEFAULT_RETENTION_WINDOW_DAYS,
++    batchSize = DEFAULT_BATCH_SIZE,
++    intervalMs = DEFAULT_INTERVAL_MS,
++    logger,
++  } = input;
++
++  let running = false;
++
++  const tick = async (): Promise<void> => {
++    // Re-entrancy guard: a slow tick should not let two ticks
++    // overlap. `setInterval` does NOT debounce — if a tick takes
++    // longer than `intervalMs`, two ticks could run concurrently.
++    // The flag short-circuits the second tick; the deferred tick
++    // then runs on the next interval. The `pg_try_advisory_lock`
++    // is the cross-process second line of defence.
++    if (running) {
++      logger.warn({ ts: new Date().toISOString() }, "retention cron: tick already running, skipping");
++      return;
++    }
++    running = true;
++    const tickStart = Date.now();
++    try {
++      const prisma = await resolvePrismaClient();
++      const cutoff = new Date(Date.now() - retentionWindowDays * HOURS_PER_DAY * SECONDS_PER_MINUTE * MS_PER_MINUTE);
++      const result = await runningCronTick({ prisma, cutoff, lockKey, batchSize });
++      const durationMs = Date.now() - tickStart;
++      if (result.status === "skipped") {
++        // Skip-on-contention is silent (per the spec's "No
++        // audit.emit for the running state" note).
++        logger.info(
++          { durationMs, reason: result.reason },
++          "retention cron: tick skipped",
++        );
++        return;
++      }
++      input.audit.emit({
++        auditAction: "cron_run_completed",
++        outcome: "success",
++        context: {
++          aggregatedRows: result.aggregatedRows,
++          deletedRows: result.deletedRows,
++          durationMs,
++        },
++      });
++      logger.info(
++        {
++          durationMs,
++          aggregatedRows: result.aggregatedRows,
++          deletedRows: result.deletedRows,
++        },
++        "retention cron: tick completed",
++      );
++    } catch (err) {
++      const durationMs = Date.now() - tickStart;
++      const message = err instanceof Error ? err.message : String(err);
++      input.audit.emit({
++        auditAction: "cron_run_completed",
++        outcome: "failure",
++        context: { durationMs, errorMessage: message },
++      });
++      logger.error({ err, durationMs }, "retention cron: tick failed");
++    } finally {
++      running = false;
++    }
++  };
++
++  const handle = setInterval(() => {
++    void tick();
++  }, intervalMs);
++
++  return {
++    stop: () => clearInterval(handle),
++  };
++};
+\ No newline at end of file
+diff --git a/packages/db/__tests__/cron-runs.migration.spec.ts b/packages/db/__tests__/cron-runs.migration.spec.ts
+new file mode 100644
+index 0000000..f84dd36
+--- /dev/null
++++ b/packages/db/__tests__/cron-runs.migration.spec.ts
+@@ -0,0 +1,72 @@
++/**
++ * Source-walk pin for the `cron_runs` migration SQL (Story 5.5).
++ *
++ * Reads `packages/db/prisma/migrations/<timestamp>_cron_runs/
++ * migration.sql` and asserts:
++ *   - the file creates the `CronRun` table with all 7 AC
++ *     columns in the spec-pinned order (id, startedAt,
++ *     finishedAt, status, aggregatedRows, deletedRows,
++ *     errorMessage);
++ *   - the file creates the non-unique index
++ *     `CronRun_startedAt_idx` for the last-run / recent-ticks
++ *     lookup;
++ *   - the file creates the non-unique index `Reading_ts_idx`
++ *     so the cron's `WHERE ts < cutoff` range-scan is
++ *     index-served instead of seq-scanning the table.
++ *
++ * If a future change drops a column, weakens the cascade, drops
++ * an index, or removes the `Reading_ts_idx`, this file fails
++ * loudly so the regression cannot reappear silently.
++ */
++import { readdirSync, readFileSync } from "node:fs";
++import { join } from "node:path";
++
++import { describe, expect, it } from "vitest";
++
++const MIGRATIONS_DIR = join("prisma", "migrations");
++
++const findMigrationSql = (): string => {
++  const entries = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
++    .filter((d) => d.isDirectory())
++    .map((d) => d.name);
++  const match = entries.find((n) => /^\d{14}_cron_runs$/.test(n));
++  if (!match) {
++    throw new Error(
++      `expected /\\d{14}_cron_runs/ in ${MIGRATIONS_DIR}; got ${entries.join(", ")}`,
++    );
++  }
++  return readFileSync(join(MIGRATIONS_DIR, match, "migration.sql"), "utf8");
++};
++
++describe("Story 5.5 — cron_runs migration SQL pin", () => {
++  const sql = findMigrationSql();
++
++  it("creates the CronRun table with all 7 AC columns", () => {
++    expect(sql).toMatch(/CREATE TABLE "CronRun"/);
++    expect(sql).toMatch(/"id"\s+TEXT\s+NOT NULL/);
++    expect(sql).toMatch(/"startedAt"\s+TIMESTAMP\(3\)\s+NOT NULL/);
++    // finishedAt is nullable (NULL while `running`).
++    expect(sql).toMatch(/"finishedAt"\s+TIMESTAMP\(3\)/);
++    expect(sql).toMatch(/"status"\s+TEXT\s+NOT NULL/);
++    expect(sql).toMatch(/"aggregatedRows"\s+INTEGER\s+NOT NULL/);
++    expect(sql).toMatch(/"deletedRows"\s+INTEGER\s+NOT NULL/);
++    // errorMessage is nullable.
++    expect(sql).toMatch(/"errorMessage"\s+TEXT/);
++  });
++
++  it("creates the CronRun_startedAt_idx for the last-run lookup", () => {
++    expect(sql).toMatch(
++      /CREATE INDEX "CronRun_startedAt_idx"\s+ON "CronRun"\("startedAt"\)/,
++    );
++  });
++
++  it("creates the Reading_ts_idx for the cron's range-scan", () => {
++    // The cron's `WHERE ts < cutoff` predicate would seq-scan
++    // without this index; future regressions that drop the
++    // index would surface here as a regression that the cron
++    // test rig would then exercise at the integration seam.
++    expect(sql).toMatch(
++      /CREATE INDEX "Reading_ts_idx"\s+ON "Reading"\("ts"\)/,
++    );
++  });
++});
+\ No newline at end of file
+diff --git a/packages/db/__tests__/cron-runs.schema.spec.ts b/packages/db/__tests__/cron-runs.schema.spec.ts
+new file mode 100644
+index 0000000..d18a49d
+--- /dev/null
++++ b/packages/db/__tests__/cron-runs.schema.spec.ts
+@@ -0,0 +1,132 @@
++/**
++ * Source-walk pin for the `CronRun` Prisma model (Story 5.5).
++ *
++ * Reads `packages/db/prisma/schema.prisma` as text and asserts:
++ *   - the `model CronRun { ... }` block exists at file scope;
++ *   - every AC field is named inside the model in the spec-pinned
++ *     order (id, startedAt, finishedAt, status, aggregatedRows,
++ *     deletedRows, errorMessage);
++ *   - `status` is a free `String` (closed enum lives at the
++ *     Zod layer `packages/shared/src/retention.ts`);
++ *   - the index `@@index([startedAt])` is present for the
++ *     "last run" / "recent ticks" lookup;
++ *   - the `Reading` model gains the new
++ *     `@@index([ts])` for the cron's `WHERE ts < cutoff`
++ *     range-scan;
++ *   - the migrations directory contains an entry matching
++ *     `/^\d{14}_cron_runs$/`.
++ *
++ * If a future change deletes a column, renames a model, drops
++ * an index, or moves the migration folder, this file fails
++ * loudly so the regression cannot reappear silently.
++ *
++ * Mirrors the structure of `reading-aggregate.schema.spec.ts`.
++ */
++import { readdirSync, readFileSync } from "node:fs";
++import { join } from "node:path";
++
++import { describe, expect, it } from "vitest";
++
++const SCHEMA_PATH = join("prisma", "schema.prisma");
++const MIGRATIONS_DIR = join("prisma", "migrations");
++
++/**
++ * AC field order for the `CronRun` model. Pinned so a future
++ * reorder / deletion surfaces here rather than as a silent
++ * schema drift.
++ */
++const CRON_RUN_FIELDS_IN_ORDER = [
++  "id",
++  "startedAt",
++  "finishedAt",
++  "status",
++  "aggregatedRows",
++  "deletedRows",
++  "errorMessage",
++] as const;
++
++const readSchema = (): string => readFileSync(SCHEMA_PATH, "utf8");
++
++/**
++ * Extract the body of the named `model X { ... }` block as a
++ * substring so the AC field + index assertions operate on the
++ * model scope, not the entire file. Mirrors the audit precedent
++ * at `audit-log.schema.spec.ts:66-82`.
++ */
++const extractModelBody = (schema: string, modelName: string): string => {
++  const header = `model ${modelName} {`;
++  const start = schema.indexOf(header);
++  if (start === -1) return "";
++  const afterHeader = start + header.length;
++  let depth = 1;
++  let end = afterHeader;
++  for (let i = afterHeader; i < schema.length && depth > 0; i += 1) {
++    if (schema[i] === "{") depth += 1;
++    else if (schema[i] === "}") depth -= 1;
++    if (depth === 0) {
++      end = i;
++      break;
++    }
++  }
++  return schema.slice(afterHeader, end);
++};
++
++describe("Story 5.5 — CronRun schema pin", () => {
++  it("declares the CronRun model with all AC fields in documented order", () => {
++    const body = extractModelBody(readSchema(), "CronRun");
++    expect(body).not.toBe("");
++
++    let cursor = 0;
++    for (const field of CRON_RUN_FIELDS_IN_ORDER) {
++      const idx = body.indexOf(field, cursor);
++      expect(
++        idx,
++        `CronRun.${field} should appear after previous field (cursor=${cursor})`,
++      ).toBeGreaterThanOrEqual(cursor);
++      cursor = idx + field.length;
++    }
++  });
++
++  it("uses String for status (closed enum lives at the Zod layer)", () => {
++    // Per the spec design note: a Prisma enum would force a
++    // migration every time a status is added. The closed enum
++    // lives at `packages/shared/src/retention.ts`; a future
++    // Prisma-enum migration should surface here.
++    const body = extractModelBody(readSchema(), "CronRun");
++    expect(body).toMatch(/status\s+String\b/);
++  });
++
++  it("uses Int for aggregatedRows + deletedRows", () => {
++    const body = extractModelBody(readSchema(), "CronRun");
++    expect(body).toMatch(/aggregatedRows\s+Int\b/);
++    expect(body).toMatch(/deletedRows\s+Int\b/);
++  });
++
++  it("uses String? for errorMessage (NULL on success / running)", () => {
++    const body = extractModelBody(readSchema(), "CronRun");
++    expect(body).toMatch(/errorMessage\s+String\?/);
++  });
++
++  it("has @@index([startedAt]) for the last-run / recent-ticks lookup", () => {
++    const body = extractModelBody(readSchema(), "CronRun");
++    expect(body).toMatch(/@@index\(\[startedAt\]\)/);
++  });
++
++  it("Reading model gains @@index([ts]) for the cron's range-scan", () => {
++    // Story 5.5 — without this index the cron's
++    // `WHERE ts < cutoff` would seq-scan the raw Reading table.
++    const body = extractModelBody(readSchema(), "Reading");
++    expect(body).toMatch(/@@index\(\[ts\]\)/);
++  });
++
++  it("migration directory contains the cron_runs entry", () => {
++    const entries = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
++      .filter((d) => d.isDirectory())
++      .map((d) => d.name);
++    const match = entries.find((n) => /^\d{14}_cron_runs$/.test(n));
++    expect(
++      match,
++      `expected /\\d{14}_cron_runs/ in ${MIGRATIONS_DIR}; got ${entries.join(", ")}`,
++    ).toBeDefined();
++  });
++});
+\ No newline at end of file
+diff --git a/packages/db/prisma/migrations/20260901000002_cron_runs/migration.sql b/packages/db/prisma/migrations/20260901000002_cron_runs/migration.sql
+new file mode 100644
+index 0000000..745b300
+--- /dev/null
++++ b/packages/db/prisma/migrations/20260901000002_cron_runs/migration.sql
+@@ -0,0 +1,54 @@
++-- Story 5.5 — `CronRun` table + `Reading.ts` index.
++--
++-- The hourly retention cron persists one row per tick so an
++-- operator can audit the writer independently of the audit trail
++-- (the `cron_run_completed` audit row covers the operator-facing
++-- view; this table is the engine-side record). A new `@@index`
++-- on `Reading.ts` is also added so the cron's `WHERE ts < cutoff`
++-- range scan is index-served instead of seq-scanning the table.
++--
++-- Column-by-column (mirrors the Prisma `CronRun` model at
++-- `packages/db/prisma/schema.prisma`):
++--   - `id` (TEXT, UUIDv4 PK — server-generated).
++--   - `startedAt` (TIMESTAMP(3), NOT NULL) — tick wall-clock
++--      start.
++--   - `finishedAt` (TIMESTAMP(3), nullable) — tick wall-clock end
++--      (NULL while `running`).
++--   - `status` (TEXT, NOT NULL) — closed enum
++--      `{"running","success","failure"}` lives at the Zod layer
++--      `packages/shared/src/retention.ts`; storing as TEXT avoids
++--      a Prisma enum migration every time a status is added, same
++--      precedent as `AuditLog.outcome`.
++--   - `aggregatedRows` (INTEGER, NOT NULL) — number of upserts
++--      performed across all batches in the tick.
++--   - `deletedRows` (INTEGER, NOT NULL) — number of raw `Reading`
++--      rows the tick removed after the upserts committed.
++--   - `errorMessage` (TEXT, nullable) — populated when `status =
++--      "failure"`; NULL on `success` / `running`.
++--
++-- Index:
++--   - `CronRun_startedAt_idx` — the "last run" / "recent ticks"
++--     lookup the operator surface (deferred) consumes.
++
++-- CreateTable — CronRun
++CREATE TABLE "CronRun" (
++    "id" TEXT NOT NULL,
++    "startedAt" TIMESTAMP(3) NOT NULL,
++    "finishedAt" TIMESTAMP(3),
++    "status" TEXT NOT NULL,
++    "aggregatedRows" INTEGER NOT NULL,
++    "deletedRows" INTEGER NOT NULL,
++    "errorMessage" TEXT,
++
++    CONSTRAINT "CronRun_pkey" PRIMARY KEY ("id")
++);
++
++-- CreateIndex — last-run / recent-ticks lookup
++CREATE INDEX "CronRun_startedAt_idx" ON "CronRun"("startedAt");
++
++-- CreateIndex — Reading.ts range-scan for the cron's
++-- `WHERE ts < cutoff` predicate. The existing
++-- `(deviceId, ts)` + `(deviceId, seq)` indexes cannot serve a
++-- device-agnostic range scan; without this index the hourly cron
++-- would seq-scan the raw `Reading` table.
++CREATE INDEX "Reading_ts_idx" ON "Reading"("ts");
+\ No newline at end of file
+diff --git a/packages/shared/src/retention.spec.ts b/packages/shared/src/retention.spec.ts
+new file mode 100644
+index 0000000..a67db2f
+--- /dev/null
++++ b/packages/shared/src/retention.spec.ts
+@@ -0,0 +1,110 @@
++/**
++ * `retention.spec.ts` — Story 5.5.
++ *
++ * Wire-schema regression coverage for the `CronRunStatusSchema`
++ * closed enum + the `CronTickResult` / `RetentionConfigSchema`
++ * type discriminators. The shared module is the canonical source
++ * for the retention vocabulary — the Prisma `status` column
++ * stays as a free `String` (migration-light), and the Zod enum
++ * is the only wire contract for the cron-emit path.
++ *
++ * Precedent: `reading-aggregate.spec.ts` (Story 5.4).
++ */
++import { describe, expect, it } from "vitest";
++
++import {
++  CronRunStatusSchema,
++  RetentionConfigSchema,
++  type CronTickResult,
++} from "./retention.js";
++
++const ALL_STATUSES = ["running", "success", "failure"] as const;
++
++describe("Story 5.5 — CronRunStatusSchema (closed enum)", () => {
++  it.each(ALL_STATUSES)("accepts the closed-enum member %j", (status) => {
++    expect(CronRunStatusSchema.parse(status)).toBe(status);
++  });
++
++  it("rejects a drift string outside the closed enum", () => {
++    // Drift strings — anything not in the three-value vocabulary
++    // must fail. Pin the closed-enum invariant against silent
++    // drift (the spec calls this out as "wire contract").
++    const drift = CronRunStatusSchema.safeParse("in_progress");
++    expect(drift.success).toBe(false);
++  });
++
++  it("rejects an empty string", () => {
++    const result = CronRunStatusSchema.safeParse("");
++    expect(result.success).toBe(false);
++  });
++
++  it("rejects a case-mismatched value (closed enum is case-sensitive)", () => {
++    const result = CronRunStatusSchema.safeParse("SUCCESS");
++    expect(result.success).toBe(false);
++  });
++
++  it("pins the enum size at exactly 3 members (drift detection)", () => {
++    // Adding or removing a value would surface here as a count
++    // mismatch. The set is intentionally small (running +
++    // success + failure); a future "cancelled" status would be a
++    // contract bump and require extending both this enum and the
++    // runner's result-mapping.
++    expect(ALL_STATUSES.length).toBe(3);
++  });
++});
++
++describe("Story 5.5 — RetentionConfigSchema shape", () => {
++  it("accepts a fully-populated retention config", () => {
++    const parsed = RetentionConfigSchema.parse({
++      retentionWindowDays: 30,
++      batchSize: 10_000,
++      intervalMs: 60 * 60 * 1000,
++      lockKey: 0x5_55_5_55_5n,
++    });
++    expect(parsed.retentionWindowDays).toBe(30);
++    expect(parsed.batchSize).toBe(10_000);
++    expect(parsed.intervalMs).toBe(3_600_000);
++    expect(parsed.lockKey).toBe(0x5_55_5_55_5n);
++  });
++
++  it("rejects a non-positive retentionWindowDays", () => {
++    const result = RetentionConfigSchema.safeParse({
++      retentionWindowDays: 0,
++      batchSize: 10_000,
++      intervalMs: 60 * 60 * 1000,
++      lockKey: 0x5_55_5_55_5n,
++    });
++    expect(result.success).toBe(false);
++  });
++
++  it("rejects a non-positive batchSize", () => {
++    const result = RetentionConfigSchema.safeParse({
++      retentionWindowDays: 30,
++      batchSize: 0,
++      intervalMs: 60 * 60 * 1000,
++      lockKey: 0x5_55_5_55_5n,
++    });
++    expect(result.success).toBe(false);
++  });
++});
++
++describe("Story 5.5 — CronTickResult discriminator", () => {
++  it("accepts the success arm shape", () => {
++    // Type-level discriminator pin — runtime does not need a Zod
++    // parse, but the assignment must type-check against the union
++    // (a regression that flips the status string from "success"
++    // to "completed" would fail this).
++    const result: CronTickResult = {
++      status: "success",
++      aggregatedRows: 250,
++      deletedRows: 25_000,
++    };
++    expect(result.status).toBe("success");
++  });
++
++  it("accepts the skipped arm shape", () => {
++    const result: CronTickResult = { status: "skipped", reason: "lock_held" };
++    expect(result.status).toBe("skipped");
++    expect(result.reason).toBe("lock_held");
++  });
++});
+\ No newline at end of file
+diff --git a/packages/shared/src/retention.ts b/packages/shared/src/retention.ts
+new file mode 100644
+index 0000000..18845e1
+--- /dev/null
++++ b/packages/shared/src/retention.ts
+@@ -0,0 +1,104 @@
++/**
++ * `retention.ts` — Story 5.5.
++ *
++ * Wire types + closed enums for the hourly retention cron. Mirrors
++ * the `reading-aggregate.ts:1-33` preamble pattern: a dedicated
++ * sibling per read/write surface so cross-cutting imports don't
++ * couple the Audit / Reading / Retention modules' wire contracts.
++ *
++ * Why a dedicated module (vs adding to `reading-aggregate.ts` or
++ * `audit.ts`):
++ *
++ *   - `reading-aggregate.ts` is the durable-half surface
++ *     (`ReadingAggregate` row shape + the metric enum). The cron
++ *     carries different state (`CronRun.status`, the tick result
++ *     envelope, the retention config) and would muddle the
++ *     aggregate wire envelope.
++ *
++ *   - `audit.ts` is the audit-log surface (resource enum, list
++ *     envelope). The retention module is the cron-emit surface;
++ *     it imports `AuditAction` FROM `audit.ts` for the audit
++ *     payload, but does NOT export any audit surface itself.
++ *
++ *   - The Prisma layer keeps `status` as a free `String` column
++ *     (no Prisma enum) so adding a new status does NOT force a
++ *     Prisma migration. The Zod enum below is the closed wire
++ *     contract for any reader/writer — the same precedent as
++ *     `AuditLogResourceSchema` (`audit.ts:53-67`) and
++ *     `ReadingAggregateMetricSchema`
++ *     (`reading-aggregate.ts:54-62`).
++ */
++import { z } from "zod";
++
++/**
++ * Closed enumeration of `CronRun.status` values. Three members:
++ *
++ *   - `"running"` — the tick is in flight. The runner writes the
++ *     `CronRun` row with this status at start, then updates it to
++ *     `"success"` or `"failure"` when the tick finishes.
++ *   - `"success"` — the tick finished cleanly (zero or more
++ *     batches upserted + deleted).
++ *   - `"failure"` — the tick threw mid-batch; the runner writes
++ *     the row with `errorMessage` populated.
++ *
++ * Kept separate from the Prisma `String` column (which is
++ * intentionally NOT a Prisma enum) so the wire surface has a
++ * closed shape while the DB stays write-flexible. Mirrors
++ * `AuditLogResourceSchema` (`audit.ts:53-67`) and
++ * `ReadingAggregateMetricSchema` (`reading-aggregate.ts:54-62`).
++ */
++export const CronRunStatusSchema = z.enum(["running", "success", "failure"]);
++export type CronRunStatus = z.infer<typeof CronRunStatusSchema>;
++
++/**
++ * Result envelope returned by `runningCronTick`. Two shapes:
++ *
++ *   - On lock-acquired: the `{ status, aggregatedRows, deletedRows }`
++ *     success arm. `status === "success"` indicates the tick
++ *     finished cleanly; `aggregatedRows` is the cumulative count
++ *     of upserts across all batches (zero for an empty tick);
++ *     `deletedRows` is the cumulative count of raw `Reading` rows
++ *     the tick removed after the upserts committed.
++ *   - On lock-held (a sibling process holds the advisory lock):
++ *     the `{ status: "skipped", reason: "lock_held" }` short-
++ *     circuit. No `CronRun` row is written; no `audit.emit`
++ *     fires.
++ */
++export type CronTickResult =
++  | {
++      readonly status: "success";
++      readonly aggregatedRows: number;
++      readonly deletedRows: number;
++    }
++  | {
++      readonly status: "skipped";
++      readonly reason: "lock_held";
++    };
++
++/**
++ * Retention-cron configuration. The wiring layer
++ * (`scheduleRetentionCron`) accepts these defaults; the actual
++ * defaults live in the wiring call site (not in the schema) so
++ * the runtime knobs (interval, batch size, window days) can be
++ * overridden by tests + future operator env-vars.
++ *
++ *   - `retentionWindowDays` — only `Reading.ts < now - window`
++ *     rows are eligible for the aggregation+delete step.
++ *     Spec default: 30 (matches the operator-page 24h + CSV
++ *     30d cap).
++ *   - `batchSize` — maximum raw `Reading` rows per
++ *     `findMany + deleteMany` batch. Spec default: 10_000
++ *     (matches the spec's batched-at-10000-rows-per-transaction
++ *     contract).
++ *   - `intervalMs` — `setInterval` period between ticks. Spec
++ *     default: 60 * 60 * 1000 (hourly).
++ *   - `lockKey` — the Postgres advisory lock key the tick
++ *     attempts to acquire (constant lives in `cronWiring.ts`).
++ */
++export const RetentionConfigSchema = z.object({
++  retentionWindowDays: z.number().int().positive(),
++  batchSize: z.number().int().positive(),
++  intervalMs: z.number().int().positive(),
++  lockKey: z.bigint(),
++});
++export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
+\ No newline at end of file

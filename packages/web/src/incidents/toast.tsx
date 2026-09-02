@@ -1,53 +1,9 @@
 /**
- * `toast.ts` — Story 4.5, Epic-6 sweep.
- *
- * Shared inline-toast primitive for every Surakkha page surface.
- * Exposes:
- *
- *   - `useToasts()` — page-local toast queue with auto-expiry TTL.
- *   - `<ToastRegion />` — renders the current queue as a polite
- *     `<ul>`, with optional per-page testid prefix so multiple
- *     pages can mount their own region without colliding on
- *     `data-testid="toast-region"`.
- *
- * Why shared (not a library):
- *
- *   - Surakkha has zero toast dependencies today. Pulling in a
- *     third-party library for a single 4-second transient would be
- *     premature.
- *   - Four pages (`IncidentDetailPage`, `ThresholdsPage`,
- *     `ThresholdsPopulatedView`, `SimulatorPage`) each had their own
- *     inline implementation, all with the same green/red palette and
- *     same 4-second TTL. The Epic-6 sweep consolidates them here so
- *     the visual language stays in lock-step.
- *
- * Design notes:
- *
- *   - `useToasts()` owns the toast list state + a `Set<Timeout>`
- *     ref-tracked timer pool so unmount cleanly cancels pending `setTimeout`
- *     callbacks (no late `setState` on an unmounted tree).
- *   - `<ToastRegion />` is mounted at the page root by every
- *     consumer. It renders an `aria-live="polite"` `<ul>` so screen
- *     readers announce the toast.
- *   - The `ToastEntry.id` counter is page-scoped (a single
- *     `useRef<number>(0)`); toasts do NOT collide across mounts because
- *     the hook is page-local.
- *   - TTL is 4_000 ms.
- *
- * Tone palette — routed through the design tokens in
- * `tailwind.config.ts` so the toast surface is in lock-step with the
- * rest of the app's severity language:
- *
- *   - success → `bg-severity-healthy-bg` / `text-severity-healthy-text` /
- *     `border-severity-healthy-text`
- *   - error   → `bg-severity-critical-bg` / `text-severity-critical-text` /
- *     `border-severity-critical-text`
- *
- *   These classes are enumerated LITERALLY in the className strings
- *   below (not interpolated) so Tailwind's content scanner picks them
- *   up at build time. See DESIGN.md §Colors.
+ * `toast.ts` — shared inline-toast primitive for every Surakkha
+ * page surface. `useToasts()` owns the page-local queue +
+ * auto-expiry TTL; `<ToastRegion />` renders it. TTL is 4s;
+ * error-tone `<li>`s upgrade to `role="alert"` for screen readers.
  */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const TOAST_TTL_MS = 4_000;
@@ -67,21 +23,7 @@ interface UseToastsResult {
 
 /**
  * `useToasts()` — page-local toast queue with auto-expiry TTL.
- *
- * Returns the live toast list (consumed by `<ToastRegion />`) plus a
- * stable `pushToast(tone, message)` callback. Each push schedules a
- * `setTimeout` to drop the toast after `TOAST_TTL_MS`; the timer is
- * tracked in a `useRef` so unmount cancels every pending timer in one
- * pass.
- *
- * The hook's contract:
- *   - `pushToast` is referentially stable across renders (wrapped in
- *     `useCallback` with no deps) so consumers can safely include it
- *     in a `useEffect` dep array without re-firing on every render.
- *   - `toasts` updates synchronously after `pushToast` returns, then
- *     is filtered after the TTL elapses. The two states are visibly
- *     distinct in tests (the post-TTL render no longer contains the
- *     dropped toast id).
+ * `pushToast` is referentially stable across renders.
  */
 export const useToasts = (): UseToastsResult => {
   const [toasts, setToasts] = useState<readonly ToastEntry[]>([]);
@@ -101,8 +43,6 @@ export const useToasts = (): UseToastsResult => {
     timersRef.current.add(timer);
   }, []);
 
-  // Cancel every tracked timer on unmount so a late TTL `setState`
-  // does not fire on a torn-down tree.
   useEffect(() => {
     const timers = timersRef.current;
     return () => {
@@ -114,17 +54,11 @@ export const useToasts = (): UseToastsResult => {
   return { toasts, pushToast };
 };
 
-/**
- * `TOAST_TTL_MS` — exported so tests can pin the exact duration.
- */
 export { TOAST_TTL_MS };
 
 /**
- * Tone → Tailwind class map. The class strings are written as
- * LITERAL concatenations (not template-interpolated) so Tailwind's
- * content scanner finds them at build time. Adding a new tone
- * requires extending both the `ToastTone` union and the two records
- * below.
+ * Tone → Tailwind class map. Class strings are literal (not
+ * template-interpolated) so the content scanner finds them at build time.
  */
 const TOAST_CLASSES: Record<ToastTone, string> = {
   // bg-severity-healthy-bg border-severity-healthy-text text-severity-healthy-text
@@ -136,16 +70,9 @@ const TOAST_CLASSES: Record<ToastTone, string> = {
 interface ToastRegionProps {
   readonly toasts: readonly ToastEntry[];
   /**
-   * Prefix prepended to every emitted `data-testid` so multiple
-   * pages can mount their own region without colliding on
-   * `data-testid="toast-region"`. Defaults to `"toast"`.
-   *
-   * The full prefix (including any `toast-` infix) is supplied by
-   * the caller, so consumers can opt into either shape:
-   *
-   *   testIdPrefix="toast"               → `toast-region`, `toast-{tone}-{id}`
-   *   testIdPrefix="simulator-toast"     → `simulator-toast-region`, `simulator-toast-{tone}`
-   *   testIdPrefix="thresholds-toast"    → `thresholds-toast-region`, `thresholds-toast-{tone}`
+   * Prefix prepended to every emitted `data-testid`. Defaults to
+   * `"toast"`; consumers pass a page-scoped value when two regions
+   * would otherwise collide on `data-testid="toast-region"`.
    */
   readonly testIdPrefix?: string;
   /**

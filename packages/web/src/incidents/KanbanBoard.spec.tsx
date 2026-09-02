@@ -45,8 +45,9 @@ import { configureApiClient, _resetApiClientConfig } from "../api/apiClient";
 import { CurrentRoleProvider } from "../auth/CurrentRoleContext";
 import { AppShell } from "../shell/AppShell";
 
-import { KanbanBoard, IncidentPayloadWireSchema } from "./KanbanBoard";
+import { KanbanBoard } from "./KanbanBoard";
 import { applyStateChangeToCache } from "./useKanbanBoardSocket";
+import { IncidentPayloadWireSchema } from "./wire";
 
 type StateChangedHandler = (payload: IncidentStateChangedEvent) => void;
 

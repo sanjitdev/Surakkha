@@ -1,49 +1,10 @@
 /**
- * `KanbanBoard` — Story 4.3.
- *
- * The operator-facing 4-column severity-mixed Kanban view at
- * `/incidents`. Top-level component; TanStack Query for the active
- * list (cache key `["incidents", "active"]`); `useKanbanBoardSocket`
- * for in-place re-derivation on every `incident:state_changed`.
- *
- * Why no zustand store: the board state is `Map<incident_id,
- * IncidentPayload>` + the column grouping. A zustand store buys
- * us nothing over TanStack Query's cache + `useState` for the
- * column-keyed React tree. If a future story (4.10 NotificationBell,
- * 4.12 technician filter) needs cross-page state, that story wires
- * the store. (See spec Design Notes.)
- *
- * 4-column grid (CSS grid; `grid-template-columns: repeat(4, ...)`):
- *
- *   ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
- *   │  OPEN · CRITICAL │  OPEN · WARNING  │  ACKNOWLEDGED    │  RESOLVED        │
- *   │  KanbanColumn=   │  KanbanColumn=   │  KanbanColumn=   │  KanbanColumn=   │
- *   │  OPEN_CRITICAL   │  OPEN_WARNING    │  ACKNOWLEDGED    │  RESOLVED        │
- *   ├──────────────────┼──────────────────┼──────────────────┼──────────────────┤
- *   │ <KanbanCard/>    │ <KanbanCard/>    │ <KanbanCard/>    │ <KanbanCard/>    │
- *   │ <KanbanCard/>    │                  │                  │                  │
- *   └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
- *
- * `RESOLVED` is reserved for the projection of `SAFE / UNSAFE /
- * MONITORING / RESOLVED` (these states are NOT on the active board
- * by default — the spec's "RESOLVED_DROP" edge case removes them
- * on transition). On a brand-new boot with no incidents, every
- * column renders "No incidents".
- *
- * The column key (NOT the incident id) is the React key for the
- * outer `map`. When a card's `projectKanbanColumn(state, severity)`
- * flips (e.g., OPEN critical → ACKNOWLEDGED), React re-derives the
- * column-keyed mapping and moves the card between columns without
- * touching the rest of the board.
- *
- * 403 RBAC denial renders the existing `<RbacDenied />` per the
- * spec's "NETWORK_500 / RBAC denial (403)" edge case. The api
- * returns 403 only for Technician ownership violations on the
- * per-incident read; the active list is read-accessible to every
- * authenticated role, so 403 is rare in practice — but the spec
- * pins the surface to satisfy the 4.1 pattern.
+ * `KanbanBoard` — the 4-column active-incidents Kanban at
+ * `/incidents`. TanStack Query owns the active-list cache;
+ * `useKanbanBoardSocket` reconciles `incident:state_changed` events
+ * in place. The column grouping is a pure helper (`groupByColumn`)
+ * so the test rig can assert it without rendering.
  */
-import { type IncidentStateChangedEvent } from "@surakkha/shared/events";
 import {
   type IncidentPayload,
   type IncidentSeverity,
@@ -55,15 +16,16 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { z } from "zod";
 
 import { RbacDenied } from "../access/RbacDenied";
 import { apiFetch } from "../api/apiClient";
 import { useCurrentRole, useCurrentUserId } from "../auth/CurrentRoleContext";
 
+import { ErrorState } from "./ErrorState";
 import { KanbanCard } from "./KanbanCard";
 import { KanbanRbacDeniedError } from "./KanbanRbacDeniedError";
 import { KANBAN_ACTIVE_QUERY_KEY, useKanbanBoardSocket } from "./useKanbanBoardSocket";
+import { ActiveIncidentsEnvelopeSchema } from "./wire";
 
 const COLUMN_ORDER: readonly KanbanColumn[] = [
   "OPEN_CRITICAL",
@@ -88,43 +50,6 @@ const COLUMN_ACCENT: Record<KanbanColumn, string> = {
   ACKNOWLEDGED: "border-primary",
   RESOLVED: "border-neutral-border",
 };
-
-const IncidentPayloadWireSchema = z.object({
-  id: z.string().uuid(),
-  device_id: z.string().uuid(),
-  severity: z.enum(["info", "warning", "critical"]),
-  metric: z.string(),
-  value: z.number(),
-  opened_at: z.string().datetime({ offset: true }),
-  state: z.enum([
-    "OPEN",
-    "ACKNOWLEDGED",
-    "INSPECTING",
-    "SAFE",
-    "UNSAFE",
-    "MONITORING",
-    "RESOLVED",
-    "REOPENED",
-  ]),
-  assignee_user_id: z.string().uuid().nullable(),
-  acknowledged_at: z.string().datetime({ offset: true }).nullable(),
-  resolved_at: z.string().datetime({ offset: true }).nullable(),
-});
-
-/**
- * Re-export the wire schema for the test rig. The canonical
- * `IncidentPayloadSchema` lives in `@surakkha/shared/incident`;
- * this hand-rolled copy MUST stay structurally equivalent to it
- * (see `KanbanBoard.spec.tsx`'s "structural equivalence" test).
- * If a future change adds a field to the canonical schema, this
- * copy must move in lock-step or the `safeParse` at the fetch
- * site will start failing at runtime.
- */
-export { IncidentPayloadWireSchema };
-
-const ActiveIncidentsEnvelopeSchema = z.object({
-  incidents: z.array(IncidentPayloadWireSchema),
-});
 
 interface ActiveIncidentsEnvelope {
   readonly incidents: readonly IncidentPayload[];
@@ -263,7 +188,9 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
 
   if (query.isError) {
     return (
-      <KanbanErrorState
+      <ErrorState
+        testIdPrefix="kanban-board"
+        message="Failed to load incidents"
         onRetry={() => {
           void queryClient.invalidateQueries({ queryKey: [...KANBAN_ACTIVE_QUERY_KEY] });
         }}
@@ -362,44 +289,7 @@ const KanbanColumnGrid = ({ columns, onCardClick }: KanbanColumnGridProps) => (
 );
 
 /**
- * Re-export `KanbanRbacDeniedError` from its dedicated module
- * (`./KanbanRbacDeniedError`) for backward compat — Story 4.3
- * defined it here originally; Story 4.8 extracted it to break
- * the import cycle between `KanbanBoard.tsx` and
- * `useSeverityBanner.ts`. The original export path stays
- * available so external callers (tests + sibling modules) don't
- * need to update imports.
+ * `applyStateChangeToCache` and `IncidentStateChangedEvent` are
+ * imported directly from `./useKanbanBoardSocket` + the shared
+ * events module — no re-export here.
  */
-export { KanbanRbacDeniedError };
-
-interface KanbanErrorStateProps {
-  readonly onRetry: () => void;
-}
-
-const KanbanErrorState = ({ onRetry }: KanbanErrorStateProps) => (
-  <div data-testid="kanban-board-error-state" className="flex flex-col gap-3">
-    <p
-      data-testid="kanban-board-error-message"
-      className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
-    >
-      Failed to load incidents
-    </p>
-    <button
-      type="button"
-      data-testid="kanban-board-retry-button"
-      onClick={onRetry}
-      className="self-center rounded-input border border-primary px-4 py-2 text-sm text-primary"
-    >
-      Retry
-    </button>
-  </div>
-);
-
-/**
- * Re-export for tests. The pure cache mutator lives in
- * `useKanbanBoardSocket.ts`; this re-export keeps the import
- * path consistent when the test rig wants to assert against
- * the SAME helper the board uses.
- */
-export { applyStateChangeToCache } from "./useKanbanBoardSocket";
-export type { IncidentStateChangedEvent };
