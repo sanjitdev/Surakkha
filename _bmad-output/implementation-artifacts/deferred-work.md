@@ -1,5 +1,29 @@
 # Deferred Work Register
 
+## Deferred from: bmad-build step-01 multi-goal split (2026-09-01)
+
+- source_spec: none
+  summary: Story 5-5 (Hourly Retention Cron) — built first this session
+  evidence: Split from "complete epic 5 fully" intent; 5-5 was the lower-numbered goal.
+- source_spec: none
+  summary: Story 5-6 (Negative Tests for the Audit Log) — deferred to a follow-up session
+  evidence: Split from "complete epic 5 fully" intent; 5-6 is the second shippable goal. Re-open via `bmad-build` and resume planning when 5-5 ships.
+
+## Deferred from: code review of 5-5-hourly-retention-cron (TBD step-04)
+
+- **F-5.5-D1** — Raw `Reading.metrics` uses long-name keys (`tds_ppm`, `turbidity_ntu`, `temp_c` per `telemetry.ts`); `ReadingAggregateMetric` is short-name (`tds`, `turbidity`, `temperature`). Cron's `Number.isFinite(rawMetrics[metric])` guard silently skips every row in production. Either (a) normalize the vocabulary at the cron's read seam (a `LongToShort` map), or (b) widen `ReadingAggregateMetric` to match `TelemetryMetrics` 1:1 and ship a Prisma migration backfilling `metric` values. Production risk: silent data loss until resolved. **[PATCHED 2026-09-02: `RAW_TO_AGGREGATE` map added at `cronRunner.ts`.]**
+- **F-5.5-D2** — `RetentionConfigSchema` lost `readonly` modifiers (TS1042 rejection). Runtime validation identical; only inferred TypeScript shape differs from spec prose.
+- **F-5.5-D3** — No SIGINT/SIGTERM handler calls `scheduleRetentionCron`'s returned `stop()`. Process exit tears down the interval via event-loop teardown, not graceful shutdown.
+- **F-5.5-D4** — I/O Matrix `UPSERT_NULL_DEVICE` row ("raw row's `deviceId` references a deleted device → aggregate row written with `deviceId: null`") is not explicitly covered by a unit test. The captureRepo rig could include a fixture where the raw row has `deviceId` referencing a device that is gone before the tick runs.
+- **F-5.5-D5** — Aggregate arithmetic was a `update: { mean: value, sampleCount: 1 }` overwrite — every prior aggregate for the same `(deviceId, bucketStart, metric)` triple would be clobbered with a single new sample, destroying historical aggregates on every tick that re-touches a bucket. **[PATCHED 2026-09-02: `processBatch` now reads the prior aggregate row and computes running mean/min/max/sampleCount via Welford-style merge-additive update.]**
+- **F-5.5-D6** — `CronRun.errorMessage` has no length bound. Postgres `TEXT` allows 50KB stack traces; over months of accumulation a `cron_runs` row could carry several KB of stack text. Add a `CHECK (char_length(errorMessage) <= 4096)` constraint in a future migration.
+- **F-5.5-D7** — Orphan `status: "running"` row could accumulate if a future refactor adds a `running` row at tick start but the tick crashes before the success/failure write. Current code never writes a `running` row (per spec "No `audit.emit` for the `running` state"), so this is hypothetical — but the schema accepts the value and a future contributor might add it.
+- **F-5.5-D8** — `CronRun.startedAt === finishedAt` indistinguishable at `TIMESTAMP(3)` precision (sub-millisecond ticks all collapse). A future operator-dashboard reading the `cron_runs` table could not tell a 0.1ms tick from a 0.9ms tick. Migrate to `TIMESTAMP(6)` if dashboards need sub-ms resolution.
+- **F-5.5-D9** — `lockKey = 0x5_55_5_55_5n` collision risk; no central lock-keys registry. Today there is only one advisory lock in the codebase (the retention cron); if a future contributor adds a second advisory lock, two services could pick overlapping keys by accident. Promote to a shared `packages/shared/src/lock-keys.ts` registry.
+- **F-5.5-D10** — `resolveCronRepository` `as any` cast on `prisma` (per `cronRepository.ts`) hides Prisma method renames at the boundary. If a future Prisma version renames `findUnique`/`upsert`/`deleteMany`, the type checker will not catch it. Replace with a `PrismaClient` import (already type-only, no runtime cost).
+- **F-5.5-D11** — Missing test coverage: TICK_FAILURE doesn't verify `audit.emit` failure was called; TICK_EMPTY doesn't verify `audit.emit` success with 0/0 was called; TICK_HAPPY doesn't verify `audit.emit` is NOT called by the runner; `lockKey: 0n` invalid input — no test; re-entrancy guard — no test; `setInterval` registration / `stop()` / `intervalMs` — no test. The captureRepo rig covers these surfaces with stub captures; the missing tests live at `cronRunner.spec.ts` and `cronWiring.spec.ts`.
+- **F-5.5-D12** — `pg_advisory_unlock` returns `false` on second unlock — now swallowed in the catch (per patch); the warning emission for "already released" is unowned. If a future contributor wants to surface this to ops, the wiring layer is the right seam.
+
 ## Deferred from: code review of 2-2-ingest-websocket-endpoint (2026-08-22)
 
 - **F-W1** — `@surakkha/db/scripts/migrate` exports map points to `./scripts/migrate.ts`. Node ESM does not natively load `.ts` files; the api `start` script runs compiled `dist/index.js` but `await import("@surakkha/db/scripts/migrate")` resolves to the `.ts` source — Node throws `ERR_MODULE_NOT_FOUND` at boot. Mitigations are package-build-time concerns (build the db package to `.js` OR run api under tsx in production). **Owned by Story 6.1 (Docker Compose + README quickstart).**

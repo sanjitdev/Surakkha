@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-09-01T19:00:00.000Z
+last_updated: 2026-09-02T13:48:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -123,7 +123,7 @@ development_status:
   5-2-csv-export-of-30-days-of-readings: review
   5-3-audit-log-surface-at-audit: review
   5-4-readingaggregate-table: done
-  5-5-hourly-retention-cron: backlog
+  5-5-hourly-retention-cron: done
   5-6-negative-tests-for-the-audit-log: backlog
 
   # ===== Epic 6 — Cross-cutting NFRs =====
@@ -644,14 +644,14 @@ stories:
 
   - id: "5.5"
     title: "Hourly Retention Cron"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "e0e6230"
+    shipped: "2026-09-02"
+    covers: ["FR-30", "NFR-13"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-5-5-hourly-retention-cron.md"
+      review: "_bmad-output/implementation-artifacts/.review-pass-5-5.triaged.md"
 
   - id: "5.6"
     title: "Negative Tests for the Audit Log"
