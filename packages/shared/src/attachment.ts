@@ -1,27 +1,16 @@
 /**
- * `attachment.ts` — Story 4.13.
+ * `attachment.ts` — wire-shape contracts for the attachment feature
+ * (Story 4.13).
  *
- * Wire-shape contracts for the attachment feature:
+ * Single source of truth for both the api's `attachmentRouter.ts`
+ * and the web's `useAttachments.ts` — a structural drift surfaces
+ * as a Zod parse failure at the fetch site.
  *
- *   - `AttachmentPayloadSchema` — the row shape the api returns and
- *     the web consumes.
- *   - `AttachmentListEnvelopeSchema` — the `{ attachments: [...] }`
- *     envelope the GET endpoint returns.
- *
- * These schemas are the single source of truth for both layers;
- * `attachmentRouter.ts` (api) and `useAttachments.ts` (web) consume
- * the SAME exports. A structural drift between the api's response
- * and the web's expectation surfaces as a Zod parse failure at the
- * fetch site.
- *
- * The `mime` field is `string | null` — the api's row stores the
- * value as nullable (Prisma `String?`); when the caller omits the
- * field and the URL extension is unknown, the server stamps
- * `application/octet-stream`. We expose the nullable shape so the
- * web can render the fallback badge ("unknown type").
- *
- * The `label` field is also `string | null` — the operator MAY
- * omit it; the UI renders the URL itself when the label is null.
+ * `mime` is `string | null` (when the caller omits the field and
+ * the URL extension is unknown, the server stamps
+ * `application/octet-stream`; the web renders the fallback badge).
+ * `label` is also `string | null` (operator may omit it; the UI
+ * renders the URL itself when label is null).
  */
 import { z } from "zod";
 

@@ -1,27 +1,18 @@
 /**
- * `validateHttpUrl` — Story 4.13.
+ * `validateHttpUrl` — pure helper that accepts a string and returns
+ * `{ url: URL }` parsed if it's an http:// or https:// URL, throws
+ * otherwise. Rejects every other scheme (`javascript:`, `data:`,
+ * `file:`, `vbscript:`, `ftp:`, `mailto:`, etc.) plus relative paths
+ * and malformed URLs.
  *
- * Pure helper: accepts a string, returns `{ url: URL }` parsed if it's an
- * http:// or https:// URL, throws otherwise. Rejects every other scheme
- * (`javascript:`, `data:`, `file:`, `vbscript:`, `ftp:`, `mailto:`, etc.)
- * plus relative paths and malformed URLs.
+ * SECURITY: this is the boundary between user-supplied text and the
+ * URL we render into an `<a href>`. A regression that lets
+ * `javascript:` or `data:text/html,...` through would be an XSS
+ * vector.
  *
- * SECURITY: this is the boundary between user-supplied text and the URL
- * we render into an `<a href>`. A regression that lets `javascript:` or
- * `data:text/html,...` through would be an XSS vector — `url:` schemes
- * are blocked by every modern browser, but `javascript:` is still
- * exploitable in some embedding contexts (the detail page renders the
- * URL via `<a rel="noopener noreferrer" target="_blank">`; a
- * compromised URL with `javascript:` would run on click).
- *
- * The thrown error message is intentionally structured: it surfaces to
- * the web toast (so the operator sees "URL must be http:// or https://")
- * and to the api's 400 body (same message). Two consumers, one source
- * of truth.
- *
- * Re-exported from `@surakkha/shared/urlValidation` for the spec's
- * cross-package contract pin (`packages/web` and `packages/api` both
- * import the same helper).
+ * The thrown error message is intentionally structured: it surfaces
+ * to the web toast (so the operator sees "URL must be http:// or
+ * https://") and to the api's 400 body (same message).
  */
 
 export interface ValidatedUrl {

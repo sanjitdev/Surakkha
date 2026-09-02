@@ -20,11 +20,11 @@ export const SimulatorTokenScopeSchema = z.literal("telemetry:write");
 export const UserTokenScopeSchema = z.string().min(1);
 
 /**
- * Standard registered claims plus Story 1.7's `role` claim. The `role`
- * is stamped into user-access tokens (Story 1.7) so the SPA can decode
- * the role synchronously from `localStorage` without an extra `/me`
- * round-trip on every page reload; device / simulator tokens do NOT
- * carry `role` (they're scoped to telemetry:write with no UI role).
+ * Standard registered claims plus the Surakkha `role` claim. `role`
+ * is stamped into user-access tokens so the SPA can decode the role
+ * synchronously from `localStorage` without an extra `/me` round-trip
+ * on every page reload; device / simulator tokens do NOT carry `role`
+ * (they're scoped to telemetry:write with no UI role).
  */
 export const JwtClaimsSchema = z.object({
   iss: z.literal("surakkha-api"),
@@ -50,24 +50,19 @@ export const REFRESH_TOKEN_COOKIE = "surakkha_refresh" as const;
 /** Fail-fast minimum length (Story 1.4 AC). */
 export const JWT_SECRET_MIN_LENGTH = 32 as const;
 
-/**
- * User-access-token TTL in seconds (Story 1.4 AC: "8-hour expiry").
- * Device tokens get 24h and simulator tokens get 1h (`docs/architecture.md`
- * §3.4) — those are minted by Story 2.2 / 3.5, not the web login flow.
- */
+/** User-access-token TTL in seconds (8 hours). Device tokens get 24h
+ *  and simulator tokens get 1h — those are minted by the api ingest
+ *  seam, not the web login flow. */
 export const USER_ACCESS_TOKEN_TTL_SECONDS = 28800;
 
 /** Refresh-token TTL in seconds (long-lived; refreshed silently). */
 export const REFRESH_TOKEN_TTL_SECONDS = 2592000;
 
 /**
- * Cookie attributes for the refresh token (Story 1.4 AC: httpOnly,
- * SameSite=Strict, scoped to the api origin). `Path=/auth` ensures the
- * cookie is only sent on refresh requests; v2 may move to `/api/auth`.
- *
- * Exported as a function so the `secure` flag is computed at request
- * time (the env var is not known at module-load and we want the type
- * to match Express's `CookieOptions`).
+ * Cookie attributes for the refresh token: httpOnly, SameSite=Strict,
+ * scoped to the api origin. `Path=/auth` ensures the cookie is only
+ * sent on refresh requests. Exported as a function so the `secure`
+ * flag is computed at request time.
  */
 export interface RefreshTokenCookieOptions {
   readonly httpOnly: true;
@@ -97,16 +92,11 @@ export const DEVICE_TOKEN_TTL_SECONDS = 86400;
 /**
  * Validate that `sub` is a UUIDv4 string. The regex pins BOTH the
  * version nibble (3rd group MUST start with `4`) AND the variant nibble
- * (4th group MUST start with `8-b`); the previous variant-only check
- * accepted valid UUIDv1 with a `8-b` variant nibble (e.g. `…-1234-1234-
- * 8def-…`). We re-parse through `JwtClaimsSchema` after building the
- * claim so a bad `sub` from the caller fails fast at the call site
- * instead of producing a token that the verifier will reject later.
+ * (4th group MUST start with `8-b`); a variant-only check would accept
+ * UUIDv1 with a `8-b` variant nibble. Re-parse through `JwtClaimsSchema`
+ * after building the claim so a bad `sub` fails fast at the call site.
  */
 const assertUuidV4 = (sub: string): void => {
-  // Version nibble = `4`, variant nibble = `[89ab]`. The regex
-  // lives in `./schemas.js` so every consumer (this file, the api
-  // routers, the simulator) sees one literal.
   if (!UUID_V4_REGEX.test(sub)) {
     throw new Error(`simulator/device claim template: sub must be a UUIDv4 (got ${sub})`);
   }
@@ -117,8 +107,7 @@ const assertUuidV4 = (sub: string): void => {
  * Signing happens at the call site with `JWT_SECRET`; the shared package
  * must not touch `process.env`. The returned object re-parses cleanly
  * through `JwtClaimsSchema.parse()` and is frozen so a caller cannot
- * mutate the claim before signing without triggering a TypeError at
- * assignment time.
+ * mutate the claim before signing.
  */
 export const simulatorClaimTemplate = (sub: string): Readonly<JwtClaims> => {
   assertUuidV4(sub);
@@ -135,10 +124,8 @@ export const simulatorClaimTemplate = (sub: string): Readonly<JwtClaims> => {
   return Object.freeze(parsed);
 };
 
-/**
- * Build a claim template for a real device. Same env-independence as
- * `simulatorClaimTemplate`; 24-hour TTL per architecture §3.4.
- */
+/** Build a claim template for a real device. Same env-independence as
+ *  `simulatorClaimTemplate`; 24-hour TTL. */
 export const deviceClaimTemplate = (sub: string): Readonly<JwtClaims> => {
   assertUuidV4(sub);
   const iat = Math.floor(Date.now() / 1000);

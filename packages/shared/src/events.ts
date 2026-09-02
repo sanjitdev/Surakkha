@@ -15,17 +15,10 @@ export const ReadingNewEventSchema = z.object({
   ts: z.number().int().nonnegative(),
   server_received_at: ISO8601,
   metrics: TelemetryMetricsSchema,
-  /**
-   * Per-frame flags stamped by the ingest handler. Closed enum
-   * (`ReadingFlagSchema`) — the wire does not accept firmware-supplied
-   * flags. Story 2.3 pins the v1 set to `out_of_order | clock_skew_
-   * detected | rate_limited`; a new flag is a v2 contract bump.
-   * `.default([])` keeps an unflagged frame's payload identical to the
-   * pre-Story-2.3 wire shape so the api→web contract is back-compat.
-   * The inferred type is `readonly ReadingFlag[]` so the api's frame
-   * state can flow the same array reference from classify through
-   * persist to broadcast without a copy.
-   */
+  /** Per-frame flags stamped by the ingest handler. Closed enum —
+   *  the wire does not accept firmware-supplied flags. `.default([])`
+   *  keeps an unflagged frame's payload identical to the pre-Story-2.3
+   *  wire shape. */
   flags: z.array(ReadingFlagSchema).default([]).readonly(),
 });
 export type ReadingNewEvent = z.infer<typeof ReadingNewEventSchema>;
@@ -36,11 +29,6 @@ export const AlertOpenedEventSchema = z.object({
   metric: MetricKeySchema,
   severity: z.enum(["info", "warning", "critical"]),
   opened_at: ISO8601,
-  // Story 3.4 — wire fields that let the UI render the rule that
-  // fired (`rule_id`) and the reading that breached (`value`).
-  // `rule_id` enables the operator dashboard's "view rule" link;
-  // `value` is the rendering value on the alert card (without it,
-  // the dashboard must join back to the Reading row).
   rule_id: z.string().uuid(),
   value: z.number(),
 });
@@ -59,20 +47,9 @@ export const IncidentUpdatedEventSchema = z.object({
 });
 export type IncidentUpdatedEvent = z.infer<typeof IncidentUpdatedEventSchema>;
 
-/**
- * Story 4.2 — IncidentOpenedEvent (closes AI-3.3 from the Epic 3
- * retrospective). Emitted on the post-commit hook of
- * `applyTransition.ts`'s auto-create-incident path (Story 3.6),
- * once the `Incident` row is durable + the `Alert` row is durable.
- * Distinct from `IncidentStateChangedEvent` because there is no
- * `from_state` (the row was just created) and there is no
- * `actor_user_id` (the path is system-driven by the rule engine,
- * not by an operator).
- *
- * Listeners (Story 4.4 detail page, deferred) consume this to
- * populate the timeline's first row without polling
- * `/api/incidents/:id`.
- */
+/** Incident auto-created from an alert (Story 3.6). Distinct from
+ *  `IncidentStateChangedEvent` — no `from_state` (row was just created)
+ *  and `actor_user_id` is `null` (system-driven path). */
 export const IncidentOpenedEventSchema = z.object({
   incident_id: z.string().uuid(),
   device_id: z.string().uuid(),
@@ -80,15 +57,7 @@ export const IncidentOpenedEventSchema = z.object({
   metric: z.string(),
   value: z.number(),
   opened_at: ISO8601,
-  // The Alert that triggered the auto-create is informational;
-  // listeners that don't need it can ignore the field.
   alert_id: z.string().uuid().nullable(),
-  // Patch (code review 2026-08-27 #15): parity with
-  // `IncidentStateChangedEventSchema`. The auto-create path is
-  // system-driven (rule engine, not an operator), so this is
-  // always null in v1 — but pinning the field shape keeps the
-  // socket-emit record uniform across the lifecycle and future-
-  // proofs a manual-create path.
   actor_user_id: z.string().uuid().nullable(),
 });
 export type IncidentOpenedEvent = z.infer<typeof IncidentOpenedEventSchema>;
@@ -102,18 +71,8 @@ export const IncidentStateChangedEventSchema = z.object({
 });
 export type IncidentStateChangedEvent = z.infer<typeof IncidentStateChangedEventSchema>;
 
-/**
- * The AC4 `incident_transition` observability log line is emitted
- * with two shapes — operator-driven transitions carry one of the 5
- * RBAC verbs (acknowledge, assign, submit_result, resolve, reopen)
- * and auto-create-from-alert carries `verb: "auto_create"` (a
- * system-driven value not in `ActionVerbSchema`). The literal is
- * pinned here for documentation; the API's auto-create log path
- * writes it via `console.warn` (lint allow-list excludes
- * `console.info`).
- *
- * Code review 2026-08-27, decision 1.
- */
+/** Verb literals for the AC4 observability log line. The 5 RBAC verbs
+ *  plus `auto_create` (system-driven, not in `ActionVerbSchema`). */
 export const INCIDENT_TRANSITION_VERB_LITERALS = [
   "acknowledge",
   "assign",

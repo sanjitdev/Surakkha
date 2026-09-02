@@ -1,22 +1,12 @@
 /**
- * `detectMimeFromURL` — Story 4.13.
- *
- * Pure helper: takes an http(s) URL string, returns the MIME type
- * inferred from the URL's extension. Falls back to
- * `application/octet-stream` for unknown extensions.
- *
- * The whitelist is deliberately small (the common image / doc / archive
- * types operators will paste). Unknown extensions map to the
- * generic-stream MIME so the upload still succeeds (the caller can
- * override with an explicit `mime` field — see spec §MIME_OVERRIDE).
+ * `detectMimeFromURL` — pure helper that takes an http(s) URL string
+ * and returns the MIME type inferred from the URL's extension.
+ * Falls back to `application/octet-stream` for unknown extensions.
  *
  * SECURITY: this is a UX hint, NOT a security boundary. The server
- * trusts the client's `mime` field after the explicit regex check
- * (see attachmentRouter.ts). A malicious client could send
- * `mime: "text/html"` and render arbitrary HTML if the web side
- * displayed it unsafely — but the detail page renders the mime as a
- * TEXT badge, never as a script tag or `<object>`. Defence-in-depth
- * lives in the UI's text-only rendering.
+ * trusts the client's `mime` field after the explicit regex check;
+ * the detail page renders the mime as a TEXT badge, never as a
+ * script tag or `<object>`.
  */
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -53,8 +43,8 @@ export const FALLBACK_MIME = "application/octet-stream";
  * `url.pathname`); this helper doesn't re-validate.
  *
  * Returns `FALLBACK_MIME` ("application/octet-stream") when:
- *   - The pathname has no extension (e.g., `https://example.com/api/v1/x`)
- *   - The extension is not in the whitelist (e.g., `https://x.com/y.zzz`)
+ *   - The pathname has no extension
+ *   - The extension is not in the whitelist
  *   - The extension is uppercase or has trailing whitespace (normalised
  *     before lookup)
  */

@@ -1,26 +1,17 @@
 /**
  * Simulator contract types — Surakkha shared (Story 2.5).
  *
- * Re-declared here (rather than imported from `@surakkha/simulator`) so
- * the api can validate inbound scenario names without taking a
+ * Re-declared here (rather than imported from `@surakkha/simulator`)
+ * so the api can validate inbound scenario names without taking a
  * dependency on the simulator package. The simulator is a separate
  * process; packages other than itself may not import it.
  *
- * The names MUST stay in lockstep with
- * `packages/simulator/src/scenarios.ts:35-44` (`SCENARIO_NAMES`). The
- * spec at `_bmad-output/implementation-artifacts/2-5-admin-simulator-tab.md`
- * pins a closed enum of seven scenario names; the api uses this enum
- * to validate `POST /admin/simulator/:device_id/scenario` bodies.
- *
- * Adding a scenario is a wire-contract-adjacent change. Bump both
- * files in lockstep.
+ * Adding a scenario is a wire-contract-adjacent change — bump both
+ * this enum and the simulator's `SCENARIO_NAMES` in lockstep.
  */
 import { z } from "zod";
 
-/**
- * Closed enum of scenario names — mirrored from
- * `packages/simulator/src/scenarios.ts:SCENARIO_NAMES`.
- */
+/** Closed enum of scenario names. */
 export const SCENARIO_NAMES = [
   "Normal",
   "RisingTDS",
@@ -32,28 +23,20 @@ export const SCENARIO_NAMES = [
 ] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
-/**
- * Zod schema mirroring the closed enum above. Use this on inbound
- * request bodies so an unknown name rejects with a 400 validation
- * error rather than being silently dropped.
- */
+/** Zod schema mirroring the closed enum above. Use this on inbound
+ *  request bodies so an unknown name rejects with a 400 validation
+ *  error rather than being silently dropped. */
 export const ScenarioNameSchema = z.enum(SCENARIO_NAMES);
 
-/**
- * Simulator firmware version — surfaced in telemetry frame metadata.
- * The api logs a `console.warn` if a frame arrives with a newer
- * `fw_version` than this constant so on-call engineers know when a
- * device fleet has rolled forward.
- */
+/** Simulator firmware version — surfaced in telemetry frame metadata.
+ *  The api logs a `console.warn` if a frame arrives with a newer
+ *  `fw_version` than this constant so on-call engineers know when a
+ *  device fleet has rolled forward. */
 export const SIMULATOR_FW_VERSION = "1.4.0" as const;
 
-/**
- * Baseline metrics for the "Normal" scenario (and the first 5 ticks
- * of the "Offline" scenario, which emits Normal-shape values during
- * the grace window per architecture §6.1). All three call sites in
- * `packages/simulator/src/scenarios.ts` repeat the same six-tuple;
- * lifting it here removes the magic-number drift.
- */
+/** Baseline metrics for the "Normal" scenario (and the first 5 ticks
+ *  of the "Offline" scenario, which emits Normal-shape values during
+ *  the grace window). */
 export const BASELINE_METRICS = {
   ph: 7.2,
   tds_ppm: 180,
