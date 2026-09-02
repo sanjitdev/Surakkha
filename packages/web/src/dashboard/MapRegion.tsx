@@ -1,31 +1,12 @@
 /**
- * `MapRegion` — Story 2.7.
- *
- * Operator dashboard's map region. Replaces the Story 2.6
- * placeholder with a real Leaflet surface (via `<MapView>`). The
- * `data-testid="dashboard-map-region"` contract is preserved so the
- * DOM order assertion in `Dashboard.spec.tsx` keeps passing.
- *
- * State transitions (the four rendering states match the AC
- * empty-state matrix):
- *
- *   - **Devices loading** → "Loading map…" overlay (no Leaflet
- *     mount). The map's container reserves the layout space so
- *     nothing shifts when the api responds.
- *   - **Devices error (5xx)** → static "No devices" empty state.
- *     The KPI band + Live Readings table keep rendering from the
- *     working readings cache — `isError` is isolated to this query.
- *   - **Devices empty (zero rows)** → static "No devices" empty
- *     state.
- *   - **Devices populated** → `<MapView>` mounts Leaflet with one
- *     marker per device, severity driven by `deviceMapSeverity()`.
- *
- * The map's realtime path is the shared `readings:latest` socket
- * stream; no new socket subscription.
+ * `MapRegion` — dashboard map region. Three states:
+ *   - errored OR succeeded with zero rows → static "No devices" copy;
+ *   - loading → "Loading map…" overlay (no Leaflet mount);
+ *   - populated → `<MapView>` with one marker per device.
+ * The realtime path is the shared `readings:latest` cache — no new
+ * socket subscription here.
  */
-import {
-  type LatestReadingsResponse,
-} from "@surakkha/shared/dashboard";
+import { type LatestReadingsResponse } from "@surakkha/shared/dashboard";
 
 import { MapView } from "./MapView";
 import { useDashboardDevices } from "./useDashboardDevices";
@@ -41,17 +22,6 @@ export const MapRegion = ({ readings }: MapRegionProps) => {
   const devices = data?.devices ?? [];
   const isEmpty = data !== undefined && devices.length === 0;
 
-  // "No devices" — errored OR succeeded with an empty list. We
-  // present these through one route because the operator's
-  // experience is identical (the api didn't tell us about any
-  // devices). The error path is observable through TanStack Query
-  // but the UI doesn't differentiate — the Story 2.9 surface owns
-  // the operator-facing "DB down" copy.
-  //
-  // Loading state short-circuits this branch so the "Loading map…"
-  // overlay renders while the query is in-flight; on a stale
-  // `data?.devices ?? []` we previously flashed the empty state
-  // before the api responded.
   if (isError || isEmpty) {
     return (
       <section

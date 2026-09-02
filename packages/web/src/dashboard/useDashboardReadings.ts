@@ -1,16 +1,9 @@
 /**
- * `useDashboardReadings` — Story 2.6.
- *
- * TanStack Query hook for `GET /api/readings/latest`. The dashboard's
- * four regions all read from this single cache key — both the KPI band
- * and the Live Readings table derive their view of the world from the
- * same cached payload. A `reading:new` Socket.IO event invalidates the
- * key (via `useDashboardSocket`); the next render refetches and the
- * KPI band + Live Readings table both update within 100 ms (AC2).
- *
- * The hook also folds in the Dashboard's incidents cache key —
- * `["dashboard", "incidents", "recent"]` — so the `useDashboardSocket`
- * invalidation list stays declarative.
+ * `useDashboardReadings` — TanStack Query hooks for
+ * `GET /api/readings/latest` and `GET /api/incidents/recent?limit=10`.
+ * The dashboard's four regions all read from the shared readings cache
+ * key; a `reading:new` event invalidates the key and the regions
+ * refetch in lockstep within 100 ms.
  */
 import {
   type LatestReadingsResponse,
@@ -18,9 +11,17 @@ import {
   type RecentIncidentsResponse,
 } from "@surakkha/shared/dashboard";
 import { useQuery } from "@tanstack/react-query";
-import { z } from "zod";
+import { type SafeParseReturnType, z } from "zod";
 
 import { apiFetch } from "../api/apiClient";
+
+export const assertWireShape = <T>(parsed: SafeParseReturnType<unknown, T>, label: string): T => {
+  if (!parsed.success) {
+    console.error(`${label} wire-shape mismatch`, parsed.error);
+    throw new Error(`${label} wire-shape mismatch`);
+  }
+  return parsed.data;
+};
 
 const MetricSchema = z.object({
   ph: z.number(),
@@ -39,30 +40,23 @@ const LatestReadingSchema = z.object({
   metrics: MetricSchema,
   flags: z.array(z.string()).readonly(),
 });
-const LatestReadingsEnvelopeSchema: z.ZodType<LatestReadingsResponse> =
-  z.object({
-    readings: z.array(LatestReadingSchema),
-  });
+const LatestReadingsEnvelopeSchema: z.ZodType<LatestReadingsResponse> = z.object({
+  readings: z.array(LatestReadingSchema),
+});
 
-const RecentIncidentsEnvelopeSchema: z.ZodType<RecentIncidentsResponse> =
-  z.object({
-    incidents: z.array(
-      z.object({
-        id: z.string(),
-        device_id: z.string(),
-        severity: z.enum(["info", "warning", "critical"]),
-        metric: z.string(),
-        value: z.number(),
-        opened_at: z.string(),
-      }),
-    ),
-  });
+const RecentIncidentsEnvelopeSchema: z.ZodType<RecentIncidentsResponse> = z.object({
+  incidents: z.array(
+    z.object({
+      id: z.string(),
+      device_id: z.string(),
+      severity: z.enum(["info", "warning", "critical"]),
+      metric: z.string(),
+      value: z.number(),
+      opened_at: z.string(),
+    }),
+  ),
+});
 
-/**
- * Latest readings query — initial REST cold-load + socket-driven
- * refetch path. Returns `{ readings }`; the hook overloads `isError`
- * so the dashboard renders empty states when the api 500s (AC7).
- */
 export const useDashboardReadings = () =>
   useQuery<LatestReadingsResponse>({
     queryKey: ["readings", "latest"],
@@ -72,21 +66,10 @@ export const useDashboardReadings = () =>
         throw new Error(`/api/readings/latest failed: ${res.status}`);
       }
       const parsed = LatestReadingsEnvelopeSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error(
-          "readings/latest wire-shape mismatch",
-          parsed.error,
-        );
-        throw new Error("readings/latest wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "readings/latest");
     },
   });
 
-/**
- * Recent incidents query (read-only preview). Empty envelope renders
- * the static copy "No incidents in the last 24 hours." per AC4.
- */
 export const useDashboardIncidents = () =>
   useQuery<RecentIncidentsResponse>({
     queryKey: ["dashboard", "incidents", "recent"],
@@ -96,28 +79,11 @@ export const useDashboardIncidents = () =>
         throw new Error(`/api/incidents/recent failed: ${res.status}`);
       }
       const parsed = RecentIncidentsEnvelopeSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error(
-          "incidents/recent wire-shape mismatch",
-          parsed.error,
-        );
-        throw new Error("incidents/recent wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "incidents/recent");
     },
   });
 
-/**
- * KPI band count helper. Pure: takes the latest readings array and
- * returns `{ healthy, warning, critical, offline }` counts.
- *
- * `offline` is derived from absence — a device that has never
- * emitted (or has zero reading for `>24h` per Epic 4 semantics —
- * not pinned here) lands in `offline`. The dashboard does not
- * have a `/api/devices` listing yet so we surface offline via the
- * absence of a `Reading` row (i.e., devices with no latest reading
- * are not counted). Future: Story 3.x may extend the surface.
- */
+/** KPI counts. `offline` is derived from absence (no Reading row), so it's always 0 here. */
 export interface KpiCounts {
   readonly healthy: number;
   readonly warning: number;
@@ -141,6 +107,6 @@ export const summarizeReadings = (
     healthy,
     warning,
     critical,
-    offline: 0, // offline is derived from absence, not the reading payload
+    offline: 0,
   };
 };

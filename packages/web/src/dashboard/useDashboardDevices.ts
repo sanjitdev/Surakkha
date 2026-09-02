@@ -1,30 +1,17 @@
 /**
- * `useDashboardDevices` — Story 2.7.
- *
- * TanStack Query hook for `GET /api/devices`. Drives the map's
- * marker roster; the existing `["readings", "latest"]` query key
- * continues to drive severity (the map joins the two caches to
- * resolve per-marker colour).
- *
- * Behaviour:
- *   - Initial REST cold-load returns the device roster (one row per
- *     Device, joined to `MAX(Reading.serverReceivedAt)`).
- *   - On `isError` the map falls back to its "No devices" empty
- *     state without affecting the rest of the dashboard (KPI band +
- *     Live Readings table keep working off the readings cache).
- *   - Does NOT refetch on `reading:new` — the readings cache update
- *     cascades through `useDashboardReadings`, and the map re-
- *     evaluates marker severities from the joined cache. Devices
- *     with no reading yet stay grey from the initial cold-load.
+ * `useDashboardDevices` — TanStack Query hook for `GET /api/devices`.
+ * Drives the map's marker roster; the readings cache continues to drive
+ * severity (the map joins the two caches). Errors fall through to the
+ * map's "No devices" empty state without affecting the rest of the
+ * dashboard.
  */
-import {
-  type DevicesResponse,
-  OFFLINE_THRESHOLD_MS,
-} from "@surakkha/shared/dashboard";
+import { type DevicesResponse, OFFLINE_THRESHOLD_MS } from "@surakkha/shared/dashboard";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
 import { apiFetch } from "../api/apiClient";
+
+import { assertWireShape } from "./useDashboardReadings";
 
 const DeviceSummarySchema = z.object({
   id: z.string(),
@@ -47,11 +34,7 @@ export const useDashboardDevices = () =>
         throw new Error(`/api/devices failed: ${res.status}`);
       }
       const parsed = DevicesResponseSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("devices wire-shape mismatch", parsed.error);
-        throw new Error("devices wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "devices");
     },
     staleTime: OFFLINE_THRESHOLD_MS,
   });

@@ -1,16 +1,8 @@
 /**
- * `RecentIncidentsRegion` — Story 2.6 (canonical surface for the
- * dashboard's right-rail Recent Incidents feed).
- *
- * The earlier "Read-only preview" badge was retired after Story 4.4
- * shipped the full card affordance (device + severity + metric +
- * value + opened-at + primary action) on the Kanban surface — this
- * dashboard region is now a calm summary, not a development marker.
- *
- * Per AC4 the empty-state copy is exactly "No incidents in the last
- * 24 hours." and is never animated or flashing. Per AC6 the region
- * renders no action buttons — the Recent Incidents surface is a
- * summary view that links out to the Kanban for actions.
+ * `RecentIncidentsRegion` — dashboard's calm summary of the last 24
+ * hours of incidents. No action affordances (Kanban is the action
+ * surface); empty-state copy is fixed ("No incidents in the last 24
+ * hours.") and never animated.
  */
 import { type RecentIncidentsResponse } from "@surakkha/shared/dashboard";
 
