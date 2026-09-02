@@ -1,12 +1,10 @@
 /**
- * `incidentStateRepository.ts` — Story 4.2 (writer layer).
- * Narrow Prisma slice `IncidentStateRepository` plus its
- * `resolveIncidentStateRepository` adapter. The repo is a
- * structural subset of the real Prisma client so tests can stub
- * the methods used. The `$transaction` callback runs
- * (incident update + event write + optional notification write)
- * atomically — `tx` is shaped as `IncidentStateRepository` so
- * the same calls work inside the callback without re-binding.
+ * Narrow Prisma slice `IncidentStateRepository` + the writer
+ * `applyTransition` + wire-row adapters. The `$transaction`
+ * callback runs (incident update + event write + optional
+ * notification write) atomically; `tx` is shaped as
+ * `IncidentStateRepository` so the same calls work without
+ * re-binding.
  */
 import type {
   ActionVerb,
@@ -104,9 +102,9 @@ export interface IncidentStateRepository {
       readonly orderBy?: { readonly createdAt: "asc" | "desc" };
     }): Promise<IncidentEventRow[]>;
   };
-  /** `notification:critical` write site (Story 4.9) — fires when
-   *  a technician submits an UNSAFE outcome. Lives inside the
-   *  same `$transaction` as the incident update + event create.
+  /** `notification:critical` write site — fires when a technician
+   *  submits an UNSAFE outcome. Lives inside the same
+   *  `$transaction` as the incident update + event create.
    *  Idempotency is enforced by the partial unique index; the
    *  P2002 catch is the caller's responsibility. */
   readonly notification: {
@@ -163,12 +161,10 @@ export interface ApplyTransitionInput {
    * other verbs.
    */
   readonly assigneeUserId?: string | null;
-  /**
-   * When true, also writes a `notification:critical` row inside
-   * the same `$transaction` as the incident update + event
-   * create. Set by the route layer when the next state is
-   * `UNSAFE` (per Story 4.9 AC2).
-   */
+  /** When true, also writes a `notification:critical` row inside
+   *  the same `$transaction` as the incident update + event
+   *  create. Set by the route layer when the next state is
+   *  `UNSAFE`. */
   readonly writeCriticalNotification?: boolean;
 }
 
@@ -205,18 +201,14 @@ export const applyTransition = async (
   const nextState = result.next_state;
   const at = new Date(result.at);
 
-  // Stamp acknowledged_at on the first transition out of OPEN.
-  // Subsequent transitions (INSPECTING, SAFE, UNSAFE, MONITORING,
-  // RESOLVED) preserve the value.
+  // Stamp acknowledged_at on the first transition out of OPEN;
+  // subsequent transitions preserve the value.
   const ackedAt =
     currentRow.acknowledgedAt ?? (nextState !== "OPEN" && nextState !== "REOPENED" ? at : null);
-  // Stamp resolved_at on RESOLVED; clear it on reopen so consumers
-  // that filter `state === "OPEN" && resolvedAt IS NULL` correctly
-  // categorise a re-opened incident as in-flight again. The
-  // historical `resolved_at` is preserved in the `IncidentEvent`
-  // audit row (`type: "resolve"` + payload) — the row-level column
-  // reflects current state, not lifetime history.
-  // Code review 2026-08-27, decision 6 (option B).
+  // Stamp resolved_at on RESOLVED; clear it on RESOLVED → OPEN so
+  // `state === "OPEN" && resolvedAt IS NULL` correctly categorises
+  // a re-opened incident as in-flight. The historical resolved_at
+  // is preserved in the `IncidentEvent` audit row.
   const resolvedAt =
     nextState === "RESOLVED"
       ? at
@@ -230,22 +222,12 @@ export const applyTransition = async (
     input.result.event_type === "assign" ? (assigneeUserId ?? null) : currentRow.assigneeUserId;
 
   return repo.$transaction(async (tx) => {
-    // Step 1: optimistic-concurrency update.
-    //
-    // Story 4.11 — for `reopen` (RESOLVED → OPEN), FORCE
-    // `severity: "critical"` on the reopened row regardless of the
-    // prior value. The forced-critical contract is the design-
-    // intent match for "Admin reopened because it was wrong" —
-    // reopening should immediately surface in the
-    // "Open · Critical" Kanban column (UX-DR-9). Other verbs
-    // preserve `severity` (the row's column projection stays
-    // stable for acknowledge / assign / submit-result / resolve).
-    //
-    // The conditional spread (`...(reopenForcesCritical ? { severity: ... } : {})`)
+    // Step 1: optimistic-concurrency update. `reopen` forces
+    // `severity: "critical"` so the row immediately surfaces in
+    // the "Open · Critical" Kanban column. The conditional spread
     // is the type-safe alternative to `severity: undefined` —
-    // Prisma's `updateMany` data builder rejects an explicit
-    // `undefined` for required scalar fields, and the conditional
-    // form keeps the writer's shape explicit per-verb.
+    // Prisma's updateMany rejects explicit undefined for required
+    // scalars.
     const reopenForcesCritical = result.event_type === "reopen";
     const update = await tx.incident.updateMany({
       where: { id: currentRow.id, updatedAt: currentRow.updatedAt },
@@ -274,7 +256,7 @@ export const applyTransition = async (
       },
     });
 
-    // Step 3: optional critical notification (Story 4.9).
+    // Step 3: optional critical notification.
     let notificationId: string | null = null;
     if (writeCriticalNotification === true && nextState === "UNSAFE") {
       const notification = await tx.notification.create({
@@ -309,11 +291,8 @@ export class OptimisticConcurrencyError extends Error {
   }
 }
 
-/**
- * Build the wire-row `IncidentPayload` from a Prisma row. Used by
- * the route layer to serialize the response. Pure helper (no
- * IO), but lives here because it has no other natural home.
- */
+/** Build the wire-row `IncidentPayload` from a Prisma row. Pure
+ *  helper (no IO); lives here because it has no other natural home. */
 export const incidentRowToPayload = (row: IncidentRow): IncidentPayload => ({
   id: row.id,
   device_id: row.deviceId,
@@ -340,18 +319,9 @@ export const incidentRowToPayload = (row: IncidentRow): IncidentPayload => ({
         : new Date(row.resolvedAt).toISOString(),
 });
 
-/**
- * Build the wire-row `IncidentEventPayload` from a Prisma
- * `IncidentEvent` row. Used by the route layer's
- * `/api/incidents/:id/events` endpoint to serialize the timeline.
- * Mirrors `incidentRowToPayload` above; lives here because it has
- * no other natural home.
- *
- * The `payload` field is freeform (`Record<string, unknown>`);
- * we pass it through unchanged. The shape varies by event type
- * (e.g., `assign` carries `assigneeUserId`; `submit_result`
- * carries `outcome`). The detail page renders it as JSON.
- */
+/** Build the wire-row `IncidentEventPayload` from a Prisma
+ *  `IncidentEvent` row. The `payload` is freeform; we pass it
+ *  through unchanged. The detail page renders it as JSON. */
 export const incidentEventRowToPayload = (row: IncidentEventRow): IncidentEventPayload => ({
   id: row.id,
   incident_id: row.incidentId,

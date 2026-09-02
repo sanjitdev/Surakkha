@@ -1,24 +1,9 @@
 /**
- * `incidents/recentWiring.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:237-283`).
- *
- * Lazy-resolved list-reader for `/api/incidents/recent`. Returns up
- * to `limit` incidents from the last 24 hours, ordered by
- * `opened_at DESC`.
- *
- * Severity normalization: the schema column is a free `string`
- * in Prisma's generated type, but the wire contract pins it to
- * `"info" | "warning" | "critical"` (see
- * `@surakkha/shared/incident.IncidentSeveritySchema`). If a future
- * Prisma drift returns an unknown severity, the dashboard's "all
- * critical" badge would silently under-report. The list-reader
- * validates rows against `IncidentSeveritySchema` and coerces
- * unknown values to `"warning"` (the lowest non-info severity) so
- * the badge count is monotonic with the row count.
- *
- * Empty / DB-down contract: returns `[]` on any Prisma failure.
- * The dashboard's "No incidents in the last 24 hours." copy
- * renders cleanly before Epic 3 starts firing rules.
+ * Lazy-resolved list-reader for `/api/incidents/recent`. Returns
+ * up to `limit` incidents from the last 24h, ordered by
+ * `opened_at DESC`. Returns `[]` on any Prisma failure so the
+ * dashboard's empty-state copy renders cleanly even before
+ * rules start firing.
  */
 import { type RecentIncidentSummary } from "@surakkha/shared/dashboard";
 import { IncidentSeveritySchema } from "@surakkha/shared/incident";
@@ -34,22 +19,19 @@ export const normalizeRecentIncidentSeverity = (raw: string): RecentIncidentSumm
   return parsed.success ? parsed.data : "warning";
 };
 
-/**
- * List the most-recent incidents from the last 24 hours, ordered
- * by `opened_at DESC`, bounded by `limit`. The 24h window is the
- * spec's "incidents in the last 24 hours" empty-state copy
- * anchor (Story 2.6 AC4) — the filter keeps the preview surface
- * small even as the historical Incident table grows.
- */
+/** List the most-recent incidents from the last 24h, ordered by
+ *  `opened_at DESC`, bounded by `limit`. The 24h window keeps the
+ *  preview surface small even as the historical Incident table
+ *  grows. */
 export const buildRecentIncidentsListReader =
   (
     resolvePrismaClient: () => Promise<unknown>,
   ): ((limit: number) => Promise<readonly RecentIncidentSummary[]>) =>
   async (limit) => {
     try {
-      // The single `(client as any)` boundary — `getPrisma()` returns
-      // `Promise<unknown>` by design (see `boot/db.ts`); narrow here
-      // so the rest of this function sees a structural type.
+      // The single `(client as any)` boundary — `resolvePrismaClient`
+      // returns `Promise<unknown>` by design; narrow here so the
+      // rest of this function sees a structural type.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = (await resolvePrismaClient()) as any;
       const since = new Date(Date.now() - RECENT_WINDOW_HOURS * HOUR_MS);

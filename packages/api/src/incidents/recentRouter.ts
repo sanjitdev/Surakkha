@@ -1,31 +1,7 @@
 /**
- * `/api/incidents/recent` — Story 2.6.
- *
- * Dashboard-facing incidents preview. Returns the most-recent
- * open incidents, ordered by `opened_at DESC`, bounded by the
- * `limit` query parameter (default 10, capped at 50).
- *
- * RBAC: `authorize({ action: "read", resource: "Incident" }, audit)`
- * — every authenticated role can read (matrix grants `Incident.read`
- * to all four v1 roles; Technician's ownership rule for assigned
- * incidents is enforced in middleware, not in this router).
- *
- * Story 2.6 ships this endpoint with a `limit` parameter:
- *   GET /api/incidents/recent?limit=10
- *
- * The empty state returns `{ incidents: [] }` so the dashboard's
- * "No incidents in the last 24 hours." copy renders cleanly before
- * Epic 3 starts firing rules.
- *
- * Wire shape:
- *   200 → { incidents: Array<{
- *             id: string,
- *             device_id: string,
- *             severity: "info" | "warning" | "critical",
- *             metric: string,
- *             value: number,
- *             opened_at: string (ISO 8601)
- *           }> }
+ * `/api/incidents/recent` — dashboard preview. Returns the
+ * most-recent incidents from the last 24h, ordered by
+ * `opened_at DESC`, bounded by `limit` (default 10, max 50).
  */
 import {
   type RecentIncidentsResponse,
@@ -84,9 +60,9 @@ export const buildRecentIncidentsRouter = (deps: RecentIncidentsDeps): Router =>
         const body: RecentIncidentsResponse = { incidents };
         res.status(HTTP_OK).json(body);
       } catch (err) {
-        // AC7: dashboard regions render empty states on any
-        // read failure; surface 500 so TanStack Query marks the
-        // query `isError`.
+        // Dashboard regions render empty states on any read
+        // failure; surface 500 so TanStack Query marks the query
+        // `isError`.
         console.error("api/incidents/recent: prisma error", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
@@ -96,14 +72,10 @@ export const buildRecentIncidentsRouter = (deps: RecentIncidentsDeps): Router =>
   return router;
 };
 
-/**
- * Convenience adapter for the production Prisma delegate. Lazy-
- * imported so the unit-test suite mounts the router without a
- * real client. The 24h window is the spec's "incidents in the
- * last 24 hours" empty-state copy anchor (Story 2.6 AC4) — the
- * filter keeps the preview surface small even as the historical
- * Incident table grows.
- */
+/** Convenience adapter for the production Prisma delegate. Lazy-
+ *  imported so the unit-test suite mounts the router without a
+ *  real client. The 24h window keeps the preview surface small
+ *  even as the historical Incident table grows. */
 export const buildPrismaRecentIncidents =
   async (
     resolveClient: () => Promise<{
@@ -153,11 +125,9 @@ export const buildPrismaRecentIncidents =
     return rows.map((row) => ({
       id: row.id,
       device_id: row.deviceId,
-      // The Prisma `severity` column is a free-form string per the
-      // schema's design note; the dashboard only renders three
-      // buckets. Map anything unknown to "warning" so a typo'd
-      // severity in the DB still surfaces — the alternative (drop
-      // the row) is a worse signal.
+      // Map unknown severities to "warning" so a typo'd severity
+      // in the DB still surfaces; dropping the row is a worse
+      // signal.
       severity: normalizeRecentIncidentSeverity(row.severity),
       metric: row.metric,
       value: row.value,

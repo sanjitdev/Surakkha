@@ -1,10 +1,9 @@
 /**
- * `/api/incidents/:id/...` — transition router. Six routes
- * (5 transition POSTs + read-side GET + audit-timeline GET).
- * Per-verb RBAC is enforced via `authorize(...)`; the per-cell
- * `reopen` Admin gate lives in `transitionHelpers.ts`. The 5
- * transition POSTs are wrapped in `idempotency(...)` middleware
- * for `(user_id, route, key)` dedupe within `IDEMPOTENCY_TTL_MS`.
+ * `/api/incidents/:id/...` transition router. 5 transition POSTs
+ * + read-side GET + audit-timeline GET. Per-verb RBAC via
+ * `authorize(...)`; the per-cell `reopen` Admin gate lives in
+ * `transitionHelpers.ts`. The 5 transition POSTs are wrapped in
+ * `idempotency(...)` middleware for `(user_id, route, key)` dedupe.
  */
 import {
   type ActionVerb,

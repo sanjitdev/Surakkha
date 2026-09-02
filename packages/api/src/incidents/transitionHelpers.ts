@@ -1,9 +1,6 @@
 /**
- * `transitionHelpers.ts` — pure support helpers for the
- * `/api/incidents/:id/...` transition router. Handles every
- * non-route concern of the pipeline (parse → ownership → pure
- * transition → commit → response) so `router.ts` stays under
- * the lint `max-lines: 500` ceiling.
+ * Pure support helpers for the transition router pipeline
+ * (parse → ownership → pure transition → commit → response).
  */
 import { InvalidStateTransitionEnvelopeSchema } from "@surakkha/shared/error-envelope";
 import {
@@ -42,13 +39,11 @@ import {
   writeInvalidAttemptEvent,
 } from "./transitionSideEffects.js";
 
-/**
- * Canonical 409 envelope for `invalid_state_transition`. Three
- * pre-existing shapes (typed state-machine miss, OptimisticConcurrencyError,
- * P2002 partial-unique-index race) collapse to one discriminated
- * body: `{ error, from?, attempted?, reason? }`. Clients
- * discriminate on which optional fields are present.
- */
+/** Canonical 409 envelope for `invalid_state_transition`. The
+ *  3-shape collapse (typed state-machine miss, optimistic-
+ *  concurrency loss, P2002 race) lands at one discriminated body:
+ *  `{ error, from?, attempted?, reason? }`. Clients discriminate
+ *  on which optional fields are present. */
 export const respondInvalidStateTransition = (
   res: Response,
   body: { readonly from?: string; readonly attempted?: string; readonly reason?: string },
