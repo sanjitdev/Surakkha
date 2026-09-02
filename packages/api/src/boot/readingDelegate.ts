@@ -1,21 +1,8 @@
 /**
- * `boot/readingDelegate.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:600-645`).
- *
  * Narrow `Reading` delegate over the shared Prisma client. Used by
- * the rules engine (Story 3.2) for both the `create` path (writing
- * a new reading row inside `processFrame`) and the `findMany` path
+ * the rules engine for both the `create` path (writing a new
+ * reading row inside `processFrame`) and the `findMany` path
  * (loading the rate-rule window for backfill).
- *
- * The delegate is intentionally narrower than the full
- * `PrismaClient.reading` surface — only the two methods the rules
- * engine calls are exposed. A future Prisma upgrade that renames
- * `reading.findMany` only affects this file (and the rules engine
- * that imports it), not every router.
- *
- * Lazy-resolved via `getPrisma()` — the same lazy pattern as the
- * shared client. The rules engine boot path awaits this delegate
- * on first WS connection, not on import.
  */
 import { type RuleMetric, type TelemetryFrame } from "@surakkha/shared";
 
@@ -51,9 +38,8 @@ export interface ReadingDelegate {
 }
 
 export const resolveReadingDelegate = async (): Promise<ReadingDelegate> => {
-  // The single allowed `(client as any)` boundary — `getPrisma()`
-  // returns `Promise<unknown>` by design (see boot/db.ts). Narrow
-  // here so the rest of the rules engine sees a structural type.
+  // The single allowed `(client as any)` boundary; narrow here so
+  // the rules engine sees a structural type.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = (await getPrisma()) as any;
   return {
