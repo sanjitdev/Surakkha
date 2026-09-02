@@ -1,14 +1,10 @@
-/**
- * `attachmentRouter.ts` — three routes on `/api/incidents/:id/attachments`:
- *   POST   /api/incidents/:id/attachments — create (URL + label + optional mime)
- *   GET    /api/incidents/:id/attachments — list (reverse-chronological)
- *   DELETE /api/attachments/:id           — delete (uploader OR Admin)
- *
- * RBAC: matrix grants per resource. `validateHttpUrl` from
- * `@surakkha/shared/urlValidation` is the security boundary that
- * rejects `javascript:` / `data:` / `file:` / `vbscript:` / relative
- * paths. Attachments are NOT state transitions (no socket emit).
- */
+/** Three routes on `/api/incidents/:id/attachments` (POST + GET) and
+ *  `/api/attachments/:id` (DELETE). RBAC: Admin bypass on DELETE;
+ *  original uploader bypass; Technician requires
+ *  `assigneeUserId === user.id` on POST/GET. `validateHttpUrl` is
+ *  the security boundary that rejects `javascript:` / `data:` /
+ *  `file:` / `vbscript:` / relative paths. Attachments are NOT state
+ *  transitions (no socket emit). */
 import { type AttachmentPayload } from "@surakkha/shared/attachment";
 import { detectMimeFromURL, FALLBACK_MIME } from "@surakkha/shared/mimeAutoDetect";
 import { idPathSchema } from "@surakkha/shared/schemas";
@@ -47,10 +43,8 @@ const createBodySchema = z.object({
 export interface AttachmentRouterDeps {
   readonly audit: AuditLogger;
   readonly repo: AttachmentRepository;
-  /** Narrow read-side slice for the Tech-ownership check (a
-   *  Technician can only POST/GET on incidents they're assigned
-   *  to). The injection keeps the attachment router decoupled
-   *  from the full incident state machine. */
+  /** Narrow seam over the Prisma `incident` delegate — needed only
+   *  for the Tech-ownership check on POST/GET. */
   readonly incidentFindUnique: (args: {
     readonly where: { readonly id: string };
   }) => Promise<{ readonly assigneeUserId: string | null } | null>;
@@ -74,7 +68,7 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
   const router = express.Router();
 
   // Admin bypass; original uploader can delete their own attachment;
-  // a different Operator/Technician gets 403.
+  // a different Operator/Technician gets 403 with an audit emit.
   const enforceDeleteOwnership = (
     req: AuthorizedRequest,
     res: Response,
@@ -189,9 +183,8 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
       if (urlDenied !== null) return;
       const ownershipDenied = await enforceTechOwnership(req, res, id);
       if (ownershipDenied !== null) return;
-      // MIME: explicit override wins; otherwise auto-detect from
-      // the URL extension; otherwise fall back to the binary-stream
-      // default.
+      // MIME: explicit override wins; otherwise auto-detect from the
+      // URL extension; otherwise fall back to the binary-stream default.
       const mime = bodyParsed.data.mime ?? detectMimeFromURL(bodyParsed.data.url) ?? FALLBACK_MIME;
       await createAttachmentRowOrRespond({
         req,
