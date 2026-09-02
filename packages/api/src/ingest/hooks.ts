@@ -1,13 +1,12 @@
 /**
- * Ingest hooks — Story 2.2 (ADR 0013, architecture §3.2 steps 6–9).
+ * Ingest hooks.
  *
  * The 10-step driver iterates `PROCESSING_ORDER` and, for steps 6
  * (rule evaluation), 7 (alert emission), 8 (state-machine update),
- * and 9 (audit append), calls a typed no-op hook. v1 ships the
- * no-op default; Epic 3 (rules), Epic 4 (alerts / state), and
- * Epic 5 (audit pipeline) call `setIngestHooks(...)` once at their
- * boot path to wire the real implementation. The handler never
- * edits `frame.ts` — the iteration site is stable across epics.
+ * and 9 (audit append), calls a typed hook. v1 ships the no-op
+ * default; Epic 3/4/5 call `setIngestHooks(...)` once at their boot
+ * path to wire the real implementation. The handler never edits
+ * `frame.ts` — the iteration site is stable across epics.
  *
  * Why typed narrow interfaces (not `unknown`): the hook call sites
  * must be type-checked against the future epic's contract, so a
@@ -29,11 +28,9 @@ export interface RuleEvaluationInput {
     readonly seq: number;
     readonly metrics: Record<string, number>;
   };
-  /**
-   * Closed enum per `ReadingFlagSchema` (Story 2.3). Tightened from
-   * `readonly string[]` so a hook implementation that does not handle
-   * the closed enum surfaces at compile time, not at runtime.
-   */
+  /** Closed enum per `ReadingFlagSchema`. Tightened from
+   *  `readonly string[]` so a hook implementation that does not
+   *  handle the closed enum surfaces at compile time. */
   readonly flags: readonly ReadingFlag[];
 }
 
@@ -60,14 +57,10 @@ export interface AuditAppendInput {
 }
 
 export interface IngestHooks {
-  /**
-   * Story 3.2 — return type extended from `Promise<void>` to
-   * `Promise<readonly BreachResult[]>`. The no-op default returns
-   * `EMPTY_BREACH_RESULTS` (frozen empty tuple) so the type is
-   * satisfied without allocating. Story 3.5's alert manager will
-   * consume the breach array; this story keeps the caller in
-   * `frame.ts:303` discarding the value (already `await`-ed).
-   */
+  /** Return type `Promise<readonly BreachResult[]>` — Epic 3.2's rules
+   *  engine returns the breach array. The no-op default returns
+   *  `EMPTY_BREACH_RESULTS` (frozen empty tuple) so the type is
+   *  satisfied without allocating. */
   onRuleEvaluation(input: RuleEvaluationInput): Promise<readonly BreachResult[]>;
   onAlertEmission(input: AlertEmissionInput): Promise<void>;
   onStateMachineUpdate(input: StateMachineUpdateInput): Promise<void>;
@@ -81,12 +74,10 @@ const noopHooks: IngestHooks = {
   onAuditAppend: async () => undefined,
 };
 
-/**
- * Story 3.2 — exported so the boot path (`packages/api/src/index.ts`)
- * can fall back to the no-op default if `hydrateActiveRuleCache`
- * rejects (transient DB outage at boot). Also used by tests that
- * need a concrete no-op set without calling `resetIngestHooks()`.
- */
+/** Exported so the boot path can fall back to the no-op default if
+ *  `hydrateActiveRuleCache` rejects (transient DB outage at boot).
+ *  Also used by tests that need a concrete no-op set without
+ *  calling `resetIngestHooks()`. */
 export const NOOP_HOOKS: IngestHooks = noopHooks;
 
 let currentHooks: IngestHooks = noopHooks;
@@ -94,11 +85,9 @@ let currentHooks: IngestHooks = noopHooks;
 /** Read the currently-installed hook set. */
 export const getIngestHooks = (): IngestHooks => currentHooks;
 
-/**
- * Install a real hook set. Called by Epic 3/4/5 boot code. Not
- * concurrent-safe; the call site is responsible for setting it once
- * before any frame is processed.
- */
+/** Install a real hook set. Called by Epic 3/4/5 boot code. Not
+ *  concurrent-safe; the call site is responsible for setting it once
+ *  before any frame is processed. */
 export const setIngestHooks = (hooks: IngestHooks): void => {
   currentHooks = hooks;
 };

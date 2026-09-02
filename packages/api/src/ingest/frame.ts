@@ -1,24 +1,10 @@
 /**
- * Ingest handler — Story 2.2.
- *
- * Replaces the Step 0 placeholder with the 10-step driver from
- * `PROCESSING_ORDER` (architecture §3.2, ADR 0013). Real logic for
- * steps 1–6 + 10 (validate, auth check, rate check, seq/drop check,
- * persist, socket broadcast); typed no-op hook calls for steps 6–9
- * (rule evaluation, alert emission, state-machine update, audit
- * append) that Epic 3/4/5 fill in by calling `setIngestHooks`.
- *
- * The 10-step order is **load-bearing** — see ADR 0013. This module
- * iterates `PROCESSING_ORDER` in a single `for` loop; the order of
- * branches in the switch mirrors the literal in
- * `@surakkha/shared`. The `frame.spec.ts` test asserts
- * PROCESSING_ORDER.length === 10 and that any adjacent swap is
- * detectable.
- *
- * Reference:
- *   - docs/architecture.md §3.2
- *   - docs/adr/0013-server-processing-order.md
- *   - Story 2.2 spec (`_bmad-output/implementation-artifacts/2-2-…md`)
+ * Ingest handler — 10-step driver over `PROCESSING_ORDER` from
+ * `@surakkha/shared`. Steps 1–6 + 10 (validate, auth, rate, seq/drop,
+ * persist, broadcast) ship real logic here; steps 6–9 (rule evaluation,
+ * alert emission, state-machine update, audit append) are typed no-op
+ * hooks that Epic 3/4/5 wire via `setIngestHooks`. Reordering any
+ * adjacent pair is a contract violation; `frame.spec.ts` pins the order.
  */
 import {
   classifyFlags,
@@ -40,12 +26,6 @@ import { type PerDeviceSequence } from "./sequence";
  * Minimal shape the persist + broadcast steps need from Prisma.
  * Tests inject a stub that satisfies this surface; production code
  * passes the real `@prisma/client` Reading delegate.
- *
- * Story 3.2 — extended with `reading.findMany` so the rate-rule
- * pre-filter chain (`packages/api/src/rules/hooks.ts`) can query
- * the last 60 s of `Reading` rows for `(deviceId, metric)`. The
- * exact `where` / `orderBy` / `take` shape is pinned by
- * `__tests__/reading-repository-findmany.spec.ts`.
  */
 export interface ReadingRepository {
   readonly reading: {
@@ -76,11 +56,7 @@ export interface ReadingRepository {
   };
 }
 
-/**
- * Minimal Socket.IO surface — `io.to(room).emit(event, payload)`.
- * Production passes the real `Server.io`; tests pass a tiny
- * EventEmitter shim (frame.spec.ts pins the contract).
- */
+/** Minimal Socket.IO surface — `io.to(room).emit(event, payload)`. */
 export interface BroadcastTarget {
   to(room: string): {
     emit(event: string, payload: unknown): unknown;
@@ -100,13 +76,7 @@ export interface ProcessFrameDeps {
   readonly io: BroadcastTarget;
   readonly hooks?: IngestHooks;
   readonly now?: () => Date;
-  /**
-   * Story 3.2 — optional read-side handle to the `Rule` table for
-   * the rules engine. Optional; defaults to `undefined` when the
-   * engine is not installed. The engine hot-reload (Story 3.7) may
-   * read this to refresh the cache; for v1 it is informational —
-   * the engine's boot-time hydration reads via its own slice.
-   */
+  /** Optional read-side handle to the `Rule` table for the rules engine. */
   readonly ruleRepository?: {
     readonly rule: {
       findMany(args: { readonly where: { readonly isActive: true } }): Promise<readonly unknown[]>;
@@ -114,13 +84,7 @@ export interface ProcessFrameDeps {
   };
 }
 
-/**
- * Per-frame decision returned to the WS handler so it can decide
- * whether to keep the connection open after a rate-limit. The
- * handler runs `processFrame` once per inbound frame; the return
- * value documents the seam without forcing the handler to read
- * every step's outcome.
- */
+/** Per-frame decision returned to the WS handler. */
 export type ProcessFrameOutcome =
   | { readonly status: "accepted" }
   | { readonly status: "bad_request" }
@@ -130,31 +94,17 @@ export type ProcessFrameOutcome =
 const deviceRoom = (deviceId: string): string => `device:${deviceId}`;
 
 /**
- * Story 2.6 — broadcast room for the operator dashboard.
- *
- * The dashboard needs ONE subscription that fans out to ALL six
- * simulator devices (architecture §3.5: "Both events are emitted to
- * the Socket.IO room `device:<device_id>` for live updates, and to
- * the broadcast room `alerts:open` for new alerts / incidents").
- * Per-device rooms (`device:<uuid>`) require the dashboard to open
- * six sockets — Story 2.6 picked the broadcast-room path (lower
- * complexity, single socket, simple semantics).
- *
- * The room name is `readings:latest` (not `readings:all` as the spec
- * draft originally proposed) because the dashboard reads the LATEST
- * state via REST on cold load and then keeps it fresh via this
- * stream — the room is the "newest readings" channel.
+ * Broadcast room for the operator dashboard. Subscribers join once and
+ * fan out to all six simulator devices — avoids opening per-device sockets.
+ * `readings:latest` (not `readings:all`) because the dashboard reads the
+ * LATEST state via REST on cold load and keeps it fresh via this stream.
  */
 const READINGS_LATEST_ROOM = "readings:latest";
 
-/**
- * Per-step result. Steps that mutate state return a `patch`; the
- * driver applies the patch in a single assignment so ESLint's
- * `no-param-reassign` rule does not fire inside step helpers.
- *
- * Terminal steps (bad_request, rate_limited, ignored) return an
- * `exit` outcome and stop the iteration.
- */
+/** Per-step result. Steps that mutate state return a `patch`; the
+ *  driver applies the patch in a single assignment so ESLint's
+ *  `no-param-reassign` rule does not fire inside step helpers.
+ *  Terminal steps return an `exit` outcome and stop the iteration. */
 type StepResult =
   | { readonly kind: "next"; readonly patch?: FrameStatePatch }
   | { readonly kind: "exit"; readonly outcome: ProcessFrameOutcome };
@@ -184,12 +134,6 @@ const applyPatch = (state: FrameState, patch: FrameStatePatch | undefined): Fram
   };
 };
 
-/**
- * Each per-step function runs ONE of the 10 PROCESSING_ORDER
- * branches. They are deliberately tiny so the iteration site in
- * `processFrame` reads top-to-bottom as a step list — not a flow-
- * chart — and the ESLint complexity ceiling stays within bounds.
- */
 const stepValidate = (
   state: FrameState,
   deps: {
@@ -204,14 +148,9 @@ const stepValidate = (
     return { kind: "exit", outcome: { status: "bad_request" } };
   }
 
-  // Story 2.3 — stale-frame check. The frame is well-formed; reject
-  // only if the device-side `ts` is older than the stale-frame window.
-  // The connection is soft-disconnected (`disconnect(false)`) so a
-  // backlog of fresh frames behind this one is still accepted. We do
-  // NOT classify this as `ignored` from the caller's perspective —
-  // there is no persist, no broadcast; the device gets the
-  // `stale_frame` envelope + `age_seconds` and can decide whether to
-  // reset its clock.
+  // Stale-frame check: well-formed but `ts` is older than the
+  // stale-frame window. Soft-disconnect so backlog of fresh frames
+  // behind this one is still accepted.
   const skewMs = state.serverReceivedAt.getTime() - result.data.ts;
   if (skewMs > STALE_FRAME_THRESHOLD_MS) {
     const ageSeconds = Math.floor(skewMs / 1_000);
@@ -220,16 +159,8 @@ const stepValidate = (
     return { kind: "exit", outcome: { status: "ignored" } };
   }
 
-  // Story 2.3 — clock-skew flag stamping. Future skew AND past skew
-  // (within the stale window) both stamp `clock_skew_detected`. The
-  // helper is the single source of truth shared with the simulator.
   const flags = classifyFlags(result.data, state.serverReceivedAt);
 
-  // F-P6: `serverReceivedAt` was already seeded by `processFrame`
-  // before this step ran (single source of truth — the moment the
-  // driver took ownership of the inbound frame). `stepValidate`
-  // only contributes the parsed payload + flag set, not a re-stamped
-  // clock.
   return {
     kind: "next",
     patch: { parsed: result.data, flags },
@@ -275,9 +206,6 @@ const stepSeqDropCheck = async (
   const obs = deps.sequence.observe(deps.deviceId, state.parsed.seq);
   const patch: FrameStatePatch = { dropCount: obs.dropCount };
   if (obs.outcome === "reorder") {
-    // F-P7: surface late frames on the audit pipeline too. The
-    // flag travels on the persisted row and on the broadcast payload
-    // (see F-D2); the audit hook is the operator-triage surface.
     patch.flags = ["out_of_order"];
     await deps.hooks.onAuditAppend({
       auditAction: "seq_reorder_detected",
@@ -318,10 +246,6 @@ const stepPersist = async (
       },
     });
   } catch (err) {
-    // F-P5: surface the underlying error to the api logger so an
-    // operator can distinguish DB-down, FK-violation, and
-    // unique-key-violation. The device still gets the
-    // `persist_failed` envelope + disconnect.
     console.error("ingest: persist failed", { deviceId: deps.deviceId, err });
     deps.socket.emit("persist_failed", { error: "persist_failed" });
     deps.socket.disconnect(true);
@@ -396,21 +320,19 @@ const stepSocketBroadcast = (
     flags: state.flags,
   };
   deps.io.to(deviceRoom(deps.deviceId)).emit("reading:new", payload);
-  // Story 2.6 — broadcast the same payload to `readings:latest` so a
-  // single dashboard socket subscribes once and fans out to all six
-  // devices (vs opening six per-device sockets). The per-device emit
-  // above stays so any existing per-device watcher (e.g. an Operator
-  // /incidents/:id drilldown) still receives the device-scoped stream.
+  // Broadcast the same payload to `readings:latest` so a single
+  // dashboard socket subscribes once and fans out to all six devices.
+  // The per-device emit above stays so any per-device watcher (e.g.
+  // an Operator /incidents/:id drilldown) still receives the device-scoped stream.
   deps.io.to(READINGS_LATEST_ROOM).emit("reading:new", payload);
   return { kind: "next" };
 };
 
 /**
- * Single-entry-point for one inbound frame. Iterates
- * PROCESSING_ORDER; each step is delegated to a tiny pure function
- * so the iteration site reads as a step list. Reordering any
- * adjacent pair is a contract violation — `frame.spec.ts` asserts
- * the order against the literal in `PROCESSING_ORDER`.
+ * Single entry-point for one inbound frame. Iterates `PROCESSING_ORDER`;
+ * each step is delegated to a tiny pure function so the iteration site
+ * reads as a step list. `frame.spec.ts` asserts the order against the
+ * literal in `PROCESSING_ORDER`.
  */
 export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrameOutcome> => {
   const { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now = () => new Date() } = deps;
@@ -420,11 +342,9 @@ export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrame
     parsed: null,
     flags: [],
     dropCount: 0,
-    // F-P6: the server-anchored "moment the frame arrived at the
-    // api" timestamp. `stepValidate` does NOT re-stamp this —
-    // the driver's `now()` call is the canonical source so the
-    // ordering guarantee ("serverReceivedAt is the source of truth
-    // for ordering" — architecture §3.2) has exactly one read.
+    // `serverReceivedAt` is the moment the frame arrived at the api.
+    // `stepValidate` does NOT re-stamp this — the driver's `now()` call
+    // is the canonical source so the ordering guarantee has one read.
     serverReceivedAt: now(),
   };
 
@@ -447,15 +367,10 @@ export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrame
   return { status: "accepted" };
 };
 
-/* eslint-disable complexity -- 10 cases is the literal
- * length of PROCESSING_ORDER; collapsing them (e.g. with a
- * Record<step, handler> map) would re-order adjacent pairs and
- * break the contract pin in `frame.spec.ts`.
- */
-/**
- * Dispatch one step to its handler. Extracted from `processFrame`
- * so the driver's complexity stays under the lint ceiling (10) and
- * a future contributor adding an 11th step touches one function.
+/* eslint-disable complexity -- 10 cases is the literal length of
+ * `PROCESSING_ORDER`; collapsing them (e.g. with a Record<step,
+ * handler> map) would re-order adjacent pairs and break the
+ * contract pin in `frame.spec.ts`.
  */
 const dispatchStep = async (
   step: (typeof PROCESSING_ORDER)[number],

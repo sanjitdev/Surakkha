@@ -1,5 +1,5 @@
 /**
- * Per-device sequence observer — Story 2.2 (architecture §3.2 step 6).
+ * Per-device sequence observer — ingest step 4 (seq/drop check).
  *
  * Each device's last-accepted `seq` lives in this Map. On first
  * observation the device is initialised with `lastSeen = -1` so a
@@ -16,12 +16,11 @@
  *                 earlier gaps were already counted on the accept
  *                 that first crossed the gap.
  *
- * The caller (frame.ts) decides whether to flag the row with
+ * The caller (`frame.ts`) decides whether to flag the row with
  * `out_of_order`. `reorder` only signals the timing relationship;
  * it does NOT encode the flag.
  *
- * State lives in process memory — see `rateLimit.ts` for the same
- * rationale (I-9 single Node process).
+ * State lives in process memory — single Node process (I-9).
  */
 
 const INITIAL_LAST_SEEN = -1;
@@ -44,8 +43,6 @@ export class PerDeviceSequence {
   observe(deviceId: string, seq: number): SequenceObservation {
     const previous = this.lastSeen.get(deviceId) ?? INITIAL_LAST_SEEN;
     if (seq > previous) {
-      // Strictly later — accept and advance. dropCount = how many
-      // frames between previous and seq are unaccounted for.
       this.lastSeen.set(deviceId, seq);
       return {
         outcome: "accept",
