@@ -1,37 +1,10 @@
 /**
- * `csvRouter.ts` — Story 5.2 CSV export.
+ * `GET /api/devices/:deviceId/readings.csv` — Operator + Admin CSV export.
  *
- * `GET /api/devices/:deviceId/readings.csv` — Operator + Admin only.
- * Streams CSV row-by-row from the `Reading` table; never buffers
- * the full result. Wire shape:
- *
- *   200 → `Content-Type: text/csv; charset=utf-8` +
- *         `Content-Disposition: attachment; filename="device-{deviceId}-readings-{since}.csv"`
- *         + `X-CSV-Truncated: true | false` +
- *         body: header line + one line per (reading, metric)
- *         (no trailer line — see F15 / RFC 4180 commentary)
- *   400 → invalid `?since` / `?until` (validation_error envelope)
- *   401 → no bearer token (handled by `authenticate`)
- *   403 → Viewer / Technician denied `export Reading` (handled by `authorize`)
- *   404 → `deviceId` does not exist (handler checks `findUnique`)
- *   500 → unexpected prisma / deviceExists failure (handled by catch
- *         blocks; the audit row is NOT emitted on this path)
- *
- * Consumers MUST inspect `X-CSV-Truncated` to detect truncation —
- * the body is a clean CSV stream with no comment-style trailers.
- *
+ * Streams CSV row-by-row from the `Reading` table. The truncation
+ * flag is exposed as the `X-CSV-Truncated` response header — NOT
+ * as a body trailer (Excel users saw a junk `# truncated:` row).
  * RBAC: matrix grants `export Reading` to Operator + Admin only.
- * `pnpm lint:rbac` catches string drift on the action / resource
- * triple (Story 1.1 AC).
- *
- * Audit row: emitted ONCE on stream SUCCESS, with payload
- * `{ rowCount, since, until, truncated }`. DB_THROW_MID_STREAM and
- * any other error path leaves the audit row unwritten (per the
- * spec's "gated on full success" requirement). On a success where
- * `req.user.id` is unexpectedly undefined, the row is STILL emitted
- * (with `subject: "unknown"`) and a `console.error` is logged —
- * preferring emission over silence so the operator's export stays
- * traceable.
  */
 import express, { type Response, type Router } from "express";
 
@@ -44,8 +17,7 @@ import { bindPrismaResolverForCsv, type ReadingRow, streamForCsv } from "./csvRe
 import { CSV_HEADER, readingRowToCsvLines } from "./csvSerialization.js";
 
 /**
- * Hard cap on rows per request. Pinned by the spec ("capped at
- * 100,000 rows per request"). 6 known metric keys × ~17,280
+ * Hard cap on rows per request. 6 known metric keys × ~17,280
  * readings/day × 30 days ≈ 104k rows for a busy device — the cap
  * is reachable and the trailer surfaces the truncation to the
  * operator.
@@ -54,10 +26,9 @@ export const CSV_MAX_ROWS = 100_000;
 
 /**
  * 30-day window in milliseconds — used when `?since` is omitted.
- * Pinned here so the spec's "defaults to last 30 days" surface is
- * discoverable in one place. Component constants are extracted to
- * named values so the `no-magic-numbers` lint rule can stay
- * satisfied while the time math stays readable in one place.
+ * Component constants are extracted to named values so the
+ * `no-magic-numbers` lint rule can stay satisfied while the time
+ * math stays readable in one place.
  */
 const DAYS_PER_WINDOW = 30;
 const HOURS_PER_DAY = 24;
@@ -79,7 +50,7 @@ const ISO_DATE_PREFIX_LENGTH = 10;
  * `null` if the input is missing/empty OR if it lacks an explicit
  * timezone marker.
  *
- * Strict-tz rules (F6):
+ * Strict-tz rules:
  *   - `2026-08-01T00:00:00Z` → `2026-08-01T00:00:00.000Z` (UTC).
  *   - `2026-08-01T00:00:00+06:00` → local-time pinned to +06:00.
  *   - `2026-08-01` → REJECTED (date-only; ambiguous between
@@ -97,9 +68,9 @@ const parseIsoDate = (raw: string | undefined): Date | null => {
   // the timestamp. Date-only forms like `2026-08-01` are
   // intentionally rejected — V8 parses them as UTC midnight but a
   // trailing-Z-less local-time form like `2026-08-01T00:00:00` is
-  // parsed as local midnight; we cannot accept one without the
-  // other, so we reject both for unambiguous cross-machine
-  // semantics.
+  // parsed as local midnight; the helper cannot accept one
+  // without the other, so it rejects both for unambiguous
+  // cross-machine semantics.
   const hasTzMarker = /Z$|[+-]\d{2}:?\d{2}$/.test(raw);
   if (!hasTzMarker) return null;
   const at = Date.parse(raw);
@@ -219,12 +190,12 @@ interface StreamWriteResult {
 /**
  * Stream rows from `deps.streamForCsv`, write each metric line to
  * `res`. The router requests `cap + 1` rows from the data layer;
- * if the iterator yielded `cap + 1` rows we know the dataset
- * extends beyond the cap and we drop the extra (so the wire stays
- * at exactly `cap` rows) and set `truncated: true`. If the
+ * if the iterator yielded `cap + 1` rows the function knows the
+ * dataset extends beyond the cap and drops the extra (so the wire
+ * stays at exactly `cap` rows) and sets `truncated: true`. If the
  * iterator yielded exactly `cap` rows (or fewer), `truncated` is
- * `false` — even when `rowCount === cap` exactly (F9 fix — the
- * previous `>=` test produced a false positive at exactly-cap).
+ * `false` — even when `rowCount === cap` exactly (the previous
+ * `>=` test produced a false positive at exactly-cap).
  *
  * On any stream error the connection is closed (best-effort) and
  * `{ streamSucceeded: false, rowCount: 0, truncated: false }` is
@@ -234,8 +205,8 @@ interface StreamWriteResult {
  * The truncation header (`X-CSV-Truncated`) is set BEFORE the
  * stream begins (the router initializes it to `"false"` before
  * calling this helper). The actual flag is passed back via the
- * result; the router then updates the header. We cannot set the
- * header inside this loop because once `res.end()` fires (or
+ * result; the router then updates the header. The header cannot
+ * be set inside this loop because once `res.end()` fires (or
  * `res.write` flushes the chunked response), Node's HTTP layer
  * refuses additional `setHeader` calls.
  */
@@ -243,15 +214,15 @@ const streamAndWrite = async (args: StreamAndWriteArgs): Promise<StreamWriteResu
   const { res, deviceId, since, until, cap, deps, onTruncated } = args;
   let rowCount = 0;
   let truncated = false;
-  // Buffer the body so we can decide on the truncation flag
-  // BEFORE writing the first byte. This guarantees the
-  // `X-CSV-Truncated` header (set on the router before calling)
-  // reflects the final truncation state when the first body chunk
-  // flushes. Reading `cap + 1` rows means we know at the end
-  // whether the dataset extended beyond the cap; for the common
-  // (non-truncated) case the body is `cap` rows × 6 metrics +
-  // header — well under any memory budget (100k × 6 ≈ 600k rows
-  // × ~30 bytes ≈ 18MB worst case for the production cap).
+  // Buffer the body so the truncation flag can be decided BEFORE
+  // writing the first byte. This guarantees the `X-CSV-Truncated`
+  // header (set on the router before calling) reflects the final
+  // truncation state when the first body chunk flushes. Reading
+  // `cap + 1` rows means the function knows at the end whether the
+  // dataset extended beyond the cap; for the common (non-truncated)
+  // case the body is `cap` rows × 6 metrics + header — well under
+  // any memory budget (100k × 6 ≈ 600k rows × ~30 bytes ≈ 18MB
+  // worst case for the production cap).
   //
   // Note: this is a trade-off with the original "stream never
   // buffers" claim — the previous code streamed per-row, but
@@ -356,7 +327,7 @@ interface EmitCsvAuditArgs {
 /**
  * Emit the `csv_exported` audit row. Always emits on `streamSucceeded`
  * (including 0-row devices) so the operator's intent to export is
- * traceable. F20 fallback: if `userId` is `undefined`, emit anyway
+ * traceable. Fallback: if `userId` is `undefined`, emit anyway
  * with `subject: "unknown"` and log an error — preferring emission
  * over silence keeps the export durable even when the auth seam
  * regresses.
@@ -406,8 +377,8 @@ export const buildCsvRouter = (deps: BuildCsvRouterDeps): Router => {
       const { since, until } = window;
 
       // Device existence check. The CSV stream yields zero rows for
-      // unknown deviceIds, so this 404 surface must run BEFORE we
-      // start writing the body.
+      // unknown deviceIds, so this 404 surface must run BEFORE the
+      // body stream starts.
       if (!(await assertDeviceExists(res, deviceId, deps))) return;
 
       // Set wire headers BEFORE writing the first body byte so the
@@ -425,7 +396,7 @@ export const buildCsvRouter = (deps: BuildCsvRouterDeps): Router => {
         // The `X-CSV-Truncated` header is set BEFORE the body
         // stream starts (to `"false"`). When the stream loop
         // detects a `cap + 1`-th row, it fires this callback so
-        // we can flip the header to `"true"` BEFORE the chunked
+        // the header can be flipped to `"true"` BEFORE the chunked
         // response flushes to the wire. Setting headers after
         // `res.write` would error with `ERR_HTTP_HEADERS_SENT`.
         onTruncated: () => res.setHeader("X-CSV-Truncated", "true"),
@@ -458,10 +429,8 @@ export const buildCsvRouter = (deps: BuildCsvRouterDeps): Router => {
 
 /**
  * Production adapter — wires the lazy-resolved Prisma client into
- * the repository's module-scoped seam. Mirrors the lazy-resolver
- * pattern in `latestRouter.ts:100-144` and `wiring.ts:53-76` so the
- * api can import this module without booting Prisma at construction
- * time.
+ * the repository's module-scoped seam so the api can import this
+ * module without booting Prisma at construction time.
  *
  * Returns the bound `streamForCsv` function so callers (mainly
  * `index.ts`) can keep a stable reference for the router's
@@ -480,14 +449,11 @@ export const buildPrismaStreamForCsv = (
  * `false` only when the row does not exist.
  *
  * Prisma's `P2025` error code is the canonical "record not found"
- * signal (raised when a `findUnique` returns `null` is NOT a throw
- * — but when callers use `findUniqueOrThrow` or when subsequent
- * `update`/`delete` ops miss, Prisma throws `P2025`). For the
- * defensive case where `findUnique` itself throws (DB outage,
- * connection refused, schema drift), we RE-THROW rather than
- * swallowing — the router's catch block converts any non-`P2025`
- * error into 500, so an outage surfaces as `503`-shaped 500
- * instead of misleading 404 not_found.
+ * signal. For the defensive case where `findUnique` itself throws
+ * (DB outage, connection refused, schema drift), the function
+ * RE-THROWS rather than swallowing — the router's catch block
+ * converts any non-`P2025` error into 500, so an outage surfaces
+ * as `503`-shaped 500 instead of misleading 404 not_found.
  */
 interface PrismaDeviceClient {
   device: { findUnique: (args: unknown) => Promise<unknown> };

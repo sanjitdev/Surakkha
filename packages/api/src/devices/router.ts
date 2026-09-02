@@ -1,5 +1,5 @@
 /**
- * `GET /api/devices` — Story 2.7 — Map roster.
+ * `GET /api/devices` — Map roster.
  *
  * Wire shape:
  *   200 → { devices: ReadonlyArray<{
@@ -14,23 +14,14 @@
  * `MAX(Reading.serverReceivedAt)` per device. Devices with no
  * reading yet surface `last_reading_at: null` (the map renders them
  * in the `offline` severity token). RBAC: `read Device` — every
- * authenticated role can read (matrix grants `Device.read` to all
- * four v1 roles).
- *
- * Implementation detail — per-device `MAX(serverReceivedAt)`:
- *   Postgres' `DISTINCT ON (device_id)` keeps one row per device
- *   (the one with the highest serverReceivedAt) when joined against
- *   the Reading table. The Devices table itself is one row per
- *   device, so the join is a LEFT OUTER JOIN — devices with zero
- *   readings stay in the result with `last_reading_at: null`.
+ * authenticated role can read.
  *
  * Empty: `{ devices: [] }` — covers the "DB down → empty state"
  *   path (the dashboard's `MapRegion` falls back to "No devices" if
  *   this 500s).
  *
  * Sort order: `id ASC` — stable across refreshes so the map marker
- *   order never shuffles. Operator mental model: same order every
- *   paint.
+ *   order never shuffles.
  */
 import { type DevicesResponse, type DeviceSummary } from "@surakkha/shared/dashboard";
 import express, { type Response, type Router } from "express";
@@ -52,7 +43,7 @@ export interface DevicesRosterDeps {
 }
 
 /**
- * Build the `/api/devices` router. Mounted AFTER `authenticate` in
+ * Build the `/api/devices` route. Mounted AFTER `authenticate` in
  * `packages/api/src/index.ts`.
  *
  * Lazy Prisma: this module never imports `@prisma/client`. The
@@ -73,10 +64,9 @@ export const buildDevicesRouter = (deps: DevicesRosterDeps): Router => {
       } catch (err) {
         // Surface a 500 so the dashboard's `useDashboardDevices`
         // marks the query `isError` and `MapRegion` falls back to
-        // the "No devices" empty state (AC6 — `GET /api/devices`
-        // 500 → the map region renders its empty state, KPI band +
-        // Live Readings table continue rendering from the working
-        // readings cache).
+        // the "No devices" empty state (the map region renders its
+        // empty state, KPI band + Live Readings table continue
+        // rendering from the working readings cache).
         console.error("api/devices: prisma error", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }

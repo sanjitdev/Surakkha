@@ -1,20 +1,11 @@
 /**
- * `devices/wiring.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:185-225`).
+ * Lazy-resolved list-reader for `/api/devices`. Returns the device
+ * roster joined to `MAX(Reading.serverReceivedAt)` so the dashboard's
+ * map view can place one marker per device.
  *
- * Lazy-resolved list-reader for `/api/devices`. Returns the
- * device roster joined to `MAX(Reading.serverReceivedAt)` so the
- * dashboard's map view can place one marker per device.
- *
- * Why a separate file: `src/index.ts` was past the `max-lines:
- * 500` ESLint ceiling (842 lines pre-distillation). Extracting
- * the list-reader narrows the `(client as any)` bypass to ONE
- * place (the lazy-resolver boundary) and removes the bypass from
- * `index.ts` entirely.
- *
- * Empty / DB-down contract: returns `[]` on any Prisma failure
- * so the map's "No devices" empty-state path is reachable when
- * the DB is unavailable.
+ * Empty / DB-down contract: returns `[]` on any Prisma failure so
+ * the map's "No devices" empty-state path is reachable when the DB
+ * is unavailable.
  */
 import { createLogger } from "@surakkha/shared/logger";
 
@@ -34,16 +25,16 @@ export interface DeviceRosterRow {
  * `last_reading_at: null` (the map renders them in the `offline`
  * severity token).
  *
- * Sort order: `id ASC` — stable across refreshes so the map
- * marker order never shuffles.
+ * Sort order: `id ASC` — stable across refreshes so the map marker
+ * order never shuffles.
  */
 export const buildDevicesRosterListReader =
   (resolvePrismaClient: () => Promise<unknown>): (() => Promise<readonly DeviceRosterRow[]>) =>
   async () => {
     try {
       // The single `(client as any)` boundary — `getPrisma()` returns
-      // `Promise<unknown>` by design (see `boot/db.ts`); narrow here
-      // so the rest of this function sees a structural type.
+      // `Promise<unknown>` by design; narrow here so the rest of this
+      // function sees a structural type.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = (await resolvePrismaClient()) as any;
       const rows = (await client.$queryRaw`

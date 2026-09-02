@@ -1,55 +1,11 @@
 /**
- * `GET /api/alerts` — Story 3.5 (FR-15).
+ * `GET /api/alerts` — dashboard-facing alert list router.
  *
- * Dashboard-facing alert list. Mirrors `incidents/recentRouter.ts:65`
- * factory shape (buildXxxRouter(deps): Router). RBAC:
- * `authorize({ action: "read", resource: "Alert" }, audit)` — all 4
- * roles can read per the matrix at
- * `architecture-appendix-rbac.md` lines 47-50.
- *
- * Pagination: `(openedAt DESC, id DESC)` with an opaque base64url-
- * encoded JSON cursor `{ t: <ms>, i: <uuid> }`. The `id` tie-break
- * handles same-millisecond inserts from multiple devices (per AC9).
- * Default `limit=10`, max `limit=50`; cursor absent on the first
- * page; `next_cursor` non-null iff the returned page is full
- * (`rows.length === limit`).
- *
- * Defaults + filters (AC9 + AC10):
- *   - Default `clearedAt: null` (OPEN-only view). The user's locked
- *     decision: dashboard's main view shows active issues; the
- *     closed-archive requires an explicit `?cleared=true`.
- *   - `?cleared=true|false` overrides the default when present.
- *   - `?acknowledged=true|false` (mutually exclusive — the spec
- *     does NOT define a "no filter" + "filter applied" surface
- *     simultaneously; absence = no filter).
- *   - `?deviceId=<uuid>` (UUID-validated at parse — invalid UUIDs
- *     are 400, not silently propagated).
- *   - `?severity=info|warning|critical` (case-sensitive — uppercase
- *     `CRITICAL` rejected at parse, NOT silently coerced).
- *   - All filters compose as AND; a single `where` object is passed
- *     to the data layer (NOT four separate calls — pinned by
- *     LIST_FILTERS_COMPOSE + LIST_LINKED_ALERTS_BATCHED).
- *
- * Linked-alerts predecessor history (AC11):
- *   - Single batched `prisma.alert.findMany({ where: { OR:
- *     pageRows.map(r => ({ deviceId, metric, severity, id: { not: r.id },
- *     clearedAt: { not: null } })) }, orderBy: { openedAt: 'desc' },
- *     take: pageRows.length * 5 })` per request. Per-row slice to 5.
- *   - The `clearedAt: { not: null }` predicate is load-bearing: the
- *     partial unique index `Alert_open_unique_idx WHERE clearedAt IS
- *     NULL` makes "previous OPEN alert" structurally impossible, so
- *     the predecessor is always CLOSED.
- *   - For CLOSED page rows, `linked_alerts = []` directly (the
- *     predecessor lookup would itself match the closed page row
- *     itself, which is excluded via `id: { not: r.id }` — so the
- *     result is always empty for closed page rows; we skip the
- *     batched lookup entirely when no page rows are OPEN).
- *
- * Why NOT use the 3.4 `findOpenAlert` seam
- * (`packages/api/src/rules/findOpenAlert.ts:78`): the predecessor is
- * always CLOSED (by the partial-index contract), and `findOpenAlert`
- * hardcodes `clearedAt: null`. The batched `findMany({ OR: [...] })`
- * is the right shape for the predecessor-history lookup.
+ * Factory shape mirrors other routers: `buildAlertListRouter(deps): Router`.
+ * Pagination: `(openedAt DESC, id DESC)` with opaque base64url cursor.
+ * Default `limit=10`, max `limit=50`. Default view is OPEN-only.
+ * Linked-alerts predecessor history is fetched in a SINGLE batched
+ * call per request (NOT per row).
  */
 import {
   type AlertLinked,
@@ -169,8 +125,7 @@ export interface AlertListRepository {
 
 /**
  * Production adapter — narrow the real `@prisma/client` to the
- * `AlertListRepository` slice. Mirrors `resolvePrismaAlertReader`
- * at `rules/findOpenAlert.ts:62`.
+ * `AlertListRepository` slice.
  */
 export const resolveAlertListRepository = (prisma: unknown): AlertListRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -238,12 +193,11 @@ const querySchema = z.object({
  * Build the `where` object passed to `prisma.alert.findMany`.
  *
  * Default behaviour (no `cleared` filter): `clearedAt: null`
- * (OPEN-only view per AC9 + user's locked decision).
+ * (OPEN-only view).
  *
  * `?cleared=true` → `clearedAt: { not: null }` (closed archive).
  * `?cleared=false` → `clearedAt: null` (explicit override of the
- * default; semantically the same as the default but pinned by
- * LIST_FILTER_CLEARED_FALSE so the test rig asserts the override).
+ * default; semantically the same as the default).
  *
  * All other filters compose as AND; no OR-leakage (a single
  * `where` object passed to Prisma).
@@ -263,12 +217,11 @@ const buildWhere = (
 ): Record<string, unknown> => {
   const where: Record<string, unknown> = {};
 
-  // `clearedAt` default + override (AC9). The default (no filter)
-  // and the explicit `?cleared=false` override are semantically
-  // identical (both → `clearedAt: null`); the explicit override
-  // exists so the wire response carries the user's intent in
-  // `?cleared=false` round-trips (LIST_FILTER_CLEARED_FALSE pins
-  // this branch separately).
+  // `clearedAt` default + override. The default (no filter) and
+  // the explicit `?cleared=false` override are semantically identical
+  // (both → `clearedAt: null`); the explicit override exists so the
+  // wire response carries the user's intent in `?cleared=false`
+  // round-trips.
   if (filters.cleared === true) {
     where["clearedAt"] = { not: null };
   } else {
@@ -305,9 +258,7 @@ const buildWhere = (
  *   1. `authenticate()` (mounted upstream) → sets `req.user`.
  *   2. `authorize({ action: "read", resource: "Alert" }, audit)` →
  *      all 4 roles allowed; the middleware also writes a
- *      `rbac_allowed` audit row on the allow path (per the existing
- *      `authorize()` middleware at
- *      `packages/api/src/middleware/authorize.ts:189`).
+ *      `rbac_allowed` audit row on the allow path.
  *   3. Zod parse `req.query` → 400 on any invalid filter (with
  *      `issues` from Zod).
  *   4. Decode `?cursor=<opaque>` → 400 on base64/JSON/shape failure.
@@ -315,7 +266,7 @@ const buildWhere = (
  *   6. If page is non-empty AND has at least one OPEN row, run ONE
  *      batched `prisma.alert.findMany({ where: { OR: [...] }, ... })`
  *      for predecessor history. (CLOSED page rows get `linked_alerts = []`
- *      directly — no lookup, per AC11.)
+ *      directly — no lookup.)
  *   7. Map per-page-row predecessor slice via `buildAlertSummary`.
  *   8. Build `next_cursor` from the last page row iff
  *      `rows.length === limit`.
@@ -383,9 +334,9 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
           },
         });
 
-        // Linked-alerts predecessor lookup. AC11: batched into a
-        // SINGLE `findMany({ where: { OR: [...pageRowKeys] } })` call
-        // — NOT one-per-row. Closed page rows have no predecessors
+        // Linked-alerts predecessor lookup. Batched into a SINGLE
+        // `findMany({ where: { OR: [...pageRowKeys] } })` call —
+        // NOT one-per-row. Closed page rows have no predecessors
         // (the partial unique index makes "previous OPEN alert"
         // structurally impossible, and the lookup would match the
         // closed page row itself, which is excluded via `id: { not: r.id }`).
@@ -472,9 +423,8 @@ export const buildAlertListRouter = (deps: AlertListDeps): Router => {
         }
         res.status(HTTP_OK).json(validated.data);
       } catch (err) {
-        // AC7-equivalent: dashboard regions render empty states on
-        // any read failure; surface 500 so TanStack Query marks the
-        // query `isError`.
+        // Surface 500 so the dashboard's TanStack Query marks the
+        // query `isError` and the regions render their empty states.
         console.error("api/alerts: prisma error", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }

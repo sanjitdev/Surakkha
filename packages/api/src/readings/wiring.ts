@@ -1,21 +1,10 @@
 /**
- * `readings/wiring.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:132-177`).
- *
- * Lazy-resolved list-reader for `/api/readings/latest`. Returns
- * the typed adapter function; the router awaits the first-use
- * Prisma resolution at request time, so a transient DB outage at
- * boot does NOT crash the api — the wrapper rejects on first
- * request and the router's per-handler catch surfaces 500
- * instead of leaking a stack trace.
- *
- * Why a separate file:
- *   - `src/index.ts` was already past the `max-lines: 500`
- *     ESLint ceiling (842 lines pre-distillation). The
- *     list-reader's SQL query is the longest `(client as any)`
- *     bypass in the file; extracting it narrows the bypass to
- *     ONE place (the lazy-resolver boundary) and removes the
- *     bypass from `index.ts` entirely.
+ * Lazy-resolved list-reader for `/api/readings/latest`. Returns the
+ * typed adapter function; the route awaits the first-use Prisma
+ * resolution at request time, so a transient DB outage at boot does
+ * NOT crash the api — the wrapper rejects on first request and the
+ * route's per-handler catch surfaces 500 instead of leaking a stack
+ * trace.
  *
  * Wire shape:
  *   `GET /api/readings/latest` returns `LatestReadingsResponse`
@@ -23,10 +12,8 @@
  *   `DISTINCT ON (device_id)` keeps one row per device sorted by
  *   `serverReceivedAt DESC`).
  *
- * Empty / DB-down contract: returns `[]` on any Prisma failure.
- * Mirrors AC7: dashboard regions render their empty states on a
- * 500 from this endpoint (TanStack Query marks the query
- * `isError`).
+ * Empty / DB-down contract: returns `[]` on any Prisma failure so
+ * the empty-state path is reachable when the DB is unavailable.
  */
 import { type LatestReadingPayload } from "@surakkha/shared/dashboard";
 import { createLogger } from "@surakkha/shared/logger";
@@ -35,9 +22,9 @@ import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 const logger = createLogger({ name: "surakkha-api", level: "info" });
 
 /**
- * List the latest reading per device, joined with `Device.name`
- * so the dashboard's KPI band + Live Readings table can render
- * without a second round-trip.
+ * List the latest reading per device, joined with `Device.name` so
+ * the dashboard's KPI band + Live Readings table can render without
+ * a second round-trip.
  *
  * Returns `[]` on any Prisma failure so the empty-state path is
  * reachable when the DB is unavailable.
@@ -47,8 +34,8 @@ export const buildLatestReadingsListReader =
   async () => {
     try {
       // The single `(client as any)` boundary — `getPrisma()` returns
-      // `Promise<unknown>` by design (see `boot/db.ts`); narrow here
-      // so the rest of this function sees a structural type.
+      // `Promise<unknown>` by design; narrow here so the rest of this
+      // function sees a structural type.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = (await resolvePrismaClient()) as any;
       // Postgres DISTINCT ON keeps one row per device_id (the one with

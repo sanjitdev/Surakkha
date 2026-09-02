@@ -1,24 +1,14 @@
 /**
- * `alerts/wiring.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:326-414`).
- *
  * Lazy-resolved wiring for `/api/alerts/:alert_id/acknowledge` +
- * `GET /api/alerts`. Mirrors the pattern at
- * `notifications/routerWiring.ts` + `incidents/routerWiring.ts`:
- * the router is mounted at boot with a forwarder-shaped deps
- * object that resolves Prisma on first request. A transient DB
- * outage at boot does NOT crash the api.
+ * `GET /api/alerts`.
  *
- * Why a separate file: `src/index.ts` was past the `max-lines:
- * 500` ESLint ceiling (842 lines pre-distillation). The alert
- * wrappers (broadcast target + two forwarder wrappers + cached
- * prisma) were 90 lines on their own.
+ * The route is mounted at boot with a forwarder-shaped deps object
+ * that resolves Prisma on first request. A transient DB outage at
+ * boot does NOT crash the api.
  *
- * The `BroadcastTarget` adapter (formerly `alertBroadcastTarget`)
- * adapts the full Socket.IO server to the `alert:acknowledged`
- * emit shape the router expects (`to(room).emit(event, payload)`
- * — same shape as 3.4's `alert:opened` emit in
- * `applyTransition.ts:189`).
+ * The `BroadcastTarget` adapter adapts the full Socket.IO server to
+ * the `alert:acknowledged` emit shape the route expects
+ * (`to(room).emit(event, payload)`).
  */
 import { type Express } from "express";
 import { type Server as IOServer } from "socket.io";
@@ -38,7 +28,7 @@ import {
 
 /**
  * Adapter from the full Socket.IO server to the narrow broadcast
- * shape the acknowledge router expects.
+ * shape the acknowledge route expects.
  */
 const buildAlertBroadcastTarget = (io: IOServer) => ({
   to: (room: string) => ({
@@ -81,10 +71,10 @@ export const mountAlertRouters = (input: {
     return cachedRepos;
   };
 
-  // Forwarder wrapper for the acknowledge router. Each method
+  // Forwarder wrapper for the acknowledge route. Each method
   // awaits the resolve-on-first-use chain then forwards to the
   // typed adapter. The cast at the bottom keeps the type narrow
-  // so the router doesn't see the full Prisma client.
+  // so the route doesn't see the full Prisma client.
   const ackWrapper = {
     alert: {
       updateMany: async (args: unknown) => {

@@ -1,35 +1,11 @@
 /**
- * `csvSerialization.ts` — Story 5.2 CSV export.
+ * `csvSerialization.ts` — pure CSV-row serializer for the readings export.
  *
- * Pure helper that converts one `ReadingRow` into N CSV lines
- * (one line per metric key in the row's `metrics` object).
- * RFC 4180 quoting for values containing `"`, `,`, or `\n`.
- *
- * Wire shape (per the spec):
- *   - Header line: `device_id,ts,metric,value`
- *     (one column per axis; long format so the schema stays forward-
- *     compatible when a v2 contract adds a 7th metric)
- *   - Data lines: one row per `(reading, metric_key)` tuple
- *   - Truncation signal: NOT in the body. The truncation flag is
- *     exposed as an HTTP response header (`X-CSV-Truncated: true |
- *     false`) set BEFORE the first body byte. The trailer line that
- *     used to live in the body (`# truncated:<true|false>`) was
- *     dropped because the `#` comment marker is not part of
- *     RFC 4180 and Excel users saw a junk row in their spreadsheet.
- *     Consumers MUST inspect `X-CSV-Truncated` to detect truncation.
- *
- * Why long format (one row per metric) and not wide:
- *   - `MetricKeySchema.options` adds keys via a single tuple (see
- *     `packages/shared/src/telemetry.ts:58-65`); a wide CSV would
- *     need a schema migration to widen when a metric is added.
- *   - Long format trades row count for forward compat; the 100k
- *     cap is the existing safety belt for cardinality.
- *
- * Why a separate module:
- *   - The router stays focused on the HTTP seam + audit row; the
- *     serializer is pure and unit-testable without a real DB.
- *   - The serializer is the seam a future Story 5.x can swap for a
- *     parquet / arrow emitter without touching the router.
+ * Converts one `ReadingRow` into N CSV lines (one line per metric
+ * key in the row's `metrics` object). RFC 4180 quoting for values
+ * containing `"`, `,`, or `\n`. The truncation flag is exposed as
+ * an HTTP response header (`X-CSV-Truncated: true | false`) set
+ * BEFORE the first body byte — not as a body trailer.
  */
 import {
   type MetricKey,
@@ -126,7 +102,7 @@ const csvLineFor = (args: CsvLineForArgs): string => {
  * encoding keeps the wire linear as the dataset scales).
  */
 export const readingRowToCsvLines = (row: ReadingRow): string[] => {
-  // F12 — validate the metrics payload. We then iterate the
+  // Validate the metrics payload. The function then iterates the
   // RAW `row.metrics` (not the parsed object) so v2 extra keys
   // — which Zod's strict `.object()` strips — still surface as
   // CSV lines. If validation fails, the row is skipped entirely

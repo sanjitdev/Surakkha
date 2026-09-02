@@ -1,17 +1,11 @@
 /**
- * `POST /api/alerts/:alert_id/acknowledge` — Story 3.5 (FR-15).
+ * `POST /api/alerts/:alert_id/acknowledge` — compare-and-set ack router.
  *
- * Compare-and-set: `updateMany({ where: { id, acknowledgedAt: null },
- * data: { acknowledgedAt, acknowledgedByUserId } })`. The
- * `acknowledgedAt: null` predicate is the serialization point —
- * two simultaneous acks race on Postgres's row tuple lock, exactly
- * one wins (`count === 1`), the loser re-reads and returns 200
- * with the existing row (idempotent path). `alert:acknowledged`
- * emit ONLY on `count === 1`. The same `now()` is passed to both
- * the DB write and the response body (Postgres `DateTime` is
- * `TIMESTAMP(3)`; two separate clock reads risk a 1ms drift).
- * RBAC: `acknowledge × Alert` = Admin + Operator (Viewer +
- * Technician → 403 + audit).
+ * Uses `updateMany({ where: { id, acknowledgedAt: null }, data: {...} })`
+ * so two simultaneous acks serialize on Postgres's row tuple lock.
+ * Exactly one wins (`count === 1`); the loser takes the idempotent
+ * re-ack path. `alert:acknowledged` emit fires only on the first ack.
+ * RBAC: `acknowledge × Alert` = Admin + Operator.
  */
 import {
   type AlertAcknowledgedEvent,

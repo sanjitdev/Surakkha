@@ -1,45 +1,20 @@
 /**
- * `csvRepository.ts` — Story 5.2 CSV export.
+ * `csvRepository.ts` — lazy-resolved CSV streaming seam for the
+ * readings export.
  *
- * Lazy-resolved `streamForCsv(deviceId, since, until, maxRows)`
- * `AsyncIterable<ReadingRow>` over the raw `Reading` table. Streams
- * via keyset pagination on `(ts ASC, id ASC)` so the wire stays
- * linear as the dataset scales; a 30-day window for a busy device
- * can reach ~104k rows (6 metrics × ~17,280 readings/day) and we
- * refuse to buffer the full result in memory.
- *
- * Why keyset pagination on `(ts, id)`:
- *   - Plain `LIMIT 100000` would still return the same volume as the
- *     full table scan; the API process would allocate the rows even
- *     though only the first 100k is yielded. Keyset paging keeps
- *     each round-trip bounded.
- *   - `(ts ASC, id ASC)` is a stable ordering: ties on `ts` break by
- *     the unique `id`. Without the tie-breaker two rows sharing the
- *     same `ts` could be duplicated or skipped across pages.
- *
- * Why a separate repo file (not inlined in `csvRouter.ts`):
- *   - `csvRouter.ts` is the HTTP seam; this file owns the SQL so the
- *     `(client as any)` boundary lives in one place (mirrors
- *     `latestRouter.ts`'s separation from `wiring.ts`).
- *   - Tests inject a stub iterator and never touch Prisma.
- *
- * Stop conditions:
- *   - `maxRows` reached → yield nothing more (caller flips the
- *     `truncated` trailer).
- *   - Underlying `Symbol.asyncIterator` exhausted naturally → end
- *     iteration.
- *
- * Lazy Prisma: this module never imports `@prisma/client`. The
- * production wiring injects `resolvePrismaClient` (same seam as
- * `wiring.ts:53-76`).
+ * Exposes `streamForCsv(deviceId, since, until, maxRows)` returning
+ * `AsyncIterable<ReadingRow>` over the raw `Reading` table. Uses
+ * keyset pagination on `(ts ASC, id ASC)` so the wire stays
+ * linear as the dataset scales — a 30-day window for a busy
+ * device can reach ~104k rows.
  */
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
 
 /**
  * One Reading row in the canonical projection the CSV layer
- * expects. Mirrors `Reading` (`packages/db/prisma/schema.prisma:79`)
- * but with `metrics` narrowed to `TelemetryMetrics` (the v1 wire
- * contract shape, not the raw `Json` column type).
+ * expects. Mirrors the `Reading` Prisma model but with `metrics`
+ * narrowed to `TelemetryMetrics` (the v1 wire contract shape,
+ * not the raw `Json` column type).
  */
 export interface ReadingRow {
   readonly id: string;
@@ -58,7 +33,8 @@ const PAGE_SIZE = 2_500;
 /**
  * Minimal Prisma-client shape this module needs. Declared locally
  * so this file never imports `@prisma/client` (the lazy-resolver
- * boundary returns `Promise<unknown>` and we narrow at the seam).
+ * boundary returns `Promise<unknown>` and the function narrows at
+ * the seam).
  */
 interface PrismaClientSubset {
   $queryRawUnsafe: (sql: string, ...args: unknown[]) => Promise<unknown[]>;
@@ -66,12 +42,9 @@ interface PrismaClientSubset {
 
 /**
  * Raw projection returned by the SQL — `ts` may arrive as a `Date`
- * or a `string` (depending on Postgres driver behavior), so we
- * narrow at the iteration boundary and re-wrap into the canonical
- * `ReadingRow` shape on yield. Declared as a named interface so
- * the two branches of the page-1 vs page-N ternary below can
- * share an annotation (TS rejects an inline anonymous shape on a
- * self-referential `const`).
+ * or a `string` (depending on Postgres driver behavior), so the
+ * function narrows at the iteration boundary and re-wraps into
+ * the canonical `ReadingRow` shape on yield.
  */
 interface RawReadingRow {
   readonly id: string;
@@ -178,14 +151,6 @@ const coerceDate = (raw: Date | string): Date => (raw instanceof Date ? raw : ne
  * `[since, until)` (inclusive lower bound, exclusive upper bound).
  * Yields in `ts ASC, id ASC` order. Stops yielding once `maxRows`
  * rows have been delivered (the caller flips `truncated: true`).
- *
- * Implementation notes (lazy-resolver + raw SQL seam):
- *   - The lazy-resolver seam lives in `buildPrismaStreamForCsv`
- *     (`csvRouter.ts:251-254`), which sets the module-scoped
- *     `resolvePrismaClient` and forwards the remaining args; this
- *     keeps the public signature at the spec-mandated 4 params.
- *   - The `(client as any)` boundary is localized to this function
- *     (mirrors `wiring.ts:53-76`).
  */
 /* eslint-disable max-params -- spec mandates 4 positional args */
 export const streamForCsv = (
@@ -247,9 +212,9 @@ export const streamForCsv = (
 
 /**
  * Module-scoped lazy-resolver seam. Set once at boot by
- * `buildPrismaStreamForCsv(getPrisma)` in `csvRouter.ts:251-254`;
- * the public `streamForCsv` reads it lazily on the first iteration
- * so a transient DB outage at boot does not crash the api.
+ * `buildPrismaStreamForCsv(getPrisma)`; the public `streamForCsv`
+ * reads it lazily on the first iteration so a transient DB outage
+ * at boot does not crash the api.
  *
  * Module-scope state is the smallest change to the spec-mandated
  * public signature `streamForCsv(deviceId, since, until, maxRows)`

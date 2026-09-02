@@ -1,35 +1,10 @@
 /**
- * `/api/readings/latest` — Story 2.6.
+ * `/api/readings/latest` — dashboard router returning the latest
+ * reading per device, joined with `Device.name`.
  *
- * Returns the latest reading per device, joined with `Device.name`
- * for the dashboard's KPI band + Live Readings table. RBAC-gated by
- * `authorize({ action: "read", resource: "Device" }, audit)` — every
- * authenticated role can read (matrix grants `Device.read` to all
- * four v1 roles).
- *
- * Wire shape:
- *   200 → { readings: Array<{
- *             device_id: string,
- *             name: string | null,
- *             ts: number,
- *             server_received_at: string (ISO 8601),
- *             metrics: TelemetryMetrics,
- *             flags: string[]
- *           }> }
- *   Empty list when no readings exist.
- *
- * Implementation detail — Prisma's MAX-by-group:
- *   The "latest per device" query requires grouping by `deviceId`
- *   and selecting `MAX(serverReceivedAt)` then re-joining back to
- *   the row that carries that timestamp. Prisma 5 supports this via
- *   `groupBy({ by: ["deviceId"], _max: { serverReceivedAt: true } })`
- *   followed by a `findMany` for the matching rows. The simpler
- *   `findFirst({ orderBy: serverReceivedAt desc })` per device is
- *   N round-trips — the grouped query keeps the surface linear as
- *   devices scale.
- *
- * The function is injectable via `LatestReadingDeps.listLatest` so
- * tests do not require a live Prisma + Postgres instance.
+ * The query uses Postgres's `DISTINCT ON (device_id)` window
+ * function to keep round-trips linear as devices scale (no N+1).
+ * RBAC-gated by `authorize({ action: "read", resource: "Device" })`.
  */
 import { type LatestReadingPayload, type LatestReadingsResponse } from "@surakkha/shared/dashboard";
 import { type TelemetryMetrics } from "@surakkha/shared/telemetry";
@@ -71,8 +46,7 @@ export const buildLatestReadingsRouter = (deps: LatestReadingsDeps): Router => {
         res.status(HTTP_OK).json(body);
       } catch (err) {
         // Surface a 500 so the dashboard's TanStack Query marks the
-        // query `isError` and the four regions render their empty
-        // states per AC7. The structured logger captures the cause.
+        // query `isError` and the regions render their empty states.
         console.error("api/readings/latest: prisma error", err);
         res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
       }
@@ -90,9 +64,7 @@ export const buildLatestReadingsRouter = (deps: LatestReadingsDeps): Router => {
  * query per refresh and avoiding N+1.
  *
  * Returns `[]` on any Prisma failure so the dashboard's empty-
- * state path is reachable when the DB is unavailable; this matches
- * the AC7 contract ("`GET /api/readings/latest` 500 (DB down)...
- * regions render their empty states").
+ * state path is reachable when the DB is unavailable.
  *
  * Lazy-imported so the unit-test suite can mount this router
  * without a real Prisma client.

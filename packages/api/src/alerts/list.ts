@@ -1,30 +1,22 @@
 /**
- * Pure list helpers — Story 3.5.
+ * Pure list helpers for `GET /api/alerts`.
  *
  * Two surfaces:
  *
  *   1. `buildAlertSummary(row, linkedAlerts)` maps a Prisma `Alert`
  *      row + a `linkedAlerts[]` array (already-resolved predecessor
  *      history) to the wire `AlertSummary` shape. Snake-case keys
- *      (matches the dashboard's existing convention at
- *      `packages/api/src/incidents/recentRouter.ts:160`).
+ *      match the dashboard's existing convention.
  *
  *   2. Cursor encode/decode for `(openedAt DESC, id DESC)` pagination.
  *      Wire format: base64url-encoded JSON `{ t: <ms>, i: <uuid> }`.
  *      The `id` tie-break handles same-millisecond inserts from
- *      multiple devices (per AC9 pin in
- *      `spec-3-5-alert-lifecycle.md`).
+ *      multiple devices.
  *
  * Cursor format rationale (number ms, not ISO string): keeps the wire
  * payload compact and lossless against Postgres's `DateTime` resolution
- * (TIMESTAMP(3) — millisecond precision). The base64url alphabet
- * (`A-Z a-z 0-9 - _`) is URL-safe and matches the
- * `prisma.alert.findMany({ where: { ... < (cursor.t, cursor.i) } })`
- * row-comparison expected by Postgres.
- *
- * The decoder validates the JSON shape via Zod; base64-decode failure,
- * JSON-parse failure, and shape-mismatch failures all surface as 400
- * upstream (the router's `safeParse` handles the conversion).
+ * (TIMESTAMP(3) — millisecond precision). The base64url alphabet is
+ * URL-safe and matches the row-comparison expected by Postgres.
  */
 import { z } from "zod";
 
@@ -32,7 +24,7 @@ import type { AlertLinked, AlertSummary } from "@surakkha/shared";
 
 /**
  * Minimum shape `buildAlertSummary` reads off a Prisma `Alert` row.
- * Mirrors the `select` projection the list router passes to Prisma.
+ * Mirrors the `select` projection the list route passes to Prisma.
  */
 export interface AlertRowShape {
   readonly id: string;
@@ -58,7 +50,7 @@ const toIso = (d: Date | null): string | null =>
 /**
  * Map one Prisma `Alert` row + its predecessor list to the wire
  * `AlertSummary` shape. The `linkedAlerts` array is REQUIRED — the
- * router always populates it (closed page rows get `[]`, open page
+ * route always populates it (closed page rows get `[]`, open page
  * rows get the batched predecessor history). The spread preserves
  * the readonly source while satisfying the wire `AlertSummary`
  * shape's mutable `linked_alerts` array field.
@@ -96,7 +88,7 @@ const CursorPayloadSchema = z.object({
 
 /**
  * Encode a `(openedAt, id)` tuple as the wire cursor (base64url-encoded
- * JSON). Returns an empty string on empty input — the router should
+ * JSON). Returns an empty string on empty input — the route should
  * never pass null values, but the defensive check keeps the helper
  * total.
  */
@@ -110,7 +102,7 @@ export const encodeCursor = (cursor: AlertCursor): string => {
 /**
  * Decode the wire cursor back to a `(openedAt, id)` tuple. Throws
  * `ZodError` on any failure path (base64-decode, JSON parse, shape
- * mismatch) — the router catches and surfaces as 400.
+ * mismatch) — the route catches and surfaces as 400.
  */
 export const decodeCursor = (opaque: string): AlertCursor => {
   const json = Buffer.from(opaque, "base64url").toString("utf-8");
