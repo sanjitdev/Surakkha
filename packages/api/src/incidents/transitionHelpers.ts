@@ -1,20 +1,9 @@
 /**
- * `transitionHelpers.ts` — Story 4.2.
- *
- * Pure support helpers extracted from `router.ts` so the route
- * module stays under the lint `max-lines` ceiling (500). The
- * helpers handle every non-route concern of the transition
- * pipeline:
- *
- *   - Validation: `prepareTransitionContext` + `loadOrRespond`.
- *   - Pure transition: `computeTransition`.
- *   - Ownership: `runOwnershipCheck` + `maybeOwnershipDenied`.
- *   - DB write: `commitTransition` + `writeInvalidAttemptEvent`.
- *   - Response shaping: `respondInvalidAttempt` + `respondSuccess`
- *     + `logTransition` + `emitStateChanged`.
- *
- * The `runTransitionPipeline` orchestrator ties them together in
- * the order the route invokes them.
+ * `transitionHelpers.ts` — pure support helpers for the
+ * `/api/incidents/:id/...` transition router. Handles every
+ * non-route concern of the pipeline (parse → ownership → pure
+ * transition → commit → response) so `router.ts` stays under
+ * the lint `max-lines: 500` ceiling.
  */
 import { InvalidStateTransitionEnvelopeSchema } from "@surakkha/shared/error-envelope";
 import {
@@ -53,27 +42,12 @@ import {
   writeInvalidAttemptEvent,
 } from "./transitionSideEffects.js";
 
-// (HTTP status constants used in this file are imported directly from
-// `../httpStatus.js` above. The legacy re-export that lived here has
-// been retired — consumers should import from `../httpStatus.js`.)
-
 /**
- * Canonical 409 envelope for `invalid_state_transition` — closes
- * api critique P1 #3.
- *
- * Three pre-existing shapes (the typed state-machine miss via
- * `respondInvalidAttempt`, the OptimisticConcurrencyError branch
- * in `commitTransition`, and the P2002 partial-unique-index branch
- * in `commitTransition`) collapse to one discriminated body:
- *
- *   - typed state-machine miss:    { error, from, attempted }                  (no `reason`)
- *   - DB-layer concurrency:        { error, reason: "concurrent_modification" } (no `from`/`attempted`)
- *
- * Clients discriminate on which optional fields are present. The
- * Zod parse guarantees the wire shape conforms to the shared
- * `InvalidStateTransitionEnvelopeSchema` — a stray shape (e.g.
- * `{ error, foo: "bar" }`) throws at parse time so we don't ship
- * a malformed envelope.
+ * Canonical 409 envelope for `invalid_state_transition`. Three
+ * pre-existing shapes (typed state-machine miss, OptimisticConcurrencyError,
+ * P2002 partial-unique-index race) collapse to one discriminated
+ * body: `{ error, from?, attempted?, reason? }`. Clients
+ * discriminate on which optional fields are present.
  */
 export const respondInvalidStateTransition = (
   res: Response,
@@ -86,12 +60,6 @@ export const respondInvalidStateTransition = (
   res.status(HTTP_CONFLICT).json(envelope);
 };
 
-/**
- * `IncidentsRouterDeps` shape — duplicated here as a type-only
- * import so this file is self-contained. The real `IncidentsRouterDeps`
- * is in `./router.ts` and these two stay in sync via the type alias
- * declared at the bottom.
- */
 export interface IncidentsRouterDepsLike {
   readonly repo: IncidentStateRepository;
   readonly audit: AuditLogger;
@@ -102,7 +70,6 @@ export interface IncidentsRouterDepsLike {
   };
 }
 
-// Re-exports for downstream files.
 export {
   applyTransition,
   type ApplyTransitionInput,
@@ -123,18 +90,10 @@ interface RunPipelineInput {
   readonly res: Response;
 }
 
-/**
- * Path-param schema for `/api/incidents/:id/...`. UUID-shaped id.
- */
 const idPathSchema = z.object({
   id: z.string().uuid(),
 });
 
-/**
- * Body schemas per verb. All strict-Zod (`z.object({...})`); unknown
- * fields are rejected with 400. The shape per verb mirrors the
- * spec-4-2-incident-state-machine.md AC list.
- */
 const acknowledgeBodySchema = z.object({}).strict().optional();
 
 const assignBodySchema = z
@@ -151,20 +110,6 @@ const submitResultBodySchema = z
 
 const resolveBodySchema = z.object({}).strict().optional();
 
-/**
- * Story 4.11 — reopen body schema. Requires `reason ≥ MIN_LENGTH`
- * chars (trimmed). The Admin who reopens a misclassified incident
- * must record a meaningful explanation; the value lands in the
- * `IncidentEvent.payload.reason` for the audit trail.
- *
- * The length cap (`MAX_LENGTH` chars) matches the assign /
- * submit-result payload ceilings and prevents operator-misuse
- * (paste-the-PR-description anti-pattern). Trim prevents
- * whitespace-only reasons from passing.
- *
- * Bounds extracted to constants so the `no-magic-numbers` lint
- * rule does not flag the literal values in the Zod chain.
- */
 const REOPEN_REASON_MIN_LENGTH = 10;
 const REOPEN_REASON_MAX_LENGTH = 2000;
 
@@ -174,12 +119,6 @@ const reopenBodySchema = z
   })
   .strict();
 
-/**
- * Parse the request body for the given verb.
- *
- * Returns `{ ok: true, body }` on success; `{ ok: false, issues }`
- * on failure. The caller maps the failure to 400.
- */
 const parseBody = (
   verb: ActionVerb,
   raw: unknown,
@@ -202,18 +141,10 @@ const dispatchParse = (verb: ActionVerb, raw: unknown): z.SafeParseReturnType<un
     case "resolve":
       return resolveBodySchema.safeParse(raw ?? {});
     case "reopen":
-      // Story 4.11 — reopen requires `{ reason }` (≥ 10 chars). The
-      // body is required (not optional like the empty-body verbs);
-      // a missing body yields a Zod issues list that the caller
-      // surfaces as 400 `validation_error`.
       return reopenBodySchema.safeParse(raw);
   }
 };
 
-/**
- * Args for `prepareTransitionContext`. Wraps the path-param + body
- * + load-row validation pipeline.
- */
 export interface PrepareCtxInput {
   readonly deps: IncidentsRouterDepsLike;
   readonly verb: ActionVerb;
@@ -221,27 +152,17 @@ export interface PrepareCtxInput {
   readonly res: Response;
 }
 
-/**
- * Shape returned when validation passes. The handler can then
- * proceed straight to the state machine + writer.
- */
 export interface TransitionContext {
   readonly id: string;
   readonly body: Record<string, unknown> | undefined;
   readonly currentRow: IncidentRow;
 }
 
-/**
- * Validate the path-param + body + load the row. Writes the HTTP
- * 400/404 on failure (returns `null`). Extracted so the main
- * handler stays under the lint complexity ceiling.
- */
 export const prepareTransitionContext = async (
   input: PrepareCtxInput,
 ): Promise<TransitionContext | null> => {
   const { deps, verb, req, res } = input;
 
-  // Path-param validation.
   const idParsed = idPathSchema.safeParse(req.params);
   if (!idParsed.success) {
     res
@@ -251,7 +172,6 @@ export const prepareTransitionContext = async (
   }
   const { id } = idParsed.data;
 
-  // Body validation (verb-specific shape).
   const bodyParsed = parseBody(verb, req.body);
   if (!bodyParsed.ok) {
     res
@@ -261,7 +181,6 @@ export const prepareTransitionContext = async (
   }
   const body = bodyParsed.body as Record<string, unknown> | undefined;
 
-  // Load the row.
   const currentRow = await loadOrRespond({ deps, id, verb, res });
   if (currentRow === null) return null;
 
@@ -273,17 +192,9 @@ interface PipelineOutcome {
   readonly result: Extract<Awaited<ReturnType<typeof transition>>, { ok: true }>;
 }
 
-/**
- * Story 4.11 — per-cell RBAC gate for `reopen`. The matrix-level
- * RBAC check (`authorize({ action: "reopen", resource: "Incident" })`)
- * already runs in `router.ts`; this is the inner per-verb guard
- * that mirrors the `submit_result` ownership rule. A naïve matrix
- * would let Operator reopen because `update.Incident = Y` is
- * granted to Operator; the per-cell guard is the seam.
- *
- * Returns `true` if the request was denied (handler should
- * short-circuit), `false` otherwise.
- */
+/** Per-cell RBAC gate for `reopen`: Admin-only (the matrix-level
+ *  RBAC check already grants the cell). Returns `true` if denied
+ *  (handler should short-circuit). */
 export const maybeReopenAdminDenied = (input: {
   readonly deps: IncidentsRouterDepsLike;
   readonly verb: ActionVerb;
@@ -309,11 +220,6 @@ export const maybeReopenAdminDenied = (input: {
   return true;
 };
 
-/**
- * Run the (ownership-check → pure-transition → commit) pipeline.
- * Returns `null` if any step short-circuited (handler already
- * responded).
- */
 export const runTransitionPipeline = async (
   input: RunPipelineInput,
 ): Promise<PipelineOutcome | null> => {
@@ -361,13 +267,8 @@ interface OwnershipDeniedInput {
   readonly actorUserId: string | null;
 }
 
-/**
- * Returns `true` if the request was denied by the ownership check
- * (handler should short-circuit), `false` otherwise.
- */
 export const maybeOwnershipDenied = async (input: OwnershipDeniedInput): Promise<boolean> => {
   const { deps, verb, currentRow, req, res } = input;
-  // Only `submit_result` is Technician-only-mine; other verbs skip.
   if (verb !== "submit_result") return false;
   if (currentRow.assigneeUserId === req.user?.id) return false;
   return runOwnershipCheck({
@@ -398,20 +299,9 @@ type ComputeOutcome =
       readonly at: string;
     };
 
-/**
- * Per-verb body field extraction — pulls the verb-specific typed
- * value out of the validated body envelope. Split into small
- * helpers to keep `computeTransition`'s cyclomatic complexity
- * under the `complexity: 10` lint ceiling.
- */
 const extractOutcome = (
   body: Record<string, unknown> | undefined,
 ): InspectionOutcome | undefined => {
-  // Patch (code review 2026-08-27 #14): drop `outcome as never`.
-  // `transition()` accepts `InspectionOutcome | undefined` and
-  // the route's strict-Zod schema has already narrowed `body` to
-  // the verb-specific shape; pass through the typed value instead
-  // of bypassing the type system.
   const raw = body?.["outcome"];
   if (typeof raw !== "string") return undefined;
   return raw as InspectionOutcome;
@@ -426,20 +316,11 @@ const extractReopenReason = (
   verb: ActionVerb,
   body: Record<string, unknown> | undefined,
 ): string | null => {
-  // Story 4.11 — for `reopen`, the body is `{ reason: string }`
-  // (length-validated by Zod upstream). `null` for other verbs
-  // so the pure function's optional arg stays shape-stable.
   if (verb !== "reopen") return null;
   const raw = body?.["reason"];
   return typeof raw === "string" ? raw : null;
 };
 
-/**
- * Run the pure state machine on the validated row + body. Returns
- * either a successful `TransitionResult` (with the captured
- * `assigneeUserId` so the writer can use it) or a typed failure
- * for the handler to respond 409.
- */
 export const computeTransition = (input: ComputeInput): ComputeOutcome => {
   const { body, currentRow, verb, actorUserId } = input;
   const outcome = extractOutcome(body);
@@ -469,10 +350,6 @@ interface RespondSuccessInput {
   readonly res: Response;
 }
 
-/**
- * AC4 observability log + AC5 `incident:state_changed` emit +
- * respond 200 with the committed `IncidentPayload`.
- */
 export const respondSuccess = (input: RespondSuccessInput): void => {
   const { deps, currentRow, result, verb, actorUserId, applied, res } = input;
   logTransition({
@@ -502,10 +379,6 @@ interface LoadRowInput {
   readonly res: Response;
 }
 
-/**
- * Load the Incident row by id. Writes the HTTP error response
- * (`null` return = "I handled it, stop here") on any failure.
- */
 export const loadOrRespond = async (input: LoadRowInput): Promise<IncidentRow | null> => {
   const { deps, id, verb, res } = input;
   let row: IncidentRow | null;
@@ -533,10 +406,6 @@ interface InvalidAttemptResponseInput {
   readonly res: Response;
 }
 
-/**
- * Write the `invalid_transition_attempt` audit event + respond
- * 409 with the canonical `from/attempted` envelope.
- */
 export const respondInvalidAttempt = async (input: InvalidAttemptResponseInput): Promise<void> => {
   const { deps, incidentId, actorUserId, from, attempted, at, res } = input;
   await writeInvalidAttemptEvent({ deps, incidentId, actorUserId, from, attempted, at });
@@ -554,11 +423,6 @@ interface CommitTransitionInput {
   readonly res: Response;
 }
 
-/**
- * Apply the transition inside `$transaction`. Returns the applied
- * result on success, or `null` if the handler already wrote the
- * response (writer error or optimistic-concurrency loss).
- */
 export const commitTransition = async (
   input: CommitTransitionInput,
 ): Promise<Awaited<ReturnType<typeof applyTransition>> | null> => {
@@ -567,7 +431,6 @@ export const commitTransition = async (
     currentRow,
     result,
     actorUserId,
-    // `notification:critical` fires on UNSAFE only (Story 4.9 AC2).
     writeCriticalNotification: result.next_state === "UNSAFE",
     ...(verb === "assign" && typeof assigneeUserId === "string" ? { assigneeUserId } : {}),
   };
@@ -587,9 +450,8 @@ export const commitTransition = async (
       return null;
     }
     if (isPrismaErrorWithCode(err, "P2002")) {
-      // Patch (code review 2026-08-27 #1): partial-unique-index
-      // race on `notification:critical` is benign idempotency.
-      // Map to 409 instead of 500.
+      // Partial-unique-index race on `notification:critical` —
+      // map to 409 instead of 500 (benign idempotency).
       console.warn(
         `api/incidents/${id}/${verb}: P2002 collapsed to existing row, treating as concurrent_modification`,
       );
@@ -597,10 +459,9 @@ export const commitTransition = async (
       return null;
     }
     if (isPrismaErrorWithCode(err, "P2003")) {
-      // Patch (code review 2026-08-27 #3): FK violation on
-      // assigneeUserId most likely means the User was deleted
-      // between request validation and write. Surface as 400
-      // not_found rather than 500.
+      // FK violation on assigneeUserId most likely means the User
+      // was deleted between request validation and write. Surface
+      // 400 not_found rather than 500.
       console.warn(`api/incidents/${id}/${verb}: P2003 FK violation (likely missing assignee)`);
       res
         .status(HTTP_BAD_REQUEST)
@@ -613,11 +474,6 @@ export const commitTransition = async (
   }
 };
 
-/**
- * Narrow type guard for Prisma error code matching. The shape
- * varies across Prisma versions; the minimal `code` check is
- * what the writer layer relies on.
- */
 const isPrismaErrorWithCode = (err: unknown, code: string): boolean =>
   typeof err === "object" &&
   err !== null &&
@@ -633,9 +489,6 @@ interface TransitionLogInput {
   readonly at: string;
 }
 
-/**
- * AC4 observability log line for every successful transition.
- */
 export const logTransition = (input: TransitionLogInput): void => {
   const { incidentId, fromState, toState, verb, actorUserId, at } = input;
   console.warn(
@@ -650,8 +503,3 @@ export const logTransition = (input: TransitionLogInput): void => {
     }),
   );
 };
-
-// Side-effect helpers (`emitStateChanged`, `runOwnershipCheck`,
-// `writeInvalidAttemptEvent`) are imported + re-exported at the top
-// of this file. The definitions live in `./transitionSideEffects.ts`
-// so this orchestrator stays under the lint `max-lines` ceiling.

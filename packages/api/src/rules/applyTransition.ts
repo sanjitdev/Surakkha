@@ -1,34 +1,11 @@
 /**
- * applyTransition.ts — Story 3.4 (de-bouncing IO).
- *
- * Three small IO helpers extracted from `hooks.ts` so the hook
- * module stays under the lint `max-lines` ceiling (500). The
- * behaviour is identical to the inlined version that lived in
- * `hooks.ts`; the file split is mechanical.
- *
- *   - `applyTransition(deps, args)` dispatches to the open or
- *     clear handler based on `transition.kind`.
- *   - `applyOpenTransition(deps, args)` — Finding #3: open path
- *     wraps (findOpenAlert, alert.create, ruleDebounceState.upsert)
- *     in `$transaction`. The real alertId is resolved inside the
- *     transaction; the post-commit emit uses that alertId.
- *   - `applyClearTransition(deps, args)` — Finding #4 + #6: clear
- *     path wraps (findOpenAlert, alert.update,
- *     ruleDebounceState.upsert) in `$transaction`. The pure
- *     module's `clear` transition carries the slot key
- *     `(deviceId, metric, severity)`; the IO layer supplies the
- *     real alertId via the partial-index lookup INSIDE the
- *     transaction. This resolves the `BreachTransition`
- *     clear-shape mismatch from loopback-1 (Finding #6).
- *
- * Plus `isPrismaP2002(err)` — narrow type guard for the
- * duplicate-open race catch (Finding #10).
- *
- * The socket emit (open only) happens AFTER the transaction
- * commits (per Design Note "Socket emit happens post-commit").
- * If `AlertOpenedEventSchema.safeParse` fails, the emit is
- * skipped and a `console.warn` is logged so operators can
- * diagnose wire drift (Finding #7).
+ * `applyTransition.ts` — IO helpers extracted from `hooks.ts`.
+ * `applyOpenTransition` + `applyClearTransition` wrap
+ * (findOpenAlert, alert.{create|update}, ruleDebounceState.upsert)
+ * in `$transaction` so the Alert row + state row commit as one
+ * unit. The socket emit (open only) happens AFTER the transaction
+ * commits; if `AlertOpenedEventSchema.safeParse` fails, the emit
+ * is skipped and `console.warn` logs the wire drift.
  */
 import {
   AlertOpenedEventSchema,
@@ -48,18 +25,10 @@ import { buildIncidentPayload, shouldCreateIncident } from "./incidentFromAlert"
 
 import type { BroadcastTarget } from "../ingest/frame";
 
-// `PRISMA_P2002` lives in `hooks.ts` for the boot guard to import;
-// importing it back here would create a cycle, so we declare a
-// local const with the same value. The lint config treats
-// `PRISMA_P2002` as a stable Prisma code, not a project-specific
-// magic string.
+// `PRISMA_P2002` lives in `hooks.ts` for the boot guard; declaring
+// a local const here avoids a cycle.
 const PRISMA_P2002 = "P2002";
 
-/**
- * Apply one `BreachTransition` to Postgres + (for opens) the
- * socket. Dispatches to the open or clear handler based on
- * `transition.kind`.
- */
 export const applyTransition = async (
   deps: InstallRuleEngineHooksDeps,
   args: {
@@ -76,21 +45,12 @@ export const applyTransition = async (
   await applyClearTransition(deps, args);
 };
 
-/**
- * Story 3.4 review-finding #3: open path — `$transaction` wraps
- * (findOpenAlert, alert.create, ruleDebounceState.upsert). The real
- * alertId is resolved inside the transaction; the post-commit emit
- * uses that alertId. The state slot is upserted inside the
- * transaction so the Alert row + state row commit as one unit.
- *
- * The `transition` parameter is typed as `BreachTransition` (the
- * full discriminated union) rather than `Extract<BreachTransition,
- * { kind: "open" }>` because TS cannot narrow `args.transition`
- * through a function boundary — only through `if (kind === "open")
- * { ... }` checks inside the function. The narrow happens at the
- * top of this function via that exact check, so the rest of the
- * body sees the `open` variant.
- */
+/** Open path: `$transaction` wraps (findOpenAlert, alert.create,
+ *  ruleDebounceState.upsert). The real alertId is resolved inside
+ *  the transaction; the post-commit emit uses that alertId.
+ *  `transition` is typed as the full `BreachTransition` union
+ *  (TS cannot narrow through a function boundary; the kind check
+ *  at the top of `applyTransition` does the narrow). */
 const applyOpenTransition = async (
   deps: InstallRuleEngineHooksDeps,
   args: {

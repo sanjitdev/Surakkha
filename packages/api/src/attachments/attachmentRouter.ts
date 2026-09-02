@@ -1,40 +1,13 @@
 /**
- * `attachmentRouter.ts` — Story 4.13.
- *
- * Three routes:
- *
+ * `attachmentRouter.ts` — three routes on `/api/incidents/:id/attachments`:
  *   POST   /api/incidents/:id/attachments — create (URL + label + optional mime)
  *   GET    /api/incidents/:id/attachments — list (reverse-chronological)
  *   DELETE /api/attachments/:id           — delete (uploader OR Admin)
  *
- * RBAC per the matrix (`packages/shared/src/rbac.ts`):
- *   - create:  Admin, Operator, Technician (NOT Viewer)
- *   - read:    all four roles
- *   - delete:  Admin (matrix-level); per-row "uploader can delete own"
- *              is enforced in the DELETE handler
- *
- * Tech-ownership (4.4 / 4.6 pattern): a Technician can only POST/GET
- * attachments on incidents they're assigned to. The check fires
- * AFTER the matrix-level RBAC passes (matrix grants the cell; the
- * handler narrows by row).
- *
- * SECURITY (URL validation): `validateHttpUrl` from
- * `@surakkha/shared/urlValidation` rejects `javascript:`, `data:`,
- * `file:`, `vbscript:`, relative paths, malformed URLs. The 400
- * response shape is `invalid_payload` with the same message the
- * helper throws (single source of truth for the toast copy).
- *
- * SECURITY (XSS): the `label` field is stored as-is and rendered by
- * the web as TEXT inside a `<p>` (no `dangerouslySetInnerHTML`).
- * The URL is rendered via `<a rel="noopener noreferrer" target="_blank">`
- * — even if a `javascript:` URL slipped past validation (it can't —
- * the helper blocks it), the `noopener noreferrer` mitigates
- * tab-nabbing and the `target="_blank"` would still need to be
- * clickable for the XSS to fire.
- *
- * Attachments are NOT state transitions: no `incident:state_changed`
- * socket emit, no `Notification` row. They're evidence attached to
- * the current state.
+ * RBAC: matrix grants per resource. `validateHttpUrl` from
+ * `@surakkha/shared/urlValidation` is the security boundary that
+ * rejects `javascript:` / `data:` / `file:` / `vbscript:` / relative
+ * paths. Attachments are NOT state transitions (no socket emit).
  */
 import { type AttachmentPayload } from "@surakkha/shared/attachment";
 import { detectMimeFromURL, FALLBACK_MIME } from "@surakkha/shared/mimeAutoDetect";
@@ -74,33 +47,15 @@ const createBodySchema = z.object({
 export interface AttachmentRouterDeps {
   readonly audit: AuditLogger;
   readonly repo: AttachmentRepository;
-  /**
-   * The `Incident` table is owned by `incidentStateRepository`
-   * (Story 4.2). 4.13 needs a narrow read-side slice for the
-   * Tech-ownership check (a Technician can only POST/GET
-   * attachments on incidents they're assigned to). The injection
-   * keeps the dependency explicit — the attachment router doesn't
-   * reach into the full incident state machine.
-   */
+  /** Narrow read-side slice for the Tech-ownership check (a
+   *  Technician can only POST/GET on incidents they're assigned
+   *  to). The injection keeps the attachment router decoupled
+   *  from the full incident state machine. */
   readonly incidentFindUnique: (args: {
     readonly where: { readonly id: string };
   }) => Promise<{ readonly assigneeUserId: string | null } | null>;
 }
 
-/**
- * Validate the URL string. Returns `null` if valid (caller
- * proceeds); returns a `Response` with 400 if it fails (caller
- * writes the response and returns). Lives at module scope so it
- * doesn't capture `buildAttachmentRouter` deps (and so the
- * `unicorn/consistent-function-scoping` rule accepts the
- * placement).
- *
- * SECURITY: `validateHttpUrl` rejects `javascript:`,
- * `data:text/html`, `file:`, `vbscript:`, relative paths, and
- * malformed URLs — the security boundary that prevents XSS
- * via the rendered `<a href>`. The thrown error message
- * surfaces to the operator's toast (single source of truth).
- */
 const validateUrlOrRespond = (res: Response, url: string): Response | null => {
   try {
     validateHttpUrl(url);
@@ -115,21 +70,11 @@ const validateUrlOrRespond = (res: Response, url: string): Response | null => {
   return null;
 };
 
-/**
- * Build the attachment router. Mounted in `packages/api/src/index.ts`
- * after `authenticate` (so `req.user` is populated).
- */
 export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
   const router = express.Router();
 
-  /**
-   * Per-row ownership check for DELETE. Admin bypasses; the
-   * original uploader can delete their own attachment; a
-   * different Operator/Technician gets 403 (the matrix `delete
-   * × Attachment` only grants Admin, but the per-row rule is
-   * inclusive of the uploader for any role). Captures `deps`
-   * (closure) for the audit logger.
-   */
+  // Admin bypass; original uploader can delete their own attachment;
+  // a different Operator/Technician gets 403.
   const enforceDeleteOwnership = (
     req: AuthorizedRequest,
     res: Response,
@@ -154,13 +99,8 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     });
   };
 
-  /**
-   * Helper: enforce Tech-ownership on a parent incident. Returns
-   * `null` if the check passes (caller proceeds); returns a `Response`
-   * if it fails (caller writes the response and returns). Mirrors
-   * 4.4's `router.ts:251-265` shape so the audit + status-code
-   * semantics stay consistent.
-   */
+  // Tech-ownership: a Technician can only POST/GET on incidents
+  // they're assigned to. Admin / Operator / Viewer skip.
   const enforceTechOwnership = async (
     req: AuthorizedRequest,
     res: Response,
@@ -197,15 +137,6 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     return null;
   };
 
-  /**
-   * Create the attachment row in the repository. Captures
-   * `deps` (closure) so it lives inside `buildAttachmentRouter`.
-   * Returns `null` on success (caller writes 201); returns a
-   * `Response` on failure (caller writes the error and returns).
-   * Extracted from the POST handler to drop the handler's cyclomatic
-   * complexity under the `complexity: 10` ESLint ceiling. Args
-   * are bundled to stay under the `max-params: 3` rule.
-   */
   const createAttachmentRowOrRespond = async (args: {
     readonly req: AuthorizedRequest;
     readonly res: Response;
@@ -233,12 +164,6 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     }
   };
 
-  /**
-   * POST /api/incidents/:id/attachments — create.
-   * RBAC: `create × Attachment` (matrix grants Admin + Operator +
-   * Technician; Viewer returns 403). URL validation rejects
-   * non-http(s) schemes at the body-schema level.
-   */
   router.post(
     "/api/incidents/:id/attachments",
     authorize({ action: "create", resource: "Attachment" }, deps.audit),
@@ -260,12 +185,8 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         });
         return;
       }
-      // URL validation rejects javascript:/data:/file:/vbscript:,
-      // relative paths, malformed URLs (security boundary).
       const urlDenied = validateUrlOrRespond(res, bodyParsed.data.url);
       if (urlDenied !== null) return;
-      // Tech-ownership: a Technician can only POST on incidents
-      // they're assigned to. Admin / Operator / Viewer skip this.
       const ownershipDenied = await enforceTechOwnership(req, res, id);
       if (ownershipDenied !== null) return;
       // MIME: explicit override wins; otherwise auto-detect from
@@ -282,11 +203,6 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     },
   );
 
-  /**
-   * GET /api/incidents/:id/attachments — list (reverse-chrono).
-   * RBAC: `read × Attachment` (matrix grants all four roles).
-   * Tech-ownership narrows to assigned incidents.
-   */
   router.get(
     "/api/incidents/:id/attachments",
     authorize({ action: "read", resource: "Attachment" }, deps.audit),
@@ -320,14 +236,6 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
     },
   );
 
-  /**
-   * DELETE /api/attachments/:id — delete one.
-   * RBAC: `delete × Attachment` (matrix grants Admin only); the
-   * per-row "uploader can delete own" check fires AFTER the matrix
-   * gate. The original uploader (Operator/Technician) passes the
-   * per-row check; a different Operator/Technician gets 403 even
-   * though their role can read the row.
-   */
   router.delete(
     "/api/attachments/:id",
     authorize({ action: "delete", resource: "Attachment" }, deps.audit),
@@ -353,7 +261,6 @@ export const buildAttachmentRouter = (deps: AttachmentRouterDeps): Router => {
         res.status(HTTP_NOT_FOUND).json({ error: ERROR_CODES.NOT_FOUND.value });
         return;
       }
-      // Per-row ownership check (Admin bypass + uploader check).
       const ownershipDenied = enforceDeleteOwnership(req, res, row);
       if (ownershipDenied !== null) return;
       try {

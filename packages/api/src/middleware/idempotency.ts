@@ -1,42 +1,12 @@
 /**
- * Idempotency-Key middleware — closes api critique P1 #2.
- *
- * Caches the response (status + body) per `(user_id, route, key)` tuple
- * for `IDEMPOTENCY_TTL_MS`. A duplicate POST with the same key within
- * the window replays the cached response byte-for-byte, so a flaky-network
- * double-tap from "Rahim the Operator" cannot run the same state transition
- * twice (which would otherwise produce two `IncidentEvent` rows, two
- * `rbac_allowed` audit emits, and two `incident:state_changed` socket
- * broadcasts).
- *
- * I-9 single-process assumption: state lives in process memory. Same as
- * `PerDeviceRateLimiter` / `PerDeviceSequence` in `packages/api/src/ingest/`.
- * A v2 PR can move the cache to Postgres if multi-process scaling lands.
- *
- * Wire contract:
- *
- *   idempotency(store?)(req, res, next)
- *     - Reads `Idempotency-Key: <UUIDv4>` header.
- *     - Missing header → pass-through (the route is already idempotent
- *       by machinery — the state machine itself rejects `OPEN → ACKNOWLEDGED`
- *       twice on the same incident because the second call sees the post-
- *       transition state).
- *     - Malformed key (non-UUIDv4) → 400 `{ error: "invalid_idempotency_key" }`.
- *     - Cache hit (key seen within TTL) → replay cached status + body.
- *     - Cache miss → wrap `res.json` to capture the outbound body, then
- *       `next()`. After the handler responds we record the (status, body)
- *       tuple for any 2xx/4xx response. 5xx responses are NOT cached so
- *       transient failures don't poison the cache.
- *
- *   IdempotencyStore class
- *     - In-memory Map + TTL eviction. Mirrors `PerDeviceRateLimiter` shape.
- *     - `reset()` is the test-only wipe hook.
- *
- * Web client follow-up (out of scope for this PR):
- *   - Generate keys via `crypto.randomUUID()` on the transition-fetch
- *     callsite in `packages/web/src/components/IncidentCard.tsx` and attach
- *     as `Idempotency-Key`. Until that ships, transition routes see no
- *     `Idempotency-Key` header and pass through unchanged.
+ * Idempotency-Key middleware. Caches the response (status + body)
+ * per `(user_id, method, path, key)` for `IDEMPOTENCY_TTL_MS`. A
+ * duplicate POST with the same key within the window replays the
+ * cached response byte-for-byte. Missing header → pass-through
+ * (the route is idempotent by state-machine machinery). Malformed
+ * key → 400 `invalid_idempotency_key`. 5xx is NOT cached so
+ * transient failures don't poison the cache. State is process-local
+ * (same as the ingest rate-limit / sequence stores).
  */
 import { isUuidV4 } from "@surakkha/shared";
 

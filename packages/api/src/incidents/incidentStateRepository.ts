@@ -1,30 +1,12 @@
 /**
  * `incidentStateRepository.ts` — Story 4.2 (writer layer).
- *
- * The narrow Prisma slice `IncidentStateRepository` plus its
- * `resolveIncidentStateRepository` adapter. Mirrors the pattern
- * from `rules/alertStateRepository.ts:20-161` — the repo interface
- * is a structural subset of the real Prisma client, and the
- * adapter narrows the production client via an `as any` cast so
- * the production binding is type-safe at the seam.
- *
- * Why a narrow slice:
- *   - Test injection is trivial — the test rig hands a stub that
- *     exposes only the methods this file calls.
- *   - Live tests (Prisma) use the production adapter; unit tests
- *     use a hand-rolled stub.
- *   - The `$transaction` wrapper lets the route layer run
- *     (incident update + event write + optional notification
- *     write) atomically. The transaction's `tx` object is itself
- *     shaped as `IncidentStateRepository` so the same calls
- *     (`tx.incident.update`, `tx.incidentEvent.create`,
- *     `tx.notification.upsert`) work inside the callback without
- *     re-binding.
- *
- * Atomicity: any throw inside the `$transaction` callback rolls
- * back the entire transaction. No orphan IncidentEvent rows on
- * Incident-write failure; no orphan Notification rows on
- * IncidentEvent-write failure.
+ * Narrow Prisma slice `IncidentStateRepository` plus its
+ * `resolveIncidentStateRepository` adapter. The repo is a
+ * structural subset of the real Prisma client so tests can stub
+ * the methods used. The `$transaction` callback runs
+ * (incident update + event write + optional notification write)
+ * atomically — `tx` is shaped as `IncidentStateRepository` so
+ * the same calls work inside the callback without re-binding.
  */
 import type {
   ActionVerb,
@@ -35,12 +17,8 @@ import type {
   TransitionResult,
 } from "@surakkha/shared/incident";
 
-/**
- * The full state of a single incident row. Mirrors the wire-row
- * shape (`IncidentPayload`) but with Date objects (the Prisma
- * client returns Date, not ISO 8601). Conversion to wire
- * happens in the route layer.
- */
+/** Full state of a single incident row. Mirrors `IncidentPayload`
+ *  but with Date objects (Prisma returns Date, not ISO 8601). */
 export interface IncidentRow {
   readonly id: string;
   readonly deviceId: string;
@@ -55,10 +33,8 @@ export interface IncidentRow {
   readonly updatedAt: Date;
 }
 
-/**
- * A single IncidentEvent audit row. Mirrors the Prisma
- * `IncidentEvent` model exactly.
- */
+/** Single IncidentEvent audit row. Mirrors the Prisma
+ *  `IncidentEvent` model. */
 export interface IncidentEventRow {
   readonly id: string;
   readonly incidentId: string;
@@ -68,69 +44,35 @@ export interface IncidentEventRow {
   readonly createdAt: Date;
 }
 
-/**
- * The narrow slice the writer needs from the real Prisma client.
- *
- * Methods NOT exposed here (intentionally) are out of scope for
- * the writer: the route layer can use its own slice.
- */
+/** The narrow slice the writer needs from the real Prisma client.
+ *  Methods NOT exposed (intentionally) are out of scope for the
+ *  writer — the route layer uses its own slice. */
 export interface IncidentStateRepository {
   readonly incident: {
     findUnique(args: { readonly where: { readonly id: string } }): Promise<IncidentRow | null>;
-    /**
-     * Story 4.3 — read path for `/api/incidents/active`. Accepts the
-     * Prisma `findMany` argument shape (`{ where, orderBy, take,
-     * select }`) so the production adapter is a thin forwarder; tests
-     * can stub any of the four inputs independently. The active
-     * endpoint always returns the full `IncidentRow` (the active
-     * `IncidentPayload` consumes every column). `select` is present
-     * on the interface signature per the spec, but is intentionally
-     * `never` — a follow-up story that narrows the projection
-     * should add a separate narrow-typed `findManyLite` rather
-     * than thread a returned-shape union through this method.
-     *
-     * `take` is the CALLER's responsibility: the type accepts
-     * `take?: number` (so the caller can pass `take: 50` for
-     * pagination later) but the active endpoint never sets it
-     * today. The active board returns every non-RESOLVED incident
-     * un-paginated — the upper bound is "a few hundred" per the
-     * spec's "Ask First: pagination" decision. A follow-up story
-     * that paginates the active list should thread `take` from a
-     * `?limit=` query param, NOT silently cap inside the data
-     * layer.
-     */
+    /** Read path for `/api/incidents/active`. `select` is `never`
+     *  (a follow-up should add a separate `findManyLite` for a
+     *  narrowed projection). `take` is the CALLER's responsibility
+     *  (the active endpoint is un-paginated; future pagination
+     *  threads `take` from a `?limit=` query param, not a silent
+     *  data-layer cap). */
     findMany(args: {
       readonly where?: {
         readonly state?: { readonly not: IncidentState };
-        /**
-         * Story 4.12 — Technician viewer filter. The active list
-         * endpoint narrows by `assignee_user_id === req.user.id`
-         * for Technician viewers only; Admin/Operator/Viewer
-         * continue to see every non-RESOLVED row. The column is
-         * indexed (4.2's migration), so the predicate adds no
-         * measurable overhead.
-         *
-         * Step-04 review fix — WARN: this is a SHARED scope. A
-         * future handler that reuses this method MUST consciously
-         * decide whether to thread `assigneeUserId` for Technicians
-         * or fall back to the global view. Copy-pasting the
-         * `activeRouter.ts` `techFilter` pattern is the safer
-         * default for any "list everything for a viewer" endpoint;
-         * a "list everything period" endpoint (e.g. an admin
-         * audit-trail feed) should leave the predicate undefined.
-         */
+        /** Technician viewer filter. Admin/Operator/Viewer see
+         *  every non-RESOLVED row. SHARED scope — handlers that
+         *  reuse this method MUST consciously decide whether to
+         *  thread `assigneeUserId` for Technicians or fall back
+         *  to the global view. */
         readonly assigneeUserId?: string;
       };
       readonly orderBy?: { readonly openedAt: "desc" };
       readonly take?: number;
       readonly select?: never;
     }): Promise<IncidentRow[]>;
-    /**
-     * Story 4.2 — optimistic concurrency. The route layer passes
-     * the row's `updatedAt` timestamp in `where`; if a concurrent
-     * writer beat us to the row, the update returns `count: 0` and
-     * the route maps that to a 409.
-     */
+    /** Optimistic concurrency: the route passes the row's
+     *  `updatedAt` in `where`; concurrent writers see `count: 0`
+     *  → 409. */
     updateMany(args: {
       readonly where: {
         readonly id: string;
@@ -153,27 +95,20 @@ export interface IncidentStateRepository {
         readonly payload: Readonly<Record<string, unknown>>;
       };
     }): Promise<IncidentEventRow>;
-    /**
-     * Story 4.4 — read path for `/api/incidents/:id/events` (the
-     * detail-page audit timeline). Filters by `incidentId` and
-     * accepts `orderBy: { createdAt: "asc" | "desc" }` so the
-     * route can pin chronological order. The wire-shape
-     * conversion happens in `incidentEventRowToPayload`.
-     */
+    /** Read path for `/api/incidents/:id/events` (the detail-page
+     *  audit timeline). Filters by `incidentId`; `orderBy` accepts
+     *  `createdAt: "asc" | "desc"`. Wire-shape conversion happens
+     *  in `incidentEventRowToPayload`. */
     findMany(args: {
       readonly where: { readonly incidentId: string };
       readonly orderBy?: { readonly createdAt: "asc" | "desc" };
     }): Promise<IncidentEventRow[]>;
   };
-  /**
-   * Story 4.9 — the `notification:critical` write site fires when
-   * a technician submits an UNSAFE outcome. Lives inside the
-   * SAME `$transaction` as the incident update + event create so
-   * all three rows commit as one unit. Idempotency is enforced by
-   * the partial unique index (`Notification_incident_id_severity_
-   * unique WHERE acknowledgedAt IS NULL`); the P2002 catch is the
-   * caller's responsibility.
-   */
+  /** `notification:critical` write site (Story 4.9) — fires when
+   *  a technician submits an UNSAFE outcome. Lives inside the
+   *  same `$transaction` as the incident update + event create.
+   *  Idempotency is enforced by the partial unique index; the
+   *  P2002 catch is the caller's responsibility. */
   readonly notification: {
     create(args: {
       readonly data: {
@@ -184,21 +119,15 @@ export interface IncidentStateRepository {
       };
     }): Promise<{ readonly id: string }>;
   };
-  /**
-   * `$transaction` wrapper. The callback runs the (incident
-   * update + event create + optional notification create) trio
-   * atomically. Production forwards to `prisma.$transaction(cb)`.
-   * The `tx` object inside the callback is shaped as
-   * `IncidentStateRepository` so the same calls work without
-   * re-binding.
-   */
+  /** `$transaction` wrapper. Callback runs (incident update +
+   *  event create + optional notification create) atomically.
+   *  `tx` is shaped as `IncidentStateRepository` so the same
+   *  calls work without re-binding. */
   $transaction<T>(cb: (tx: IncidentStateRepository) => Promise<T>): Promise<T>;
 }
 
-/**
- * Adapter — narrow the real `@prisma/client` to the
- * `IncidentStateRepository` slice.
- */
+/** Adapter — narrow the real `@prisma/client` to the
+ *  `IncidentStateRepository` slice. */
 export const resolveIncidentStateRepository = (prisma: unknown): IncidentStateRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;
