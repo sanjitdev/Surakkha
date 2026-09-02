@@ -1,23 +1,16 @@
 /**
- * Admin simulator router — Surakkha api (Story 2.5).
+ * Admin simulator router — Surakkha api.
  *
  * Three routes:
  *
  *   GET  /admin/simulator/status
  *     - Public (no auth, no RBAC). Returns `{ enabled: true }` when
  *       SIMULATOR_SECRET is set on the api side; `{ enabled: false,
- *       reason: "missing" }` otherwise. The disabled banner must
- *       render for any authenticated user who navigates to the admin
- *       tab; a 401/403 on this endpoint would lock them out of the
- *       banner itself.
+ *       reason: "missing" }` otherwise.
  *
  *   GET  /admin/simulator/devices
  *     - Admin-only via `authorize({ action: "read", resource: "Device" }, audit)`.
- *       (The matrix grants Admin.read.Device; Simulator.read is N
- *       for all roles — see `packages/shared/src/rbac.ts:113` — but
- *       reading the device list is not a Simulator-specific action,
- *       so Device.read is the correct gate.) Returns six rows from
- *       the Prisma `Device` table.
+ *       Returns six rows from the Prisma `Device` table.
  *
  *   POST /admin/simulator/:device_id/scenario
  *     - Admin-only via `authorize({ action: "drive", resource: "Simulator" }, audit)`.
@@ -52,15 +45,14 @@ import {
 /**
  * Body shape for POST /admin/simulator/:device_id/scenario.
  *
- * Story 2.5 loopback-1 fix (P4 + P17):
- *   - `scenario` is a plain `string` here so we can branch on
- *     `value ∈ SCENARIO_NAMES` and return the spec-mandated
- *     `{ error: "invalid_scenario" }` (NOT `validation_error`).
- *   - `.refine(...)` enforces "at least one of scenario / paused",
- *     so an empty body fails Zod validation and surfaces as
- *     `validation_error` (P17) rather than `missing_action`.
- *   - `.strict()` rejects unknown keys — extra fields belong to
- *     `validation_error` per the spec.
+ * `scenario` is a plain `string` here so the dispatcher branches on
+ * `value ∈ SCENARIO_NAMES` and return the spec-mandated
+ * `{ error: "invalid_scenario" }` (NOT `validation_error`).
+ * `.refine(...)` enforces "at least one of scenario / paused",
+ * so an empty body fails Zod validation and surfaces as
+ * `validation_error` rather than `missing_action`.
+ * `.strict()` rejects unknown keys — extra fields belong to
+ * `validation_error` per the spec.
  */
 const scenarioSwitchBodySchema = z
   .object({
@@ -75,7 +67,7 @@ const scenarioSwitchBodySchema = z
 const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 
 /**
- * Single-flight per device (P5). The depth invariant:
+ * Single-flight per device. The depth invariant:
  *   - depth = 1 → first request is in-flight
  *   - depth = 2 → second request is queued behind the first
  *   - depth ≥ 3 → third+ request returns 409 `switch_in_progress`
@@ -84,12 +76,8 @@ const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
  * The `pendingDepth` counter is incremented when a request STARTS work
  * (queue-acceptance, not 409 rejection). The 409 path never mutates
  * the maps — a burst of three concurrent POSTs leaves depth = 2, not
- * 3 (G2-04 fix). The `finally` block decrements and clears the maps
- * once depth drains to 0.
- *
- * The data structures are module-scoped so concurrent POSTs (e.g.
- * two admins double-clicking Switch) coalesce correctly without a
- * race.
+ * 3. The `finally` block decrements and clears the maps once depth
+ * drains to 0.
  */
 const pendingSwitches = new Map<string, Promise<unknown>>();
 const pendingDepth = new Map<string, number>();
@@ -106,11 +94,8 @@ const SIMULATOR_SECRET_MIN_LENGTH = 32;
  * base URL. Returns `null` when secret is missing or below the
  * minimum length — the caller maps that to 503 `{ disabled: true }`
  * and skips any outbound call. The same 32-char minimum that the
- * simulator enforces (`resolveSimulatorSecret` in
- * `packages/simulator/src/control/server.ts`) is mirrored here so the
- * two sides cannot drift into "api thinks enabled, simulator thinks
- * disabled" (spec line 26: "Missing/short on either side → disabled
- * state").
+ * simulator enforces is mirrored here so the two sides cannot drift
+ * into "api thinks enabled, simulator thinks disabled".
  */
 interface ResolvedSimulatorConfig {
   readonly baseUrl: string;
@@ -180,13 +165,12 @@ const renderSwitchResult = (result: SimulatorSwitchResult, res: Response): void 
  * is present. Writes the failure response when validation fails and
  * returns `{ ok: false }` so the caller can early-return.
  *
- * Loopback-1 fix (P4): when the body parses OK but `scenario` is a
- * non-`SCENARIO_NAMES` string AND `paused === undefined`, return
+ * When the body parses OK but `scenario` is a non-`SCENARIO_NAMES`
+ * string AND `paused === undefined`, return
  * `{ error: "invalid_scenario" }` (NOT `validation_error`).
  *
- * Loopback-1 fix (P17): an empty body (`{}`) is now caught by the
- * Zod `.refine(...)` and surfaces as `validation_error` (no more
- * separate `missing_action` branch for the empty body case).
+ * An empty body (`{}`) is caught by the Zod `.refine(...)` and
+ * surfaces as `validation_error`.
  */
 type ScenarioSwitchBody = z.infer<typeof scenarioSwitchBodySchema>;
 
@@ -210,12 +194,8 @@ const validateScenarioRequest = (
     return { ok: false };
   }
   const body = parsed.data;
-  // Spec P4 — distinguish "unknown scenario" (loud, dedicated error
-  // code so the SPA can show a tailored toast) from "malformed body"
-  // (generic `validation_error`). ANY unknown scenario name yields
-  // `invalid_scenario` — even when paired with `paused` (AC5 promises
-  // 400 invalid_scenario for any unknown name, regardless of
-  // accompanying fields). The `paused` field is accepted by the
+  // ANY unknown scenario name yields `invalid_scenario` — even when
+  // paired with `paused`. The `paused` field is accepted by the
   // schema as long as it's a boolean.
   if (body.scenario !== undefined && !SCENARIO_SET.has(body.scenario as ScenarioName)) {
     res.status(HTTP_BAD_REQUEST).json({ error: ERROR_CODES.INVALID_SCENARIO.value });
@@ -239,10 +219,9 @@ export const buildAdminSimulatorPublicRouter = (): Router => {
       const cfg = resolveSimulatorConfig();
       if (cfg === null) {
         // Unify disabled-state shape with the authenticated POST
-        // path: `{ disabled: true, reason: "missing" }`. The spec's
-        // I/O matrix (line 47) pins `{ disabled: true }` for GET,
-        // and using the same shape across GET and POST lets the SPA
-        // collapse both to one banner state without branching.
+        // path: `{ disabled: true, reason: "missing" }`. Using the
+        // same shape across GET and POST lets the SPA collapse both
+        // to one banner state without branching.
         res.status(HTTP_SERVICE_UNAVAILABLE).json({
           disabled: true,
           reason: "missing",
@@ -292,11 +271,10 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
   /**
    * GET /admin/simulator/devices — Admin-only. Returns the six
    * default devices + their current scenarios. The matrix grants
-   * Admin.read.Device but denies Simulator.read (per RBAC_MATRIX row
-   * `Admin.read.Simulator: N`), so we use `Device.read` instead.
-   * Story 1.5 already grants Device.read to Admin/Operator/
-   * Technician/Viewer; the page is gated by `<RbacRoute>` so only
-   * Admin reaches it.
+   * Admin.read.Device but denies Simulator.read, so the route uses
+   * `Device.read` instead. Story 1.5 already grants Device.read to
+   * Admin/Operator/Technician/Viewer; the page is gated by
+   * `<RbacRoute>` so only Admin reaches it.
    */
   router.get(
     "/devices",
@@ -332,7 +310,7 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
         return;
       }
 
-      // Single-flight per device (P5): size-1 queue. The second
+      // Single-flight per device: size-1 queue. The second
       // concurrent POST awaits the FIRST request's promise; only if
       // a THIRD request lands while the second is queued do we
       // reject with 409 `switch_in_progress`. This keeps the
@@ -359,8 +337,8 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
       // Build the body shape expected by the simulator. The
       // simulator's `paused` field is a verb in its own right; we
       // forward it unchanged when present. `scenario` is typed as
-      // `string` in the inbound schema (so we can branch on it and
-      // return `invalid_scenario`); the `SCENARIO_SET` check above
+      // `string` in the inbound schema (so the dispatcher can branch
+      // on it and return `invalid_scenario`); the `SCENARIO_SET` check above
       // already narrowed it to a `ScenarioName` when `paused ===
       // undefined`, but the narrowed type doesn't survive the
       // schema parse.
@@ -385,7 +363,7 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
             await firstPromise;
           } catch {
             // The first request's failure doesn't block this one —
-            // we still attempt our own outbound call.
+            // the route still attempts its own outbound call.
           }
         }
         const result = await postSimulatorScenario(
@@ -393,11 +371,10 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
           deviceId,
           outbound as { scenario: ScenarioName; paused?: boolean },
         );
-        // Loopback-1 fix (P6): emit the `simulator_event` audit row
-        // ONLY on success. On failure (400/502/409/403/etc.) the
-        // `rbac_denied` row from the middleware is the only audit
-        // surface — the spec says "no AuditLog row is written" on
-        // a failed switch.
+        // Emit the `simulator_event` audit row ONLY on success. On
+        // failure (400/502/409/403/etc.) the `rbac_denied` row from
+        // the middleware is the only audit surface — the spec says
+        // "no AuditLog row is written" on a failed switch.
         if (result.ok) {
           // Spec payload shape is `{ device_id, scenario }`. We
           // conditionally include `paused` only when the admin

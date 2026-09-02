@@ -1,18 +1,10 @@
 /**
- * `admin/thresholdsWiring.ts` — distilled 2026-08-30 (was inline
- * in `src/index.ts:462-502`).
- *
  * Lazy-resolved wiring for the `/admin/thresholds` admin tab.
  * Mirrors the pattern at `notifications/routerWiring.ts` +
  * `incidents/routerWiring.ts`: the router is mounted at boot
  * with a forwarder-shaped deps object that resolves Prisma on
  * first request. A transient DB outage at boot does NOT crash
  * the api.
- *
- * Why a separate file: `src/index.ts` was past the `max-lines:
- * 500` ESLint ceiling (842 lines pre-distillation). The
- * thresholds forwarder + `ensureThresholdsRepo` was 40 lines on
- * its own.
  */
 import { type Express } from "express";
 

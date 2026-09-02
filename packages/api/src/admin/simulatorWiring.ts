@@ -1,7 +1,4 @@
 /**
- * `admin/simulatorWiring.ts` — distilled 2026-08-30 (was inline in
- * `src/index.ts:422-445`).
- *
  * Lazy-resolved list-reader for the admin simulator's
  * `GET /admin/simulator/devices` endpoint. Returns the six
  * default Device rows (`id`, `name`, `scenario`) so the admin tab
@@ -12,12 +9,6 @@
  * the entire page render. Logged so an operator can tell the
  * difference between "no devices seeded yet" and "DB
  * unreachable".
- *
- * Why a separate file: `src/index.ts` was past the `max-lines:
- * 500` ESLint ceiling (842 lines pre-distillation). Extracting
- * the list-reader narrows the `(client as any)` bypass to ONE
- * place (the lazy-resolver boundary) and removes the bypass from
- * `index.ts` entirely.
  */
 import { createLogger } from "@surakkha/shared/logger";
 

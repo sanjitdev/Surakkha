@@ -1,45 +1,11 @@
 /**
- * `thresholdsRouter.ts` — Story 3.7 (`/admin/thresholds` admin tab).
+ * `thresholdsRouter.ts` — `/admin/thresholds` admin tab.
  *
  * Four routes, all gated on `authorize({ action: "update", resource:
- * "Rule" }, audit)` — Admin-only per the RBAC matrix
- * (`Admin.update.Rule = Y`, `Operator.update.Rule = N`,
- * `Technician.update.Rule = N`, `Viewer.update.Rule = N`). The
- * existing `rbac.negative.spec.ts` cases 8 (Viewer → update → Rule)
- * pins one denial cell; cases 18 + 19 (Operator + Technician →
- * update → Rule) pin the remaining two. The handlers themselves are
- * thin orchestrators; the heavy lifting lives in the pure helpers
+ * "Rule" }, audit)` — Admin-only per the RBAC matrix. The handlers
+ * are thin orchestrators; the heavy lifting lives in the pure helpers
  * below (`supersedeRule`, `deactivateRule`, `activateRule`,
  * `listRules`).
- *
- *   GET  /admin/thresholds/rules?limit=50&cursor=<uuid>&activeOnly=false
- *     - Cursor pagination over the `Rule` table, ordered by
- *       `(deviceId, metric, operator, threshold, version DESC)`.
- *     - `activeOnly=true` filters to `isActive: true`.
- *     - Returns `{ rules, nextCursor }` per `RuleListResponseSchema`.
- *
- *   POST /admin/thresholds/rules
- *     - Creates a new `Rule` at `version: 1, isActive: true`.
- *     - Body Zod-parsed by `RuleCreateRequestSchema`.
- *
- *   PATCH /admin/thresholds/rules/:id
- *     - Two sub-operations, discriminated by body shape:
- *       - `{ supersede: true, ...newFields }` → atomic
- *         (old-update + new-create) inside a `$transaction`. The new
- *         row lands at `old.version + 1`.
- *       - `{ activate: false }` → single-row `update({ isActive:
- *         false })`.
- *
- *   PATCH /admin/thresholds/rules/:id/activate
- *     - Idempotent: flips `isActive: true` on the named version. No
- *       version increment.
- *
- * Why `update` (not `manage`) for the gate: the RBAC matrix uses
- * `update × Rule` as the cell that governs rule-edit privileges
- * (`Admin.update.Rule = Y`). The matrix has no `create × Rule`
- * entry, so the POST endpoint also gates on `update Rule` —
- * semantics: "create a new Rule" is treated as a write against the
- * Rule resource.
  */
 import {
   RuleActivateRequestSchema,
@@ -67,16 +33,7 @@ const MAX_LIMIT = 200;
 /**
  * The Rule delegate the router needs from Prisma. Production narrows
  * the real client via `resolveThresholdsRepository`; tests inject a
- * stub. Mirrors the narrow-slice pattern from
- * `rules/alertStateRepository.ts`.
- */
-/**
- * Per-element `orderBy` shape. A page may order by a heterogeneous
- * list of keys (e.g. `[{ deviceId: "asc" }, { metric: "asc" }]`),
- * so each element is a one-of union of the supported keys. The
- * `version DESC` + `id ASC` pair terminates the list so cursor
- * pagination has a deterministic tiebreak (no two rows can share
- * the same `(deviceId, metric, version, id)` tuple).
+ * stub.
  */
 interface RuleOrderBy {
   readonly deviceId?: "asc" | "desc";
@@ -152,8 +109,7 @@ const ruleSelectShape = {
 
 /**
  * Production adapter — narrow the real `@prisma/client` to the
- * `ThresholdsRepository` slice. Same `as any` cast as
- * `resolveAlertStateRepository` (`rules/alertStateRepository.ts:131`).
+ * `ThresholdsRepository` slice.
  */
 export const resolveThresholdsRepository = (prisma: unknown): ThresholdsRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -215,14 +171,6 @@ const listRules = async (
   const where = args.activeOnly ? { isActive: true } : {};
   const findArgs: Parameters<ThresholdsRepository["rule"]["findMany"]>[0] = {
     where,
-    // OrderBy must terminate in a UNIQUE column for cursor pagination
-    // to be deterministic — `deviceId` + `metric` alone is non-unique
-    // (multiple Rule rows can share the same tuple at different
-    // versions or different `isActive` states). `id` is the unique
-    // tiebreak so a `cursor: { id }` + `skip: 1` page boundary
-    // never repeats or skips rows across pages. The `version DESC`
-    // tiebreak surfaces the active version ahead of its history
-    // panel (Story 3.7 AC1).
     orderBy: [
       { deviceId: "asc" as const },
       { metric: "asc" as const },
@@ -234,10 +182,6 @@ const listRules = async (
     select: ruleSelectShape,
   };
   const rows = await repo.rule.findMany(findArgs);
-  // The repository's return type is `ReadonlyArray<RuleRow>`; the
-  // pagination helpers below slice and index it. Casting to a
-  // mutable `RuleRow[]` for local pagination arithmetic keeps the
-  // boundary narrow (the wire response stays `RuleRow[]`).
   const mutable = rows as RuleRow[];
   if (mutable.length > args.limit) {
     const next = mutable[args.limit];
@@ -394,8 +338,7 @@ const sendValidationError = (res: Response, parsed: { error: { issues: unknown }
  * Build the `/admin/thresholds` router.
  *
  * RBAC: every route gates on `update × Rule`. Admin → 200; Operator
- * / Technician / Viewer → 403 + `rbac_denied` audit. The deny cells
- * are pinned by `rbac.negative.spec.ts` cases 8 + 18 + 19.
+ * / Technician / Viewer → 403 + `rbac_denied` audit.
  */
 export const buildThresholdsRouter = (deps: ThresholdsRouterDeps): Router => {
   const router = express.Router();

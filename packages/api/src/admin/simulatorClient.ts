@@ -1,5 +1,5 @@
 /**
- * Outbound client to the simulator control HTTP server — Story 2.5.
+ * Outbound client to the simulator control HTTP server.
  *
  * The api POSTs a scenario switch to the simulator over an
  * adversarially-trusted HTTP channel. The wire contract:
@@ -9,20 +9,6 @@
  *       X-Simulator-Secret: ${SIMULATOR_SECRET}
  *       Content-Type: application/json
  *     body: { scenario: ScenarioName, paused?: boolean }
- *
- * Three failure modes are surfaced as typed errors so the api router
- * can map them to the right HTTP status:
- *
- *   - `unreachable`    — fetch threw / aborted (network error,
- *                        DNS fail, timeout via AbortController)
- *   - `secret_mismatch`— simulator returned 403 (wrong / short secret)
- *   - `unknown`        — any other non-2xx response (4xx validation,
- *                        5xx simulator crash, etc.)
- *
- * AbortController-based timeout: 5 s per call. The spec's SLA is
- * "scenario switch applied within 5 s"; the timeout matches that
- * budget so the api router's HTTP response to the SPA matches the
- * downstream effect the SPA can observe.
  */
 import { type ScenarioName } from "@surakkha/shared/simulator";
 
