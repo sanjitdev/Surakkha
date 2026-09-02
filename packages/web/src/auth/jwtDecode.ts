@@ -1,23 +1,8 @@
 /**
- * JWT decoder — Surakkha web (Story 1.7).
- *
- * Pure decoder for the access token (HS256). We do NOT verify the
- * signature client-side — the api's `authenticate` middleware does
- * that on every request. This module only extracts the role so
- * `CurrentRoleContext` can render the right nav without an extra
- * `/me` round-trip on page reload.
- *
- * Why not a library: the only field we need is `role`; pulling in
- * `jwt-decode` (or anything heavier) for one field is not worth the
- * audit surface. The decoder below is intentionally narrow.
- *
- * Wire contract:
- *   - `decodeAccessToken(token)` parses the payload and returns the
- *     role (or null) along with the raw exp. Returns null on any
- *     shape mismatch — the caller treats null as "no session".
- *   - Tokens are issued by the api and pinned to HS256 + 8h. If the
- *     shape ever drifts, the decoder returns null and the SPA shows
- *     the login screen.
+ * `jwtDecode` — extracts `role`, `sub`, and `exp` from the access token
+ * payload. Signature verification is the api's job; the client only
+ * needs the role for nav rendering (avoids a `/me` round-trip on
+ * page reload). Returns nulls on any shape mismatch.
  */
 import { type Role } from "@surakkha/shared/rbac";
 

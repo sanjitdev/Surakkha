@@ -1,28 +1,7 @@
 /**
- * LoginShell — Surakkha web (Story 1.3).
- *
- * Behavioural contract: epics.md §Story 1.3 (PRD F-5, UX-DR-4).
- * Visual contract: DESIGN.md §Layout & Spacing → "Login: split 1fr 1fr
- * at >= 1024px; below 1024px the hero panel is hidden and the form
- * takes the full width."
- *
- * Layout:
- *   - viewport >= 1024px (lg): split 1fr 1fr. Left = primary-gradient
- *     hero with the brand mark + tagline. Right = white form surface
- *     with email + password FormFields and a "Sign in" button.
- *   - viewport < 1024px: hero hidden, form takes the full viewport
- *     width with px-6 / px-4 / px-3 canvas padding per breakpoint.
- *
- * Submit contract:
- *   - The story says the shell posts to "the auth endpoint established
- *     in Story 1.4". That endpoint does not exist yet; for now the
- *     shell posts to a stub URL and surfaces a friendly "Sign-in is
- *     not available in this build" inline status. When Story 1.4
- *     lands `POST /auth/login`, the stub URL is swapped for the real
- *     one and the same handler drives the redirect to `/dashboard`.
- *
- * Copy discipline (Story 1.3 AC + DESIGN.md voice): every visible
- * string is checked for exclamation marks and marketing language.
+ * `LoginShell` — Story 1.3 split-screen login form.
+ * Layout: lg (>=1024px) shows hero + form side-by-side; below 1024px
+ * the hero hides and the form takes the full viewport.
  */
 import { type FormEvent, useEffect, useState } from "react";
 
@@ -52,13 +31,23 @@ interface LoginShellProps {
   readonly onSubmit: (email: string, password: string) => Promise<void>;
 }
 
+/**
+ * Per-field error slot. The dual-shape keeps the email error inside the
+ * `FormField` (design-system affordance) and the password / submit error
+ * in the inline `<p data-testid="login-submit-error">` below the form
+ * — same UX as the dual-slot predecessor, one state read instead of
+ * two parallel `useState` calls.
+ */
+type FieldError =
+  | { readonly field: "email"; readonly message: string }
+  | { readonly field: "password" | "submit"; readonly message: string };
+
 export const LoginShell = ({ onSubmit }: LoginShellProps) => {
   const [breakpoint, setBreakpoint] = useState<Breakpoint>("lg");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [emailError, setEmailError] = useState<string | null>(null);
+  const [error, setError] = useState<FieldError | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     const update = () => setBreakpoint(detectBreakpoint());
@@ -73,32 +62,29 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
 
     const trimmed = email.trim();
     if (trimmed.length === 0) {
-      setEmailError("Enter your email address.");
+      setError({ field: "email", message: "Enter your email address." });
       return;
     }
     if (password.length === 0) {
-      // Password is required; we route this through FormField by reusing
-      // the submitError slot rather than a per-field error so the form
-      // only shows one inline message at a time.
-      setSubmitError("Enter your password to continue.");
+      setError({ field: "password", message: "Enter your password to continue." });
       return;
     }
-    setEmailError(null);
-    setSubmitError(null);
+    setError(null);
     setSubmitting(true);
     try {
       await onSubmit(trimmed, password);
     } catch (err) {
-      // Story 1.3 only requires the in-flight label; the stub
-      // surfaces a friendly inline status. Story 1.4 wires the real
-      // error shape (401 / 403 / 5xx).
-      setSubmitError(
-        err instanceof Error ? err.message : "Sign-in is not available in this build.",
-      );
+      setError({
+        field: "submit",
+        message: err instanceof Error ? err.message : "Sign-in is not available in this build.",
+      });
     } finally {
       setSubmitting(false);
     }
   };
+
+  const emailError = error?.field === "email" ? error.message : null;
+  const submitError = error !== null && error.field !== "email" ? error : null;
 
   return (
     <div data-testid="login-shell" className="flex min-h-screen flex-col lg:flex-row">
@@ -158,7 +144,7 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value);
-                  if (emailError !== null) setEmailError(null);
+                  if (error?.field === "email") setError(null);
                 }}
               />
             )}
@@ -173,7 +159,7 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
-                  if (submitError !== null) setSubmitError(null);
+                  if (error !== null && error.field !== "email") setError(null);
                 }}
               />
             )}
@@ -185,7 +171,7 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
               role="alert"
               className="text-md text-severity-critical-text"
             >
-              {submitError}
+              {submitError.message}
             </p>
           )}
 

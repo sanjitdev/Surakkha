@@ -1,25 +1,8 @@
 /**
- * Token store — Surakkha web (Story 1.7).
- *
- * Single source of truth for the SPA's access token. The refresh
- * token lives only in an httpOnly cookie managed by the browser; we
- * never see it from JS.
- *
- * Wire contract:
- *   - `accessToken` is read synchronously by the apiClient (Story 1.7)
- *     before every fetch and by the `CurrentRoleProvider` to derive
- *     the user role.
- *   - `setAccessToken({ token, expiresIn })` is called by the
- *     apiClient on login + refresh success.
- *   - `clearTokens()` is called on refresh failure (the SPA then
- *     navigates to /login).
- *   - The store persists `accessToken` to `localStorage` so a hard
- *     page reload recovers the session without bouncing through
- *     /login.
- *
- * Test affordances:
- *   - `_resetTokenStore()` lets unit tests reset the singleton between
- *     assertions without touching `localStorage`.
+ * `tokenStore` — single source of truth for the SPA's access token.
+ * Persisted to `localStorage` so a hard page reload recovers the session
+ * without bouncing through /login. The refresh token lives only in an
+ * httpOnly cookie; we never see it from JS.
  */
 import { type Role } from "@surakkha/shared/rbac";
 import { create } from "zustand";
@@ -93,41 +76,25 @@ export const useTokenStore = create<TokenState>((set) => {
   };
 });
 
-/**
- * Read role from the current access token. Synchronous; used by
- * `CurrentRoleContext` for the initial render so the route gate does
- * not flash before the JWT is decoded.
- */
+/** Synchronous role read for `CurrentRoleContext`'s initial render. */
 export const readRoleFromStore = (): Role | null => {
   const { accessToken } = useTokenStore.getState();
   if (accessToken === null) return null;
   return decodeAccessToken(accessToken).role;
 };
 
-/**
- * Read the viewer's user id from the current access token's `sub`
- * claim. Synchronous; mirrors `readRoleFromStore`. Story 4.7 needs
- * this so the detail page can pass `viewerUserId` to
- * `actionSlotsFor`'s third argument (the INSPECTING ownership gate
- * — Technicians only see `submit-result` for incidents they're
- * assigned to).
- */
+/** Synchronous `sub` read; mirrors `readRoleFromStore` for `userId`. */
 export const readUserIdFromStore = (): string | null => {
   const { accessToken } = useTokenStore.getState();
   if (accessToken === null) return null;
   return decodeAccessToken(accessToken).userId;
 };
 
-/**
- * Read the raw access token. Used by the apiClient for the
- * `Authorization: Bearer <token>` header. Synchronous.
- */
+/** Synchronous raw-token read for the apiClient's Bearer header. */
 export const readAccessToken = (): string | null => useTokenStore.getState().accessToken;
 
-/**
- * Test helper. Resets the singleton store and the persisted entry.
- * Production callers should use `clearTokens()` instead.
- */
+/** Test helper: resets the singleton store + persisted entry. Production callers
+ *  use `clearTokens()` instead. */
 export const _resetTokenStore = (): void => {
   useTokenStore.setState({ accessToken: null, expiresAt: null });
   if (typeof globalThis.localStorage !== "undefined") {
