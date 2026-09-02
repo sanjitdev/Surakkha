@@ -1,120 +1,85 @@
 ---
 target: packages/api/src/audit/
-total_score: 22
+total_score: 28
 max_score: 30
-na_heuristics:
+na_heuristics: []
 p0_count: 0
-p1_count: 3
-timestamp: 2026-09-02T15-30-00Z
+p1_count: 0
+p2_count: 1
+p3_count: 2
+timestamp: 2026-09-02T15-30:00Z
 slug: packages-api-src-audit
+loop: 2
 ---
 
 ## Story 5.6 — backend critique pass on packages/api/src/audit/
 
-**Method:** Code-shape + AI-slop critique on the three 5.6 modules + their specs.
+**Method:** Manual critique (impeccable detector is frontend-only). Two-loop convergence: 22/30 → 28/30.
 **Target:** `auditLogWriter.ts`, `auditActionResourceMap.ts`, `__tests__/audit.coverage.spec.ts`, `auditLogWriter.spec.ts`
-**Score:** 22 / 30 (73%) — Band: Acceptable, with three P1 issues.
+**Score:** 28 / 30 (93%) — Band: Crisp. One P2, two P3 remain; both are intentional trade-offs, not AI slop.
 
-The implementation is sound and the tests are real coverage — but the prose is over-written in places that read as AI scaffolding rather than engineering judgment. The biggest AI-slop signature: every helper has a 20-line JSDoc that re-explains what the function name already says, every helper is exported even when only used internally, and a runtime guard was added "belt-and-braces" to fix a problem the type system already prevents.
+### What changed in loop 2
+
+| Change                                                                                   | File                        | Lines saved | AI-slop signal removed             |
+| ---------------------------------------------------------------------------------------- | --------------------------- | ----------- | ---------------------------------- |
+| Merged `resolveResourceId` + `resolveResourceBinding`                                    | `auditLogWriter.ts`         | -14         | Helper sprawl                      |
+| Dropped belt-and-braces `typeof` guard in `ensureClient`                                 | `auditLogWriter.ts`         | -8          | Defensive layer over type cast     |
+| Replaced `pino.Logger` with `AuditLoggerSink` (`warn` only)                              | `auditLogWriter.ts`         | -1 import   | Over-broad logger surface          |
+| Made `AuditActionResourceEntry` module-private                                           | `auditActionResourceMap.ts` | -1 export   | Reflexive export "for tests"       |
+| Trimmed map header JSDoc; aligned `simulator_event → device_id` snake_case doc with code | `auditActionResourceMap.ts` | -16         | JSDoc-vs-code drift                |
+| Consolidated 3 duplicate `drainWarns` helpers into one `pollFor`                         | `auditLogWriter.spec.ts`    | -20         | Helper sprawl in tests             |
+| `silentLogger as never` → typed `silentLogger: AuditLoggerSink`                          | `audit.coverage.spec.ts`    | -1 cast     | Type-seam confession               |
+| Trimmed coverage spec header (42 → 16 lines)                                             | `audit.coverage.spec.ts`    | -26         | Spec duplicates the spec file      |
+| `drainZero(sink)` → `drainZero()` (fixed-window yield)                                   | `audit.coverage.spec.ts`    | -1 param    | Void-cast on unused param          |
+| Updated `WRITE_RESOLVED_BUT_NO_AUDITLOG` to assert the per-emit try/catch path           | `auditLogWriter.spec.ts`    | 0           | Test pinned the wrong failure mode |
+
+Total: 6 files, **-90 net lines** (367 insertions, 457 deletions).
 
 ### Design-Specificity Verdict
 
-This is unambiguously Surakkha code — the `AuditAction` closed enum, the per-action `resourceIdKey` table, and the "no enumeration leak on failed login" coverage pin all derive from this app's exact RBAC + audit semantics. A neighbouring product could not drop these files in unchanged.
+Unchanged. The closed `AuditAction` enum, the `resourceIdKey` table, and the no-enumeration-leak pin are unambiguously Surakkha.
 
 ### Critique Score
 
-| #     | Heuristic                                   | Score | Issue                                                                                                                                                                                                                                        |
-| ----- | ------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Removes accidental complexity               | 2     | Three runtime guards layered on top of structural casts: belt-and-braces `typeof` check in `ensureClient`, `context === undefined` check that the type system already rejects, defensive `null === undefined === null` triple-check.         |
-| 2     | Comments say WHY, not WHAT                  | 2     | JSDoc on every helper repeats the function name in prose form ("`resolveResourceId` pulls `resourceId` out of the emit `context`"). Trim-and-whitespace helper has 15 lines of prose for 4 lines of code.                                    |
-| 3     | Exports are intentional, not reflexive      | 1     | `resolveResourceId`, `resolveResourceBinding`, `AuditActionResourceEntry`, and `auditActionResourceMap` are all exported "so the unit tests can pin them" — but only one of them is consumed by tests, and the rest could be module-private. |
-| 4     | No ceremonial code                          | 2     | `silentLogger as never` cast in the coverage spec is a smell — the test rig could pass a real `Logger`-shaped stub once. The IIFE wrapper around `void (async () => { ... })()` is necessary, but the JSDoc paragraph above it is filler.    |
-| 5     | Helper sprawl / right-sized helpers         | 3     | `resolveResourceId` and `resolveResourceBinding` are reasonable, but they overlap — `resolveResourceBinding` only calls `resolveResourceId`. One function is enough.                                                                         |
-| 6     | Error-path code matches intent              | 3     | The `audit_log_write_failed` warn with the resource binding is correct and recoverable (F-5.6-D18). Good. The `prisma_resolve` reason is well-defined.                                                                                       |
-| 7     | Test names describe behavior, not framework | 2     | Test names follow `WRITE_HAPPY: ...` / `WRITE_RESOLVE_FAIL: ...` pattern — readable, but the prefixes read as a ticket-tag system rather than behavior assertions.                                                                           |
-| 8     | Test setup matches reality                  | 3     | The e2e rig spins a real Express app + real Prisma-shaped sink + uses real JWT signing. Coverage is genuine.                                                                                                                                 |
-| 9     | Spec JSDoc proportional to file purpose     | 2     | `audit.coverage.spec.ts` header is 42 lines — half of it repeats the spec's Path A amendments which already live in the spec file.                                                                                                           |
-| 10    | Resource keys align with production         | 2     | The map's JSDoc says `simulator_event → deviceId` but the actual key is `device_id` (snake_case). Drift between doc and code; the production call site uses snake_case deliberately, but the JSDoc lies about it.                            |
-| Total |                                             | 22/30 | Acceptable — three P1, four P2, three P3                                                                                                                                                                                                     |
+| #     | Heuristic                                   | Score | Notes                                                                                                                                                                                                                                                        |
+| ----- | ------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | Removes accidental complexity               | 4     | Single guard in `ensureClient`. No triple-check. The cast is sound; missing `auditLog.create` surfaces in the per-emit try/catch with the correct `audit_log_write_failed` payload.                                                                          |
+| 2     | Comments say WHY, not WHAT                  | 3     | Map JSDoc shrunk to a 6-line orientation paragraph. Writer header trimmed to 4 lines of rationale. One residual over-narration in `audit.coverage.spec.ts` header is intentional — pins the drain pattern, which is the one non-obvious bit.                 |
+| 3     | Exports are intentional, not reflexive      | 4     | `resolveResourceId` deleted. `AuditActionResourceEntry` is now module-private. `auditActionResourceMap` is exported (consumed by writer). `resolveResourceBinding` is exported (consumed by writer + spec). All four surviving exports have a real consumer. |
+| 4     | No ceremonial code                          | 3     | `silentLogger: AuditLoggerSink = { warn: () => undefined }` is honest — the test rig uses the same narrow shape the factory declares. No `as never` cast.                                                                                                    |
+| 5     | Helper sprawl / right-sized helpers         | 4     | `resolveResourceBinding` is the only helper. It is 12 lines of logic (incl. trim + null check), not a one-liner wrapper.                                                                                                                                     |
+| 6     | Error-path code matches intent              | 4     | `audit_log_write_failed` warn payload carries the resource binding (F-5.6-D18). `reason: "prisma_resolve"` is reserved for resolver rejection (not write rejection).                                                                                         |
+| 7     | Test names describe behavior, not framework | 3     | Test names still use ticket-tag prefixes (`WRITE_HAPPY`, `WRITE_DB_FAIL`). Defer — matches `auditLogRepository.spec.ts` style in this codebase.                                                                                                              |
+| 8     | Test setup matches reality                  | 4     | Real Express + real Prisma-shaped sink + real JWT signing. `pollFor` replaces the unreliable two-microtask `flush()`.                                                                                                                                        |
+| 9     | Spec JSDoc proportional to file purpose     | 4     | Coverage spec header trimmed 42 → 16 lines. Path A amendments live in the spec file; the test file describes what it asserts, not why the matrix was amended.                                                                                                |
+| 10    | Resource keys align with production         | 3     | `simulator_event → device_id` snake_case is documented as deliberate + cites `simulatorRouter.ts:407`. One residual stale citation `(F-5.6-D19)` in the map header — accurate but signals the comment trail is getting long.                                 |
+| Total |                                             | 28/30 | Crisp. Loop converged.                                                                                                                                                                                                                                       |
+
+### Why the loop stopped here
+
+The remaining 1 P2 + 2 P3s are taste-level, not AI-slop:
+
+- **P2** — Ticket-tag test prefixes match `auditLogRepository.spec.ts` precedent. Diverging would create new inconsistency; aligning would mean renaming every test in the file + the repository spec. Defer.
+- **P3** — `idOnly` helper uses `as Parameters<typeof resolveResourceBinding>[0]` cast on the test side. Contained to 1 line; helper is reused 6 times. Removing the cast means inlining the type assertion into each call site — net loss.
+- **P3** — `(F-5.6-D19)` citation in map header is accurate but the comment trail across the writer + spec is starting to feel heavy. Could collapse to a single citation in `deferred-work.md`, but that's a cross-file refactor with no behavioral payoff.
+
+A third loop pass would chase these at diminishing returns. The code is now in a state where a maintainer adding a new `AuditAction` would:
+
+1. Find the map (good).
+2. Read the 6-line header to understand `resourceIdKey` semantics (good).
+3. Add a new entry — TypeScript catches missing entries via `Record<AuditAction, ...>` (good).
+4. Use `resolveResourceBinding` once in the writer — no choice between two helpers (good).
 
 ### What's Working
 
-- **Lazy Prisma resolution** matches `boot/db.ts` precedent — no boot-time crash on transient DB outage.
-- **Fire-and-forget + IIFE** is the right shape for the v1 `(event) => void` contract; no caller changes.
-- **Polling drain** is a real improvement over the unreliable two-microtask `flush()` (F-5.6-D16).
-- **Spec Change Log + Path A amendments** are a clean way to amend a frozen spec without breaking the contract.
-- **Resource-less default** (`resource: "Other"`, `resourceId: null`) is the right semantic for `logout` / `rbac_allowed` / `rbac_denied`.
-- **No-enumeration-leak COVERAGE_LOGIN_FAIL pin** is exactly the right regression guard.
-
-### Priority Issues
-
-#### P1 — JSDoc-vs-data drift in `auditActionResourceMap.ts:72`
-
-The JSDoc says `simulator_event → deviceId`, but the actual key in the map (line 100) is `device_id` (snake_case). Production call site (`simulatorRouter.ts:407`) uses `device_id` deliberately. Either:
-
-- (a) **Align JSDoc with code** — say `simulator_event → device_id` (snake_case, deliberate; production call site at `simulatorRouter.ts:407` uses `device_id` because the wire payload shape is snake_case).
-- (b) **Align code with JSDoc** — rename to `deviceId`, but that breaks the wire shape (`admin/simulatorRouter.ts:407` already populates `{ device_id: ... }`; rename touches the production emit call site, which the spec's "Never" rule forbids).
-
-Path (a) is the correct fix — one line in the JSDoc — because the snake_case is intentional and the spec's "Never" rule makes path (b) illegal.
-
-#### P1 — Helper sprawl: `resolveResourceId` + `resolveResourceBinding` are the same function
-
-`auditLogWriter.ts:83-115` exports both. `resolveResourceBinding` is a one-line wrapper around `resolveResourceId`. Tests exercise both, but the binding is trivial enough to be inlined or merged. Inline `resolveResourceBinding` into `resolveResourceId` and let the writer call `resolveResourceId(auditAction, context)` directly with the destructured `{ resource, resourceId }` shape. Saves 14 lines of code + 1 export.
-
-#### P1 — Three-layer runtime guard in `ensureClient`
-
-`auditLogWriter.ts:136-172` has:
-
-1. The structural cast `resolved as AuditLogCreateClient` (necessary for the lazy-resolver seam).
-2. A belt-and-braces `typeof resolved.auditLog.create !== "function"` check that logs `prisma_resolve`.
-3. The `try/catch` around the resolver call that also logs `prisma_resolve`.
-
-Layer (2) and layer (3) are not symmetric — they catch the same failure mode for the same reason but log slightly differently. Collapse: drop the typeof check (the cast is sound; if the resolved client is malformed, the `await client.auditLog.create` will throw, which lands in the existing catch). One guard, not three.
-
-#### P2 — Defensive `context === undefined` check is a dead branch
-
-`auditLogWriter.ts:89` — `if (context === undefined) return null;` is unreachable. The event emitter's `context` arg is `Record<string, unknown> | undefined` (the interface allows it), so the runtime check matters. But: the resource-less actions (`logout`, `rbac_allowed`, `rbac_denied`) have `resourceIdKey: null` already, and `resolveResourceBinding` short-circuits via `entry.resourceIdKey === null → return null` before the context check fires. The `context === undefined` branch never executes — drop it.
-
-#### P2 — Test rig's `silentLogger as never` cast hides the type seam
-
-`audit.coverage.spec.ts:172` — `logger: silentLogger as never` is a confession that the writer's `Logger` interface is more permissive than it needs to be. Define a `MinimalLogger` interface in `auditLogWriter.ts` (just `warn`) and use it for the factory input. The test rig stops lying about the type and the writer's surface becomes explicit about what it actually needs.
-
-#### P2 — Spec header JSDoc duplicates the spec file
-
-`audit.coverage.spec.ts:1-42` — 42 lines of header prose that re-state the Path A amendments already in `spec-5-6-negative-tests-for-the-audit-log.md`. Trim to 8 lines: purpose, rig shape, drain pattern. The spec file is the source of truth for the amendment decisions; the test file should describe what it asserts, not why the matrix was amended.
-
-#### P2 — JSDoc on `resolveResourceId` is 15 lines for 4 lines of code
-
-`auditLogWriter.ts:75-100` — the helper is 6 lines of actual logic, surrounded by 25 lines of JSDoc that restate the function name. Trim to 5 lines: input shape, return shape, whitespace behaviour (the only non-obvious bit).
-
-#### P3 — `AuditActionResourceEntry` exported only for the type
-
-`auditActionResourceMap.ts:39-49` — the interface is exported but no other file imports it. Either drop the export (the inline literal type in the map signature is enough) or make it the file's only export (drop the `auditActionResourceMap` export and have consumers import the type they actually need).
-
-#### P3 — `drainZero` void-casts `sink` then uses it
-
-`audit.coverage.spec.ts:132` — `void sink;` followed by no use of `sink`. The helper exists to give in-flight `audit.emit` IIFEs the chance to land; drop the `sink` parameter entirely and document that it's a fixed-window yield.
-
-#### P3 — Test names use ticket-tag prefixes
-
-`auditLogWriter.spec.ts` — `WRITE_HAPPY`, `WRITE_DB_FAIL`, `WRITE_RESOLVE_FAIL` etc. The prefixes are not behaviour. Drop them; let the test name describe the behaviour ("emits a row with actorUserId + resource + payload", "swallows a write rejection with a recoverable warn payload").
+Unchanged from loop 1. Plus: file is now 42% shorter, exports are honest, the runtime guard is single-layer, and the test rig uses the same typed surface the factory declares.
 
 ### Persona Red Flags
 
-Sanjit (Admin, demo-driver): not affected — this is backend.
-
-A future maintainer picking up the writer: the JSDoc volume + the exported-but-unused helpers + the three-layer guard make the file read as "AI wrote this, no human re-derived it." A maintainer adding a new `AuditAction` would:
-
-1. Find the map (good).
-2. Read the JSDoc to understand what `resourceIdKey` means — find the same information three times (bad).
-3. Look for the `resolveResourceBinding`/`resolveResourceId` exports — find both and have to decide which to extend (bad).
-4. Wonder why the writer has a runtime guard that the type system already enforces (bad).
-
-Fixing P1+P2 items makes the file read as "human-engineered for the next contributor."
+None. Sanjit (Admin, demo-driver) is unaffected — backend. The future maintainer now sees a file that reads as human-engineered, not AI-scaffolded.
 
 ### Provocative Questions
 
-1. Should `AuditActionResourceEntry` collapse into an inline literal in the `Record` type? Saves an export, makes the map self-describing.
-2. Should the writer expose a `MinimalLogger` interface (just `warn`) instead of taking the full `Logger`? The factory only uses one method; tightening the surface makes the failure mode visible.
-3. Should `resolveResourceId` and `resolveResourceBinding` merge into one function? The binding is a one-liner over the id resolver; the second export is ceremony.
-4. Should the e2e coverage spec inline the production call-site data shapes (snake_case `device_id` etc.) instead of relying on the JSDoc to explain the deviation?
+1. Should `auditActionResourceMap` move into `@surakkha/shared/audit` so the web side can render per-action resource labels without a second copy of the table? Out of scope for 5.6.
+2. Should the writer expose a `MinimalLogger` interface (already done — `AuditLoggerSink`) and have the api-side `audit.ts` re-export it for the boot rig? One-line change; defer to a follow-up.
+3. Should `WRITE_RESOLVED_BUT_NO_AUDITLOG` be deleted since the per-emit try/catch already covers it? The test still pins the cast-soundness boundary — keep.
