@@ -1,18 +1,8 @@
 /**
- * `transitionSideEffects.ts` — Story 4.2.
- *
- * Side-effect helpers extracted from `transitionHelpers.ts` so
- * the orchestrator stays under the lint `max-lines` ceiling (500).
- * These three are independent concerns that share no helper state:
- *
- *   - `runOwnershipCheck` — the Technician-only-mine 403 path
- *     (`submit_result` only).
- *   - `emitStateChanged` — post-commit socket emit on the
- *     per-incident room.
- *   - `writeInvalidAttemptEvent` — the audit trail for typed
- *     state-machine misses + DB-layer concurrent-modification
- *     losses (writes one `IncidentEvent` row + one structured
- *     audit log line).
+ * Side-effect helpers for incident transitions: ownership check
+ * for the Technician-only-mine 403 path, post-commit
+ * `incident:state_changed` socket emit, and the audit-trail
+ * `IncidentEvent` row for invalid state-machine misses.
  */
 import { type ActionVerb } from "@surakkha/shared/incident";
 import { type Response } from "express";
@@ -31,11 +21,8 @@ interface OwnershipCheckInput {
   readonly audit: AuditLogger;
 }
 
-/**
- * Run the canonical `requireOwner` shape inline so we can return
- * the 403 directly without re-wiring the middleware. The
- * middleware's audit-log shape is mirrored exactly.
- */
+/** Mirror the canonical `requireOwner` middleware's audit-log
+ *  shape so the inline path stays equivalent. */
 export const runOwnershipCheck = async (input: OwnershipCheckInput): Promise<boolean> => {
   const { ownerId, req, res, audit } = input;
   if (req.user === undefined || req.user === null) {
@@ -69,10 +56,6 @@ interface StateChangedEmitInput {
   readonly actorUserId: string | null;
 }
 
-/**
- * Post-commit `incident:state_changed` socket emit on the
- * per-incident room.
- */
 export const emitStateChanged = (input: StateChangedEmitInput): void => {
   const { deps, incidentId, fromState, toState, at, actorUserId } = input;
   if (deps.broadcast === undefined) return;
@@ -95,19 +78,12 @@ interface InvalidAttemptInput {
   readonly at: string;
 }
 
-/**
- * Write an `IncidentEvent` with `type: "invalid_transition_attempt"`
- * so the audit trail captures the loser's intent. Lives outside
- * `$transaction` because the route has already decided to 409 — a
- * failed event write should not block the response.
- */
+/** Audit trail for typed state-machine misses and DB-layer
+ *  concurrent-modification losses. Lives outside `$transaction`
+ *  because the route has already decided to 409 — a failed event
+ *  write should not block the response. */
 export const writeInvalidAttemptEvent = async (input: InvalidAttemptInput): Promise<void> => {
   const { deps, incidentId, actorUserId, from, attempted, at } = input;
-  // Patch (code review 2026-08-27 #16): emit a structured audit log
-  // alongside the IncidentEvent row. The row is the durable audit
-  // trail; the structured log line is the immediate observability
-  // hook (Story 5.6 will swap `index.ts`'s console transport for
-  // a real AuditLog writer — both surfaces stay in lockstep).
   deps.audit.emit({
     auditAction: "invalid_state_transition",
     userId: actorUserId ?? undefined,
