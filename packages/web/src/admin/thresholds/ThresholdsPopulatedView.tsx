@@ -1,16 +1,7 @@
 /**
- * The populated view for the Thresholds page — Story 3.7.
- *
- * Extracted from `ThresholdsPage.tsx` so the orchestrator can stay
- * under the lint `max-lines-per-function` + `max-lines` ceilings.
- * All the JSX for the populated branch + the row renderer + the
- * header / table / history summary / toast region / modals live
- * here.
- *
- * The two modals (`NewRuleModal`, `EditRuleModal`) live in
- * `ThresholdsModals.tsx`. The toast types + region are shared from
- * `incidents/toast.tsx` (Epic-6 sweep); see `toast.tsx` for the
- * `testIdPrefix` convention used below.
+ * `ThresholdsPopulatedView` — table + history summary + modals for
+ * the Thresholds page. Extracted so the orchestrator stays under
+ * the lint `max-lines-per-function` ceiling.
  */
 import { type RuleRow } from "@surakkha/shared";
 import { useState } from "react";

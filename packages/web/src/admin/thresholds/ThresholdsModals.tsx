@@ -1,15 +1,8 @@
 /**
- * Modal components for the Thresholds page — Story 3.7.
- *
- * Two controlled forms (no `react-hook-form` dependency):
- *   - `NewRuleModal` — create a new Rule at v1.
- *   - `EditRuleModal` — edit-via-supersede; only `threshold` is
- *     editable today (the other Rule fields are immutable across
- *     versions by design — the `(deviceId, metric, operator,
- *     threshold)` tuple keys the supersede slot).
- *
- * Kept in their own file so `ThresholdsPage.tsx` stays under the
- * lint `max-lines-per-function` and `max-lines` ceilings.
+ * `ThresholdsModals` — controlled forms for the Thresholds page.
+ * `NewRuleModal` creates a Rule at v1; `EditRuleModal` edits via
+ * supersede (only `threshold` is mutable across versions; the
+ * `(deviceId, metric, operator, threshold)` tuple keys the slot).
  */
 import { type RuleRow } from "@surakkha/shared";
 import { useState } from "react";
@@ -210,25 +203,12 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
         <p className="text-md text-neutral-secondary">
           Editing creates a new version. The old row is deactivated automatically.
         </p>
-        {/* Spec AC8 — "pre-fill with the rule's current fields". The
-            supersede key is `(deviceId, metric, operator, threshold)`
-            so only `threshold` is mutable across versions; the rest
-            are shown read-only to make the slot visible to the
-            operator without inviting drift. Each field has its own
-            `data-testid` so a RTL test can assert pre-fill.
-            Critique 2026-08-31 progressive-disclosure finding: the
-            earlier render surfaced all 7 immutable fields inline,
-            competing with the single editable threshold for the
-            Operator's attention. Now grouped into:
-              • a one-line "key identity" summary (device / severity /
-                rule type — the fields most likely to be wrong and
-                worth re-confirming at a glance);
-              • a `<details>` disclosure for the remaining
-                operator / min-duration / hysteresis fields (rarely
-                need to change but kept reachable for the audit-
-                log story).
-            Each field still has its own `data-testid` so the spec
-            rig's pre-fill assertions stay green. */}
+        {/* Spec AC8: pre-fill the rule's current fields. Only
+            `threshold` is mutable (supersede key), so the rest are
+            surfaced read-only — a 3-field "key identity" summary
+            plus a <details> for the audit-log-only fields. Each
+            field has its own data-testid for the RTL pre-fill
+            assertions. */}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-md">
           <dt className="text-neutral-secondary">Device</dt>
           <dd data-testid="thresholds-edit-field-deviceId" className="font-mono">

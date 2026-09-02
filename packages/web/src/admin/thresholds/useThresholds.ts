@@ -1,21 +1,8 @@
 /**
- * TanStack Query hooks for the `/admin/thresholds` admin tab — Story 3.7.
- *
- * Five hooks:
- *   - `useThresholds(activeOnly)`        — list rules, paginated.
- *   - `useCreateThreshold()`              — POST a new Rule at v1.
- *   - `useUpdateThreshold()`              — PATCH supersede or
- *                                          deactivate.
- *   - `useActivateThreshold()`           — PATCH /rules/:id/activate
- *                                          (idempotent).
- *
- * All mutations invalidate the `["admin", "thresholds", "rules"]`
- * query key on success so the page refetches.
- *
- * Wire shapes are parsed by Zod against `RuleListResponseSchema`,
- * `RuleRowSchema`, `RuleSupersedeResponseSchema`, etc. from
- * `@surakkha/shared/rule` (defence-in-depth against schema drift
- * between api + web).
+ * TanStack Query hooks for the `/admin/thresholds` admin tab. All
+ * mutations invalidate the `["admin", "thresholds", "rules"]` key on
+ * success; wire shapes are Zod-parsed for defence-in-depth against
+ * api/web schema drift.
  */
 import {
   type RuleCreateRequest,
@@ -25,15 +12,26 @@ import {
   RuleRowSchema,
   RuleSupersedeResponseSchema,
 } from "@surakkha/shared";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type SafeParseReturnType,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { apiFetch } from "../../api/apiClient";
 
-// Re-export the shared wire row type so the page code only imports
-// from this module.
 export type { RuleRow } from "@surakkha/shared";
 
 const THRESHOLDS_RULES_KEY = ["admin", "thresholds", "rules"] as const;
+
+const assertWireShape = <T>(parsed: SafeParseReturnType<unknown, T>, label: string): T => {
+  if (!parsed.success) {
+    console.error(`${label} wire-shape mismatch`, parsed.error);
+    throw new Error(`${label} wire-shape mismatch`);
+  }
+  return parsed.data;
+};
 
 /**
  * Build a human-readable error message from a non-`ok` response. The
@@ -100,11 +98,7 @@ export const useThresholds = (activeOnly: boolean = false) =>
         throw await parseApiError(res, "thresholds fetch");
       }
       const parsed = RuleListResponseSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("thresholds wire-shape mismatch", parsed.error);
-        throw new Error("thresholds wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "thresholds");
     },
   });
 
@@ -122,14 +116,8 @@ export const useCreateThreshold = () => {
       if (!res.ok) {
         throw await parseApiError(res, "create threshold");
       }
-      // The api returns a bare `RuleRow` (not wrapped in `{ rule }`)
-      // — the schema parse below strips the optional wrapper.
       const parsed = RuleRowSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("create threshold wire-shape mismatch", parsed.error);
-        throw new Error("create threshold wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "create threshold");
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: THRESHOLDS_RULES_KEY });
@@ -162,18 +150,12 @@ export const useUpdateThreshold = () => {
       // deactivate. Branch on the body shape we sent to disambiguate.
       if ("supersede" in body && body.supersede === true) {
         const parsed = RuleSupersedeResponseSchema.safeParse(await res.json());
-        if (!parsed.success) {
-          console.error("supersede wire-shape mismatch", parsed.error);
-          throw new Error("supersede wire-shape mismatch");
-        }
-        return { kind: "supersede", old: parsed.data.old, next: parsed.data.new };
+        const data = assertWireShape(parsed, "supersede");
+        return { kind: "supersede", old: data.old, next: data.new };
       }
       const parsed = RuleRowSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("deactivate wire-shape mismatch", parsed.error);
-        throw new Error("deactivate wire-shape mismatch");
-      }
-      return { kind: "deactivate", row: parsed.data };
+      const data = assertWireShape(parsed, "deactivate");
+      return { kind: "deactivate", row: data };
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: THRESHOLDS_RULES_KEY });
@@ -195,11 +177,7 @@ export const useActivateThreshold = () => {
         throw await parseApiError(res, "activate threshold");
       }
       const parsed = RuleRowSchema.safeParse(await res.json());
-      if (!parsed.success) {
-        console.error("activate wire-shape mismatch", parsed.error);
-        throw new Error("activate wire-shape mismatch");
-      }
-      return parsed.data;
+      return assertWireShape(parsed, "activate threshold");
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: THRESHOLDS_RULES_KEY });

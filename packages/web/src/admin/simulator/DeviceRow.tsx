@@ -1,22 +1,8 @@
 /**
- * DeviceRow — Story 2.5.
- *
- * One row per device. Shows:
- *   - human label (`name`) + truncated UUID
- *   - current scenario badge
- *   - scenario `<select>` with the seven SCENARIO_NAMES
- *   - Switch button (disabled while the row's mutation is in flight)
- *   - Start / Pause toggle button
- *
- * The row is read-only on the `enabled === false` path; the parent
- * (`SimulatorPage`) instead renders the disabled banner above the
- * list and the rows are not rendered at all in that case.
- *
- * F-2.5-17 (deferred): the api's `/devices` listing does not currently
- * expose `paused` per device. The row keeps a local `paused` state
- * initialized to `false`. A future story that extends the device
- * surface with `paused` should seed `paused` from the server value
- * to remove the local-truth drift.
+ * `DeviceRow` — one row per simulator device. Renders name + UUID,
+ * the current scenario badge, a scenario `<select>` (the seven
+ * `SCENARIO_NAMES`), a Switch button, and a Start / Pause toggle.
+ * Disabled while the row's mutation is in flight.
  */
 import { SCENARIO_NAMES } from "@surakkha/shared/simulator";
 import { useEffect, useState } from "react";

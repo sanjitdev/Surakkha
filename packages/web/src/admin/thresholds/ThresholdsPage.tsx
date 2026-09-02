@@ -1,26 +1,11 @@
 /**
- * ThresholdsPage — Story 3.7 (`/admin/thresholds` admin tab).
+ * `ThresholdsPage` — admin tab at `/admin/thresholds`. Three states:
+ * loading, error, or populated (table of active rules + history
+ * toggle + per-row Edit / Activate / Deactivate + New Rule form).
  *
- * Three states:
- *   1. loading                       → calm "Loading…" stub.
- *   2. error                         → calm error banner with Retry.
- *   3. populated                     → table of active rules + history
- *      toggle (shows inactive versions of the same
- *      `(deviceId, metric, operator, threshold)` key) + per-row
- *      Edit / Activate / Deactivate buttons + a "New Rule" form.
- *
- * Mutations invalidate the `["admin", "thresholds", "rules"]` key
- * (handled in `useThresholds.ts`); the optimistic UI is intentionally
- * NOT applied — failures surface through toasts and the next refetch
- * restores truth. This matches the simulator admin tab's no-
- * optimistic-update pattern (`useSimulatorDevices.ts`).
- *
- * The two modals (`NewRuleModal`, `EditRuleModal`) live in
- * `ThresholdsModals.tsx`, and the populated view lives in
- * `ThresholdsPopulatedView.tsx` — both are extracted so this
- * orchestrator can stay under the lint `max-lines-per-function`
- * + `max-lines` ceilings. The toast hook is shared from
- * `incidents/toast.tsx` (Epic-6 sweep).
+ * Mutations invalidate the `["admin", "thresholds", "rules"]` key;
+ * no optimistic UI — failures surface through toasts and the next
+ * refetch restores truth.
  */
 import { type RuleRow } from "@surakkha/shared";
 import { useMemo, useState } from "react";
@@ -36,14 +21,23 @@ import {
   useUpdateThreshold,
 } from "./useThresholds";
 
-/**
- * Compute the slot key for the history toggle. Inactive rows with
- * the same `(deviceId, metric, operator, threshold)` key as an active
- * row are surfaced in the history panel. Using a tuple key avoids
- * floating-point equality on `threshold`.
- */
+/** Tuple key for the history-toggle slot. Inactive rows with the same
+ *  `(deviceId, metric, operator, threshold)` key as an active row are
+ *  surfaced in the history panel. String avoids float equality on
+ *  `threshold`. */
 const slotKey = (row: RuleRow): string =>
   `${row.deviceId ?? "global"}::${row.metric}::${row.operator}::${row.threshold.toString()}`;
+
+/** Wire one mutation's success / error to a toast. The success
+ *  message is a constant; the error is prefixed for context. */
+const onMutation = (
+  pushToast: (tone: "success" | "error", msg: string) => void,
+  successMsg: string,
+  errorPrefix: string,
+) => ({
+  onSuccess: () => pushToast("success", successMsg),
+  onError: (err: Error) => pushToast("error", `${errorPrefix}: ${err.message}`),
+});
 
 export const ThresholdsPage = () => {
   const listQuery = useThresholds(false);
@@ -55,10 +49,7 @@ export const ThresholdsPage = () => {
 
   // Hooks MUST run on every render — derive the lists BEFORE any
   // early returns so the hook order is stable across the loading
-  // → populated / error transitions. Wrapping `rules` in its own
-  // `useMemo` keeps the `useMemo` dep arrays stable across renders
-  // (otherwise the `?? []` fallback re-creates the array each
-  // render, which would force `active` + `inactive` to recompute).
+  // → populated / error transitions.
   const rules = useMemo<readonly RuleRow[]>(() => listQuery.data?.rules ?? [], [listQuery.data]);
   const active = useMemo(() => rules.filter((r) => r.isActive), [rules]);
   const inactive = useMemo(() => rules.filter((r) => !r.isActive), [rules]);
@@ -67,20 +58,14 @@ export const ThresholdsPage = () => {
   const handleDeactivate = (row: RuleRow): void => {
     updateMutation.mutate(
       { id: row.id, body: { activate: false } },
-      {
-        onSuccess: () => pushToast("success", "Rule deactivated."),
-        onError: (err) => pushToast("error", `Deactivate failed: ${err.message}`),
-      },
+      onMutation(pushToast, "Rule deactivated.", "Deactivate failed"),
     );
   };
 
   const handleActivate = (row: RuleRow): void => {
     activateMutation.mutate(
       { id: row.id },
-      {
-        onSuccess: () => pushToast("success", "Rule activated."),
-        onError: (err) => pushToast("error", `Activate failed: ${err.message}`),
-      },
+      onMutation(pushToast, "Rule activated.", "Activate failed"),
     );
   };
 
@@ -103,10 +88,7 @@ export const ThresholdsPage = () => {
         minDurationSeconds: minDurationNum,
         hysteresisSeconds: hysteresisNum,
       },
-      {
-        onSuccess: () => pushToast("success", "Rule created."),
-        onError: (err) => pushToast("error", `Create failed: ${err.message}`),
-      },
+      onMutation(pushToast, "Rule created.", "Create failed"),
     );
   };
 
@@ -126,7 +108,6 @@ export const ThresholdsPage = () => {
     );
   };
 
-  // Loading state.
   if (listQuery.isLoading) {
     return (
       <div data-testid="thresholds-page-loading">
