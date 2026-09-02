@@ -51,7 +51,7 @@
 #     backlog     → backlog
 
 generated: 2026-08-21
-last_updated: 2026-09-02T13:48:00.000Z
+last_updated: 2026-09-02T15:45:00.000Z
 project: Surakkha
 project_key: NOKEY
 tracking_system: file-system
@@ -114,17 +114,17 @@ development_status:
   epic-4-retrospective: done
 
   # ===== Epic 5 — Reporting & Audit =====
-  epic-5: in-progress
+  epic-5: done
   # Story 5.0 — AI-3.1 / AI-4.2 fix sweep; closes 5 pre-existing test
   # failures surfaced in the Epic 3 retro. Lands BEFORE Story 5.1 so the
   # rbac_allowed emit is wired before any new audit-row consumers land.
   5-0-ai-3-1-fix-sweep: done
   5-1-admin-notifications-read-view: done
-  5-2-csv-export-of-30-days-of-readings: review
-  5-3-audit-log-surface-at-audit: review
+  5-2-csv-export-of-30-days-of-readings: done
+  5-3-audit-log-surface-at-audit: done
   5-4-readingaggregate-table: done
   5-5-hourly-retention-cron: done
-  5-6-negative-tests-for-the-audit-log: in-progress
+  5-6-negative-tests-for-the-audit-log: done
 
   # ===== Epic 6 — Cross-cutting NFRs =====
   epic-6: backlog
@@ -600,46 +600,46 @@ stories:
   # ===== Epic 5 — Reporting & Audit (backlog) =====
   - id: "5.1"
     title: "/admin/notifications Read View"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "cce56bc"
+    shipped: "2026-08-30"
+    covers: ["PRD-F-16", "FR-21", "AR-7"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-5-1-admin-notifications-read-view.md"
       review: null
 
   - id: "5.2"
     title: "CSV Export of 30 Days of Readings"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "0acb468"
+    shipped: "2026-09-01"
+    covers: ["FR-30", "NFR-13"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-5-2-csv-export-of-30-days-of-readings.md"
       review: null
 
   - id: "5.3"
     title: "Audit Log Surface at /audit"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "3fefe9c"
+    shipped: "2026-09-01"
+    covers: ["FR-21", "AR-10", "UX-DR-13"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-5-3-audit-log-surface-at-audit.md"
       review: null
 
   - id: "5.4"
     title: "ReadingAggregate Table"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "620496c"
+    shipped: "2026-09-02"
+    covers: ["FR-30", "NFR-13"]
     ledger:
-      context: null
+      context: "_bmad-output/implementation-artifacts/spec-5-4-readingaggregate-table.md"
       review: null
 
   - id: "5.5"
@@ -655,14 +655,14 @@ stories:
 
   - id: "5.6"
     title: "Negative Tests for the Audit Log"
-    status: backlog
+    status: done
     epic: "5"
-    commit: null
-    shipped: null
-    covers: []
+    commit: "9d71641"
+    shipped: "2026-09-02"
+    covers: ["AR-10", "I-9"]
     ledger:
-      context: null
-      review: null
+      context: "_bmad-output/implementation-artifacts/spec-5-6-negative-tests-for-the-audit-log.md"
+      review: "_bmad-output/implementation-artifacts/.impeccable/critique/2026-09-02T15-30-00Z__packages-api-src-audit.md"
 
   # ===== Epic 6 — Cross-cutting NFRs (backlog) =====
   - id: "6.1"
@@ -976,7 +976,7 @@ epics:
   - id: "5"
     title: "Reporting & Audit"
     goal: "Admins can review the audit log, export 30 days of readings to CSV, and inspect reading aggregates."
-    status: backlog
+    status: done
     stories: ["5.1", "5.2", "5.3", "5.4", "5.5", "5.6"]
   - id: "6"
     title: "Cross-cutting NFRs"
