@@ -1,12 +1,9 @@
 /**
- * Thin IO helper that wraps the partial-index lookup
- * `(deviceId, metric, severity) WHERE clearedAt IS NULL`. Lives in
- * its own file (NOT inside `debounce.ts`) so the de-bounce module
- * stays pure — `debounce.spec.ts` runs without any Prisma mock.
+ * Thin IO helper for the partial-index lookup
+ * `(deviceId, metric, severity) WHERE clearedAt IS NULL`.
  *
- * Consumed by the open `$transaction` (idempotency fast path —
- * the partial unique index is the safety net for the race) and by
- * the alert manager for `linked_alerts` collapse.
+ * Consumed by the open `$transaction` (idempotency fast path) and
+ * by the alert manager for `linked_alerts` collapse.
  */
 import type { RuleMetric, RuleSeverity } from "@surakkha/shared";
 
@@ -20,10 +17,8 @@ export interface OpenAlertRow {
   readonly openedAt: Date;
 }
 
-/** Narrow slice of the Prisma client — just `alert.findFirst` with
- *  the `clearedAt: null` filter. Mirrors the `PrismaRuleReader`
- *  pattern; the engine and de-bounce modules do not import
- *  `@prisma/client` directly. */
+/** Narrow slice of the Prisma client — `alert.findFirst` with the
+ *  `clearedAt: null` filter. */
 export interface PrismaAlertReader {
   readonly alert: {
     findFirst(args: {
@@ -51,8 +46,7 @@ export const resolvePrismaAlertReader = (prisma: unknown): PrismaAlertReader => 
 
 /** Look up the at-most-one open `Alert` for a `(deviceId, metric,
  *  severity)` key. Returns `null` if no open alert exists. The
- *  partial unique index `Alert_open_unique_idx` (in the migration
- *  SQL, `WHERE clearedAt IS NULL`) ensures the result is unique. */
+ *  partial unique index `Alert_open_unique_idx` ensures uniqueness. */
 export const findOpenAlert = async (
   prisma: PrismaAlertReader,
   key: {

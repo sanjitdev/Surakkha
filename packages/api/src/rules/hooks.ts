@@ -1,23 +1,12 @@
 /**
- * Rule-engine hook wiring. `installRuleEngineHooks(...)` returns the
- * four `IngestHooks` methods so api boot can wire them via
- * `setIngestHooks(...)`. `onRuleEvaluation` is the only method with
+ * Rule-engine hook wiring. `installRuleEngineHooks` returns the four
+ * `IngestHooks` methods. `onRuleEvaluation` is the only method with
  * real work; the other three delegate to the no-op default.
- *
- * The rate-rule pre-filter chain runs in this EXACT order (pinned by
- * `hooks.spec.ts`):
- *   1. `findMany` over the last 60s of `Reading` rows for
- *      `(deviceId, metric)` — engine-side window query.
- *   2. Sort ascending by `ts`.
- *   3. Drop rows with `ts > observation.observedAt` (clock-skew).
- *   4. Dedupe by `ts` (last-write-wins).
- *   5. Slice to last 5.
  *
  * Boot guard: `installRuleEngineHooks` scans the active Rule cache
  * for any rule with BOTH `minDurationSeconds === 0` AND
- * `hysteresisSeconds === 0` BEFORE installing hooks. If found, it
- * throws `WriteAmplificationError` so the api process exits 78
- * (`EX_CONFIG`).
+ * `hysteresisSeconds === 0` BEFORE installing hooks and throws
+ * `WriteAmplificationError` so the api process exits 78 (`EX_CONFIG`).
  */
 import { RULE_METRICS, type RuleMetric } from "@surakkha/shared";
 
@@ -57,14 +46,10 @@ const RATE_MAX_POINTS = 5;
  *  boot guard fires. */
 const EX_CONFIG = 78;
 
-/** Boot-guard error. Thrown by `installRuleEngineHooks` when the
- *  active Rule cache contains ONE OR MORE rules with BOTH
- *  `minDurationSeconds === 0` AND `hysteresisSeconds === 0`. The api
- *  boot path catches this error type and exits 78 (EX_CONFIG); any
- *  other error falls back to `NOOP_HOOKS` (transient DB outages
- *  degrade gracefully; configuration errors do not).
+/** Boot-guard error. Thrown when the active Rule cache contains a rule
+ *  with BOTH `minDurationSeconds === 0` AND `hysteresisSeconds === 0`.
  *  `ruleIds` enumerates EVERY offender so operators see all in one
- *  boot failure rather than fixing one at a time. */
+ *  boot failure. */
 export class WriteAmplificationError extends Error {
   override readonly name = "WriteAmplificationError";
   constructor(public readonly ruleIds: readonly string[]) {
@@ -92,19 +77,15 @@ export type { AlertStateRepository } from "./alertStateRepository";
 export { resolveAlertStateRepository } from "./alertStateRepository";
 
 /** Default no-op broadcast. Production injects the real `io.to(...)`
- *  via the `broadcast` dep; this default is a defence-in-depth so
- *  tests that forget to pass `broadcast` do not crash. */
+ *  via the `broadcast` dep. */
 const noopBroadcast: BroadcastTarget = {
   to(_room: string) {
     return { emit: (_event: string, _payload: unknown): unknown => undefined };
   },
 };
 
-/** Pick the first frame metric that has at least one rule (global or
- *  device-scoped) in the cache. Defense-in-depth: validates the
- *  frame's metric keys against the closed `RULE_METRICS` enum
- *  (upstream Zod guarantees this, but a typo that drifts past Zod
- *  would otherwise be silently cast and dropped at lookup time). */
+/** Pick the first frame metric with at least one rule (global or
+ *  device-scoped). Validates against the closed `RULE_METRICS` enum. */
 const pickFrameMetric = (
   cache: ActiveRuleCache,
   deviceId: string,
@@ -123,9 +104,7 @@ const pickFrameMetric = (
   return null;
 };
 
-/** Pre-filter chain (rate + absence share the same chain — the engine
- *  only differs in how it interprets `recentReadings`). Order is
- *  load-bearing (see file header). */
+/** Pre-filter chain for rate + absence rules. Order is load-bearing. */
 const buildRecentReadings = async (
   readingRepository: ReadingRepository,
   args: {
@@ -144,9 +123,7 @@ const buildRecentReadings = async (
   const sorted = [...rows].sort((a, b) => a.ts.getTime() - b.ts.getTime());
   // Drop future-ts (clock-skew guard).
   const futureDropped = sorted.filter((r) => r.ts.getTime() <= args.observedAt.getTime());
-  // Dedupe by ts keeping the latest value. `Number.isFinite` rejects
-  // NaN / Infinity from a buggy sensor — a non-finite value would
-  // poison `computeSlope`.
+  // Dedupe by ts keeping the latest value; reject NaN/Infinity.
   const valueByTs = new Map<number, number>();
   for (const r of futureDropped) {
     const v = r.metrics[args.metric];
@@ -161,8 +138,8 @@ const buildRecentReadings = async (
 };
 
 /** Build the de-bounce `DebounceState` shape from the loaded
- *  `RuleDebounceState` rows. Slot key format matches the pure module's
- *  `slotKey` (`${metric}|${severity}`). */
+ *  `RuleDebounceState` rows. Slot key format: NUL-delimited
+ *  `${metric}\u0000${severity}`. */
 const buildDebounceState = (
   rows: ReadonlyArray<{
     readonly metric: RuleMetric;
@@ -173,7 +150,6 @@ const buildDebounceState = (
 ): DebounceState => {
   const state: Record<string, { inViolationSince: Date | null; clearedSince: Date | null }> = {};
   for (const r of rows) {
-    // NUL delimiter matches the pure module's `slotKey`.
     state[`${r.metric}\u0000${r.severity}`] = {
       inViolationSince: r.inViolationSince,
       clearedSince: r.clearedSince,
@@ -182,10 +158,9 @@ const buildDebounceState = (
   return state;
 };
 
-/** Per-frame target resolution: pick the metric the engine evaluates
- *  this frame against, plus the observed timestamp + the metric value
- *  read off the frame. Returns `null` if no rule applies or the
- *  metric value is missing/malformed. */
+/** Per-frame target resolution: pick the metric, observed timestamp,
+ *  and metric value. Returns `null` if no rule applies or the metric
+ *  value is missing/malformed. */
 interface EvaluationTarget {
   readonly metric: RuleMetric;
   readonly observedAt: Date;
@@ -203,12 +178,9 @@ const resolveEvaluationTarget = (
   return { metric, observedAt, metricValue };
 };
 
-/** Run the engine + de-bounce flow. Extracted from `onRuleEvaluation`
- *  to keep the calling function under the complexity ceiling. The
- *  returns are `(rawBreaches, transitions, nextState)` — the call
- *  site applies the IO side effects (Alert row writes, socket emits,
- *  state upserts) outside this helper so the helper itself is pure
- *  of socket IO. */
+/** Run the engine + de-bounce flow. Returns `(rawBreaches, transitions,
+ *  nextState)`. The call site applies the IO side effects (Alert row
+ *  writes, socket emits, state upserts) outside this helper. */
 interface DebounceRunResult {
   readonly rawBreaches: readonly BreachResult[];
   readonly transitions: readonly BreachTransition[];
@@ -239,9 +211,8 @@ const runDebounce = async (args: {
   };
   const rawBreaches = evaluateRules(rules, observation);
 
-  // Load RuleDebounceState for the (deviceId, …) tuple touched by
-  // rules OR rawBreaches. The slot key set is the union of
-  // `(metric, severity)` for both rule rows and breach rows.
+  // Slot key set is the union of `(metric, severity)` for both rule
+  // rows and breach rows.
   const slotSpecs = new Map<
     string,
     { metric: RuleMetric; severity: "info" | "warning" | "critical" }
@@ -279,15 +250,11 @@ const runDebounce = async (args: {
   return { rawBreaches, transitions, nextState };
 };
 
-/** Build the four `IngestHooks` methods. The first parameter is the
- *  cache that was hydrated once at api boot (`hydrateActiveRuleCache`).
- *  `prisma` is held only for symmetry with the future hot-reload
- *  hook; the engine is read-only against `Rule` at eval time. */
+/** Build the four `IngestHooks` methods. `prisma` is held for the
+ *  future hot-reload hook; the engine is read-only against `Rule`
+ *  at eval time. */
 export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): IngestHooks => {
-  // Boot guard — scans the active Rule cache and collects EVERY
-  // offender with `min=0 AND hysteresis=0`, then throws a single
-  // error enumerating them all. Operators with many bad configs see
-  // every offending ruleId in one boot failure.
+  // Boot guard — collect every offender with `min=0 AND hysteresis=0`.
   const offenders: string[] = [];
   for (const rule of deps.cache.byId.values()) {
     if (rule.minDurationSeconds === 0 && rule.hysteresisSeconds === 0) {
@@ -302,9 +269,7 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
   }
 
   const broadcast: BroadcastTarget = deps.broadcast ?? noopBroadcast;
-  // Process-local Map for clock-skew detection. Postgres
-  // `inViolationSince` is authoritative; this map is a best-effort
-  // optimization for early skew detection.
+  // Process-local Map for clock-skew detection.
   const lastSeenFrameTs: Map<string, Date> = deps.lastSeenFrameTs ?? new Map<string, Date>();
 
   const onRuleEvaluation = async (input: RuleEvaluationInput): Promise<readonly BreachResult[]> => {
@@ -324,19 +289,14 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
       rules,
       lastSeenFrameTs,
     });
-    // Update the clock-skew guard AT THE END of the IO path, not
-    // before, so a failed `applyTransition` / `persistStateSlot`
-    // does NOT skew the next frame's clock-skew detection. The
-    // try/finally keeps the original ordering invariant (the pure
-    // call must not see the current frame's ts) while ensuring IO
-    // failure does not leak into the next frame.
+    // Update the clock-skew guard AFTER IO completes — a failed
+    // `applyTransition` / `persistStateSlot` must not skew the next
+    // frame's clock-skew detection.
     let ioSucceeded = false;
     try {
-      // IO side effects — transitions are NOT returned; the hook's
-      // return type stays `Promise<readonly BreachResult[]>`. Each
-      // transition triggers an Alert row write + state upsert
-      // wrapped in a single `$transaction`. The socket emit (open
-      // only) happens AFTER the transaction commits.
+      // IO side effects. Each transition triggers an Alert row write
+      // + state upsert wrapped in a single `$transaction`; the
+      // socket emit (open only) fires AFTER the transaction commits.
       const transitionSlots = new Set<string>();
       for (const transition of transitions) {
         const key = `${transition.metric}\u0000${transition.severity}`;
@@ -351,9 +311,8 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
         });
       }
 
-      // Persist the updated state for the slots that did NOT
-      // transition. Best-effort: a transient DB outage on the state
-      // row write logs but does not fail the eval path.
+      // Persist updated state for slots that did NOT transition.
+      // Best-effort: a transient DB outage logs but does not fail.
       for (const [key, slot] of Object.entries(nextState)) {
         if (transitionSlots.has(key)) continue; // already upserted inside the transaction
         const [m, s] = key.split("\u0000") as [RuleMetric, "info" | "warning" | "critical"];
@@ -365,9 +324,7 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
       }
       ioSucceeded = true;
     } finally {
-      // Only update the clock-skew guard if IO completed. On IO
-      // failure we leave the prior timestamp in place so the next
-      // frame re-evaluates against the same `lastTs`.
+      // Update only if IO completed.
       if (ioSucceeded) {
         lastSeenFrameTs.set(input.deviceId, observedAt);
       }
@@ -376,8 +333,7 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
     return rawBreaches;
   };
 
-  // Silence the "unused" lint for `prisma` — the hot-reload path
-  // will wire it in.
+  // Reserved for the future hot-reload path.
   void deps.prisma;
 
   return {
@@ -388,11 +344,9 @@ export const installRuleEngineHooks = (deps: InstallRuleEngineHooksDeps): Ingest
   };
 };
 
-/** Test-only escape hatch. Resets the module-level `currentHooks`
- *  to the no-op default. The boot path never calls this. */
+/** Test-only escape hatch. The boot path never calls this. */
 export const uninstallRuleEngineHooks = (): void => {
   resetIngestHooks();
 };
 
-// Re-export for callers that want the EX_CONFIG exit code.
 export { EX_CONFIG };

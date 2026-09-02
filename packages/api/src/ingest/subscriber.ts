@@ -1,29 +1,21 @@
 /**
- * Subscriber connection handling.
+ * Subscriber connection for the dashboard.
  *
- * The web dashboard's `<Dashboard />` needs a Socket.IO subscription,
- * but it carries a session access token, NOT a device JWT — the
- * device-claim check in `buildIngestServer` would reject it.
- *
- * Solution: when a connection arrives at `/ingest/dashboard` (the
- * sentinel segment), treat it as a SUBSCRIBER. Verify the session
- * token via `verifyAccessToken`, join the `readings:latest` broadcast
- * room, return without registering a `frame` listener. Subscribers
- * are read-only by construction — they cannot inject telemetry.
+ * Carries a session access token (not a device JWT), so the
+ * device-claim check in `buildIngestServer` would reject it. When a
+ * connection arrives at `/ingest/dashboard`, this handler verifies
+ * the session token and joins the broadcast room. Subscribers are
+ * read-only — no `frame` listener is registered.
  */
 import { verifyAccessToken } from "../auth/jwt";
 
-/** Sentinel URL segment advertised by the web client when it connects. */
+/** Sentinel URL segment advertised by the dashboard client. */
 export const SUBSCRIBER_PATH_SEGMENT = "dashboard";
 
-/** Broadcast room subscribers join. Keep in lockstep with the emit
- *  side in `frame.ts`. */
+/** Broadcast room subscribers join — single source of truth, keep in lockstep with the emit side. */
 export const SUBSCRIBER_ROOM = "readings:latest";
 
-/** Minimal socket surface needed by `handleSubscriberConnection`. We
- *  type it explicitly so callers cannot accidentally pass the full
- *  Socket.IO `Socket` (which would couple this module to that
- *  library at import time). */
+/** Minimal socket surface used by `handleSubscriberConnection`. */
 export interface SubscriberSocket {
   readonly handshake: {
     readonly auth?: Record<string, unknown>;
@@ -35,16 +27,9 @@ export interface SubscriberSocket {
 }
 
 /**
- * Subscriber join semantics:
- *   - No token or invalid session JWT → emit `unauthenticated`,
- *     disconnect, do NOT join the room.
- *   - Valid session JWT → join `readings:latest` and return. The
- *     caller is responsible for NOT registering a `frame` listener
- *     (subscribers are read-only).
- *
- * Returns `true` if the socket joined the room, `false` if it was
- * rejected. The return value is consumed by tests; production code
- * ignores it.
+ * Returns `true` if the socket joined the broadcast room, `false` if it
+ * was rejected. The caller must NOT register a `frame` listener on
+ * returned sockets — subscribers are read-only.
  */
 export const handleSubscriberConnection = (rawSocket: SubscriberSocket): boolean => {
   const authToken = rawSocket.handshake.auth?.["token"];

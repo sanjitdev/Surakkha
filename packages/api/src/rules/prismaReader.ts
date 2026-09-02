@@ -1,18 +1,12 @@
 /**
  * Narrow Prisma slice for the `Rule` reader. The engine is read-only
- * against the `Rule` table at runtime. To avoid coupling the engine
- * to `@prisma/client`'s generated type surface, this module declares
- * a narrow slice interface that captures only the call site the engine
- * needs. The adapter (`resolvePrismaRuleReader`) narrows the real
- * client at boot; tests inject a hand-rolled stub.
- *
- * Slice interface (not `PrismaClient` import) — tests can swap the
- * reader without `vi.mock("@prisma/client")` at the package level.
+ * against the `Rule` table at runtime. The slice interface captures
+ * only the call site the engine needs; tests inject a hand-rolled
+ * stub.
  */
 import type { RuleMetric, RuleOperator, RuleRuleType, RuleSeverity } from "@surakkha/shared";
 
-/** The subset of `Rule` row columns the cache needs to build an
- *  `EngineRule`. Mirrors the Prisma model — adding a column here
+/** Subset of `Rule` row columns the cache needs. Adding a column here
  *  forces a cache update. */
 export interface RuleRow {
   readonly id: string;
@@ -22,17 +16,13 @@ export interface RuleRow {
   readonly threshold: number;
   readonly severity: RuleSeverity;
   readonly ruleType: RuleRuleType;
-  /** The rising-edge timer. Required by `EngineRule` (projected in
-   *  `cache.ts`); the de-bounce layer reads this field from the
-   *  cache, not from Prisma, so the cache is the canonical source
-   *  of de-bounce configuration. */
   readonly minDurationSeconds: number;
   readonly hysteresisSeconds: number;
   readonly isActive: boolean;
 }
 
-/** Narrow slice of the Prisma client — just `rule.findMany` with the
- *  `isActive` filter the engine needs. */
+/** Narrow slice of the Prisma client — `rule.findMany` with the
+ *  `isActive` filter. */
 export interface PrismaRuleReader {
   readonly rule: {
     findMany(args: {
@@ -53,9 +43,8 @@ export interface PrismaRuleReader {
   };
 }
 
-/** Adapter — narrow the real `@prisma/client` to the
- *  `PrismaRuleReader` slice. The cast is contained to one file so
- *  future Prisma type drifts don't ripple into the engine module. */
+/** Adapter — narrow the real `@prisma/client` to the slice. The cast
+ *  is contained to one file so future Prisma type drifts don't ripple. */
 export const resolvePrismaRuleReader = (prisma: unknown): PrismaRuleReader => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;

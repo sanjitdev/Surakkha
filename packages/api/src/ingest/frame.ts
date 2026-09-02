@@ -1,10 +1,7 @@
 /**
- * Ingest handler — 10-step driver over `PROCESSING_ORDER` from
- * `@surakkha/shared`. Steps 1–6 + 10 (validate, auth, rate, seq/drop,
- * persist, broadcast) ship real logic here; steps 6–9 (rule evaluation,
- * alert emission, state-machine update, audit append) are typed no-op
- * hooks that Epic 3/4/5 wire via `setIngestHooks`. Reordering any
- * adjacent pair is a contract violation; `frame.spec.ts` pins the order.
+ * Frame envelope driver over `PROCESSING_ORDER`.
+ * Iterates the 10 ordered steps once per inbound WS frame; each step
+ * is a pure helper. Ordering is pinned by the spec test.
  */
 import {
   classifyFlags,
@@ -22,11 +19,7 @@ import { getIngestHooks, type IngestHooks } from "./hooks";
 import { type PerDeviceRateLimiter } from "./rateLimit";
 import { type PerDeviceSequence } from "./sequence";
 
-/**
- * Minimal shape the persist + broadcast steps need from Prisma.
- * Tests inject a stub that satisfies this surface; production code
- * passes the real `@prisma/client` Reading delegate.
- */
+/** Prisma surface used by the persist + broadcast steps. */
 export interface ReadingRepository {
   readonly reading: {
     create(args: {
@@ -93,18 +86,12 @@ export type ProcessFrameOutcome =
 
 const deviceRoom = (deviceId: string): string => `device:${deviceId}`;
 
-/**
- * Broadcast room for the operator dashboard. Subscribers join once and
- * fan out to all six simulator devices — avoids opening per-device sockets.
- * `readings:latest` (not `readings:all`) because the dashboard reads the
- * LATEST state via REST on cold load and keeps it fresh via this stream.
- */
+// Dashboard subscribes once; the same payload is fanned out to every
+// device so a single socket carries the full feed.
 const READINGS_LATEST_ROOM = "readings:latest";
 
-/** Per-step result. Steps that mutate state return a `patch`; the
- *  driver applies the patch in a single assignment so ESLint's
- *  `no-param-reassign` rule does not fire inside step helpers.
- *  Terminal steps return an `exit` outcome and stop the iteration. */
+/** Per-step result: `next` continues with an optional state patch;
+ *  `exit` terminates the iteration with the outcome. */
 type StepResult =
   | { readonly kind: "next"; readonly patch?: FrameStatePatch }
   | { readonly kind: "exit"; readonly outcome: ProcessFrameOutcome };
@@ -148,9 +135,7 @@ const stepValidate = (
     return { kind: "exit", outcome: { status: "bad_request" } };
   }
 
-  // Stale-frame check: well-formed but `ts` is older than the
-  // stale-frame window. Soft-disconnect so backlog of fresh frames
-  // behind this one is still accepted.
+  // Stale-frame window: well-formed but `ts` is older than the threshold.
   const skewMs = state.serverReceivedAt.getTime() - result.data.ts;
   if (skewMs > STALE_FRAME_THRESHOLD_MS) {
     const ageSeconds = Math.floor(skewMs / 1_000);
@@ -320,20 +305,11 @@ const stepSocketBroadcast = (
     flags: state.flags,
   };
   deps.io.to(deviceRoom(deps.deviceId)).emit("reading:new", payload);
-  // Broadcast the same payload to `readings:latest` so a single
-  // dashboard socket subscribes once and fans out to all six devices.
-  // The per-device emit above stays so any per-device watcher (e.g.
-  // an Operator /incidents/:id drilldown) still receives the device-scoped stream.
   deps.io.to(READINGS_LATEST_ROOM).emit("reading:new", payload);
   return { kind: "next" };
 };
 
-/**
- * Single entry-point for one inbound frame. Iterates `PROCESSING_ORDER`;
- * each step is delegated to a tiny pure function so the iteration site
- * reads as a step list. `frame.spec.ts` asserts the order against the
- * literal in `PROCESSING_ORDER`.
- */
+/** Iterate `PROCESSING_ORDER` and delegate each step to its pure helper. */
 export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrameOutcome> => {
   const { deviceId, socket, raw, rateLimiter, sequence, prisma, io, now = () => new Date() } = deps;
   const hooks = deps.hooks ?? getIngestHooks();
@@ -342,9 +318,8 @@ export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrame
     parsed: null,
     flags: [],
     dropCount: 0,
-    // `serverReceivedAt` is the moment the frame arrived at the api.
-    // `stepValidate` does NOT re-stamp this — the driver's `now()` call
-    // is the canonical source so the ordering guarantee has one read.
+    // Stamped once on entry; downstream steps read from `state`, not `now()`,
+    // so the ordering guarantee has a single canonical read.
     serverReceivedAt: now(),
   };
 
@@ -367,10 +342,8 @@ export const processFrame = async (deps: ProcessFrameDeps): Promise<ProcessFrame
   return { status: "accepted" };
 };
 
-/* eslint-disable complexity -- 10 cases is the literal length of
- * `PROCESSING_ORDER`; collapsing them (e.g. with a Record<step,
- * handler> map) would re-order adjacent pairs and break the
- * contract pin in `frame.spec.ts`.
+/* eslint-disable complexity -- 10 arms, one per step in PROCESSING_ORDER.
+ * A lookup map would reorder adjacent pairs and break the spec pin.
  */
 const dispatchStep = async (
   step: (typeof PROCESSING_ORDER)[number],

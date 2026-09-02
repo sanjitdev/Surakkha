@@ -16,11 +16,8 @@ import {
 
 import { buildNotificationRouter } from "./index.js";
 
-/** Mount the `/api/notifications` (GET) and
- *  `/api/notifications/:id/acknowledge` (PATCH) routes on `app`.
- *  Defers the Prisma client resolution until first request. Takes
- *  `resolvePrismaClient` as an injected dep so this file does not
- *  need to know the actual location of the Prisma singleton. */
+/** Mount the `/api/notifications` routes on `app`. Defers Prisma
+ *  client resolution until first request. */
 export const mountNotificationRouter = (args: {
   readonly app: { readonly use: (handler: Router) => void };
   readonly audit: AuditLogger;

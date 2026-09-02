@@ -1,26 +1,8 @@
 /**
- * Per-device sequence observer — ingest step 4 (seq/drop check).
+ * Per-device monotonic seq observer — ingest step 4.
  *
- * Each device's last-accepted `seq` lives in this Map. On first
- * observation the device is initialised with `lastSeen = -1` so a
- * first-frame `seq:0` is accepted (the spec's FIRST_FRAME case).
- *
- * Outcomes:
- *   - `accept`  — `seq > lastSeen`; advance lastSeen. `dropCount` is
- *                 `seq - lastSeen - 1`: how many frames between the
- *                 previous accepted seq and this one were silently
- *                 missed by the server. The frame itself is NOT a
- *                 drop; it is accepted and broadcast.
- *   - `reorder` — `seq <= lastSeen`; late arrival. lastSeen is
- *                 unchanged. `dropCount` is always 0 because any
- *                 earlier gaps were already counted on the accept
- *                 that first crossed the gap.
- *
- * The caller (`frame.ts`) decides whether to flag the row with
- * `out_of_order`. `reorder` only signals the timing relationship;
- * it does NOT encode the flag.
- *
- * State lives in process memory — single Node process (I-9).
+ * On first observation the device is initialised with
+ * `lastSeen = -1` so a first-frame `seq:0` is accepted.
  */
 
 const INITIAL_LAST_SEEN = -1;
@@ -50,10 +32,9 @@ export class PerDeviceSequence {
         newLastSeen: seq,
       };
     }
-    // seq <= previous: late arrival. Don't move lastSeen — the
-    // historical ordering is authoritative. The late frame does NOT
-    // contribute to seq_drop count; that counter is incremented by
-    // the gap recorded on the accepting frame that first crossed it.
+    // Late arrival — `lastSeen` is unchanged so historical ordering stays
+    // authoritative. The gap counter is only incremented on the accept
+    // that first crossed it.
     return { outcome: "reorder", dropCount: 0, newLastSeen: previous };
   }
 

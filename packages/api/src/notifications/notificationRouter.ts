@@ -1,13 +1,12 @@
 /**
  * Three routes on `/api/notifications`:
- *   - GET    /api/notifications               — role-scoped unread list (take: 50)
- *   - PATCH  /api/notifications/:id/acknowledge — idempotent mark-as-read
- *   - GET    /api/notifications/admin/list   — Admin-only audit surface (take: 100)
+ *   - GET    /api/notifications                  — role-scoped unread list (take: 50)
+ *   - PATCH  /api/notifications/:id/acknowledge  — idempotent mark-as-read
+ *   - GET    /api/notifications/admin/list       — Admin-only audit surface (take: 100)
  *
  * The PATCH handler is idempotent on already-acknowledged rows
- * (200 with the existing row, NOT 409). Cross-role RBAC lives
- * inside the handler (matrix grants role-level access; the
- * per-row `recipientRole` check is the load-bearing filter).
+ * (200 with the existing row, NOT 409). Cross-role RBAC is enforced
+ * per-row inside the handler.
  */
 import {
   type AdminNotificationListEnvelope,
@@ -53,7 +52,7 @@ const ADMIN_NOTIFICATION_TAKE_LIMIT = 100;
 const pathParamsSchema = idPathSchema;
 
 /** Helpers below are extracted to keep the PATCH / GET closures
- *  under the `complexity: 10` ESLint ceiling. */
+ *  under the ESLint complexity ceiling. */
 
 const parsePathParams = (req: AuthorizedRequest, res: Response): string | null => {
   const parsed = pathParamsSchema.safeParse(req.params);
@@ -172,8 +171,6 @@ const renderAckResponse = (args: {
 }): void => {
   const { res, id, actor, row, updateCount } = args;
   const body = notificationRowToPayload(row);
-  // `first=true` distinguishes first-ack from idempotent re-ack
-  // (the dashboard's retry-on-network-blip behaviour).
   console.warn(
     `[notifications] acknowledged id=${id} actor=${actor} acknowledgedAt=${body.acknowledgedAt ?? "null"} first=${updateCount === 1 ? "true" : "false"}`,
   );
@@ -329,8 +326,6 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
     "/api/notifications",
     authorize({ action: "read", resource: "Notification" }, deps.audit),
     async (_req: AuthorizedRequest, res: Response) => {
-      // `authorize()` middleware guarantees `req.user` is non-null
-      // for any handler that runs past it.
       const req = _req;
       const role = req.user?.role;
       if (role === undefined || !VALID_RECIPIENT_ROLES.includes(role)) {
@@ -371,8 +366,6 @@ export const buildNotificationRouter = (deps: NotificationRouterDeps): Router =>
       const actor = req.user?.id;
       const actorRole = req.user?.role;
       if (actor === undefined || actorRole === undefined) {
-        // `authorize()` short-circuits unauthenticated requests
-        // with 401 before this handler runs.
         res.status(HTTP_INTERNAL_ERROR).json({ error: ERROR_CODES.INTERNAL_ERROR.value });
         return;
       }

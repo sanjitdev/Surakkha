@@ -1,14 +1,9 @@
 /**
- * Narrow Prisma slice for the alert + de-bounce state IO. Extracted
- * from `hooks.ts` so the hook module stays under the lint
- * `max-lines` ceiling. The interface shape is unchanged — it just
- * lives in its own file now. `hooks.ts` re-exports the type for
- * back-compat.
+ * Narrow Prisma slice for the alert + de-bounce state IO.
  *
- * The `$transaction` method exposes the callback form so the hook
- * wraps the (Alert write + state upsert) pair atomically. The
- * transaction's `tx` object is itself shaped as `AlertStateRepository`
- * so the same `tx.alert.create` / `tx.alert.findFirst` /
+ * The `$transaction` callback form lets the hook wrap (Alert write +
+ * state upsert) atomically. The transaction's `tx` object is itself
+ * shaped as `AlertStateRepository` so the same `tx.alert.create` /
  * `tx.ruleDebounceState.upsert` calls work inside the callback.
  */
 import type { RuleMetric } from "@surakkha/shared";
@@ -20,8 +15,6 @@ export interface AlertStateRepository {
         readonly deviceId: string;
         readonly OR: ReadonlyArray<{
           readonly metric: RuleMetric;
-          /** Accept the direct-equality form in addition to `{ in: [...] }`
-           *  so Prisma doesn't have to build a one-element IN clause. */
           readonly severity:
             | "info"
             | "warning"
@@ -81,10 +74,9 @@ export interface AlertStateRepository {
       };
     }): Promise<{ readonly id: string } | null>;
   };
-  /** Auto-create Incident from warning/critical Alert on the SAME
-   *  `$transaction` so the Alert + Incident + state row commit as one
-   *  unit. Any throw inside the callback rolls back the entire
-   *  transaction. */
+  /** Auto-create Incident from warning/critical Alert on the same
+   *  `$transaction` so Alert + Incident + state row commit as one
+   *  unit. Any throw inside the callback rolls back the whole transaction. */
   readonly incident: {
     create(args: {
       readonly data: {
@@ -100,9 +92,9 @@ export interface AlertStateRepository {
       };
     }): Promise<{ readonly id: string }>;
   };
-  /** `notification:warning` write site. Lives on the SAME
+  /** `notification:warning` write site. Lives on the same
    *  `$transaction` as the (Alert + Incident) pair. The idempotent
-   *  partial-unique index is the safety net for the race. */
+   *  partial-unique index is the race safety net. */
   readonly notification: {
     create(args: {
       readonly data: {
@@ -126,8 +118,7 @@ export interface AlertStateRepository {
   $transaction<T>(cb: (tx: AlertStateRepository) => Promise<T>): Promise<T>;
 }
 
-/** Adapter — narrow the real `@prisma/client` to the
- *  `AlertStateRepository` slice. */
+/** Adapter — narrow the real `@prisma/client` to the slice. */
 export const resolveAlertStateRepository = (prisma: unknown): AlertStateRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;

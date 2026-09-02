@@ -18,8 +18,8 @@ import type {
   NotificationSeverity,
 } from "@surakkha/shared/notification";
 
-/** The full state of a single `Notification` row. Mirrors the
- *  wire-row shape (`NotificationPayload`) but with Date objects. */
+/** Full state of a single `Notification` row. Mirrors the wire-row
+ *  shape but with Date objects. */
 export interface NotificationRow {
   readonly id: string;
   readonly severity: NotificationSeverity;
@@ -31,13 +31,10 @@ export interface NotificationRow {
   readonly acknowledgedByUserId: string | null;
 }
 
-/** Admin filter shape. Drops two filters the operator-facing read
- *  applies:
- *    - `recipientRole` — the admin is the audit lens.
- *    - `acknowledgedAt: null` — admin sees the full trail.
- *  `severity` uses Prisma's `in: [...]` IN-list. `since` / `until`
- *  are inclusive lower / exclusive upper bounds; nullish →
- *  unbounded. */
+/** Admin filter shape. Drops the operator-facing `recipientRole`
+ *  and `acknowledgedAt: null` filters; `severity` uses Prisma's
+ *  `in: [...]`. `since` / `until` are inclusive lower / exclusive
+ *  upper bounds; nullish → unbounded. */
 export interface AdminNotificationFilters {
   readonly severity?: {
     readonly in: readonly NotificationSeverity[];
@@ -47,8 +44,7 @@ export interface AdminNotificationFilters {
 }
 
 /** Narrow slice of `@prisma/client.notification` that the router
- *  consumes. The writer owns its own narrow slice
- *  (`NotificationWriterRepository`). */
+ *  consumes. */
 export interface NotificationRepository {
   readonly notification: {
     findMany(args: {
@@ -79,18 +75,15 @@ export interface NotificationRepository {
 }
 
 /** Adapter — narrow the real `@prisma/client` to the
- *  `NotificationRepository` slice.
- *
- *  `findManyAdmin` is a Prisma extension method. If a future
- *  Prisma regeneration drops it (or a test stub doesn't define it),
- *  fail loud — silently falling back to `findMany` would apply the
+ *  `NotificationRepository` slice. Fails loud if `findManyAdmin` is
+ *  missing: silently falling back to `findMany` would apply the
  *  operator-facing filters the admin endpoint explicitly DROPS. */
 export const resolveNotificationRepository = (prisma: unknown): NotificationRepository => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = prisma as any;
   if (client.notification.findManyAdmin === undefined) {
     throw new Error(
-      "Prisma client missing `notification.findManyAdmin` extension; run `prisma generate` against the Story 5.1 schema.",
+      "Prisma client missing `notification.findManyAdmin` extension; run `prisma generate`.",
     );
   }
   return {
@@ -105,9 +98,6 @@ export const resolveNotificationRepository = (prisma: unknown): NotificationRepo
   };
 };
 
-// Re-export the wire-row helper from its dedicated module so the
-// repository module remains a single import surface for consumers
-// that want both the data slice and the wire adapter.
 export {
   adminNotificationRowToPayload,
   notificationRowToPayload,

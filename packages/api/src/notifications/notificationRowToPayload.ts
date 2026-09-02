@@ -1,11 +1,8 @@
 /**
  * Pure adapter from a Prisma `Notification` row to the wire
- * `NotificationPayload`. Mirrors the `incidentRowToPayload` pattern.
- *
- * Two siblings: `notificationRowToPayload` (operator-facing —
- * `acknowledgedByUserId` is dropped as implementation detail) and
- * `adminNotificationRowToPayload` (admin audit lens — surfaces the
- * field for diagnostic use).
+ * `NotificationPayload`. Two siblings: `notificationRowToPayload`
+ * (operator-facing) and `adminNotificationRowToPayload` (admin
+ * audit lens — surfaces `acknowledgedByUserId`).
  */
 import {
   type AdminNotificationPayload,
@@ -32,11 +29,7 @@ export const notificationRowToPayload = (row: NotificationRow): NotificationPayl
         : new Date(row.acknowledgedAt).toISOString(),
 });
 
-/** Admin-facing wire-row adapter. Surfaces `acknowledgedByUserId`
- *  for audit detail. Pair with `AdminNotificationPayloadSchema` —
- *  the schema's `safeParse` rejects a response that lacks the
- *  field (defense in depth against a future router regression that
- *  swaps the adapter back). */
+/** Admin-facing adapter. Surfaces `acknowledgedByUserId` for audit. */
 export const adminNotificationRowToPayload = (row: NotificationRow): AdminNotificationPayload => ({
   id: row.id,
   severity: row.severity,

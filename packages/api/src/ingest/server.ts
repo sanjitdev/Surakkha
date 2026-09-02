@@ -1,13 +1,10 @@
 /**
- * Socket.IO ingest server.
+ * Socket.IO ingest handler for `/ingest/{device_id}`.
  *
- * The WS upgrade is claim-driven (not the HTTP RBAC middleware —
- * device `sub`s are not `User` rows). Reads the URL `/ingest/{device_id}`
- * + `?token=` query, calls `verifyIngestClaims(token, deviceId)`,
- * registers a `frame` listener that delegates to `processFrame`.
- *
- * The connection's URL `device_id` is the authority for room naming
- * (`device:<device_id>`) and is NEVER trusted from the JWT `sub` alone.
+ * Authenticates the WS upgrade via `verifyIngestClaims`, then registers
+ * a `frame` listener that delegates to `processFrame`. The URL
+ * `device_id` is the authority for room naming — it is not trusted
+ * from the JWT `sub` alone.
  */
 import { isUuidV4 } from "@surakkha/shared";
 import { type Server as IoServer } from "socket.io";
@@ -30,7 +27,7 @@ export interface BuildIngestServerDeps {
   readonly sequence?: PerDeviceSequence;
 }
 
-/** Stripped-shape Socket.IO socket. We use `unknown` at the seam so
+/** Stripped-shape Socket.IO socket. Typed as `unknown` at the seam so
  *  tests can pass a stub without depending on the real Socket type. */
 interface MinimalSocket {
   readonly id: string;
@@ -45,13 +42,7 @@ interface MinimalSocket {
   readonly data: Record<string, unknown>;
 }
 
-/**
- * Extract the device_id from the connection handshake.
- *
- * Priority: `auth.device_id` → URL path segment after `ingest`. The
- * URL path / query remains a secondary source for backward compat
- * with older clients that still hit `/ingest/<uuid>?token=…`.
- */
+// Priority: `auth.device_id` first, then URL path segment after `ingest`.
 const parseDeviceIdFromHandshake = (socket: MinimalSocket): string => {
   const authDeviceId = socket.handshake.auth?.["device_id"];
   if (typeof authDeviceId === "string" && authDeviceId !== "") {
@@ -64,8 +55,7 @@ const parseDeviceIdFromHandshake = (socket: MinimalSocket): string => {
   return ingestIdx >= 0 ? (pathSegments[ingestIdx + 1] ?? "") : "";
 };
 
-/** Extract the bearer token. Either `auth.token` (recommended) or
- *  `?token=` query (legacy / simulator path) is accepted. */
+// `auth.token` is the preferred path; `?token=` is the legacy simulator path.
 const extractToken = (socket: MinimalSocket): string | null => {
   const authToken = socket.handshake.auth?.["token"];
   const queryToken = socket.handshake.query?.["token"];
@@ -107,13 +97,9 @@ export const buildIngestServer = (
 
     const result = verifyIngestClaims(token, urlDeviceId);
     if (result.kind !== "ok") {
-      // Differentiate failure modes so the device / simulator gets an
-      // actionable error envelope. Signature / audience failures mean
-      // "we didn't issue this for the ingest path" → `unauthenticated`.
-      // Scope / sub failures mean "the token IS for ingest but doesn't
-      // authorise this connection" → `auth_error` with a code so
-      // operators triaging device mis-configs can tell "wrong device_id"
-      // apart from "wrong scope".
+      // Distinct envelopes: signature/audience failures mean the token was
+      // not issued for ingest; scope/sub failures mean the token is for
+      // ingest but doesn't authorise this connection.
       if (result.kind === "sig_fail" || result.kind === "aud_fail") {
         socket.emit("unauthenticated");
       } else if (result.kind === "scope_fail") {
@@ -129,11 +115,9 @@ export const buildIngestServer = (
     socket.data["ingestClaims"] = claims;
 
     socket.on("frame", (raw: unknown) => {
-      // The WS endpoint is bidirectional-writes-only: the server does
-      // NOT accept any client → server commands except the frame.
-      // Attach a .catch so any throw inside the 10-step driver surfaces
-      // as a logged warning + disconnect instead of an unhandled
-      // promise rejection.
+      // Only `frame` is accepted on the inbound channel. The .catch
+      // surfaces driver throws as a disconnect instead of an unhandled
+      // rejection.
       processFrame({
         deviceId: urlDeviceId,
         socket: {

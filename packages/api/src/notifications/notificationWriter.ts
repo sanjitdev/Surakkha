@@ -7,16 +7,14 @@
  * Two named helpers (`writeWarningNotification` /
  * `writeCriticalNotification`) pin `recipientRole: Operator` per
  * severity — the call site can never accidentally target the wrong
- * role. The writer is consumed by `applyTransition.ts`'s
- * auto-create-from-alert path and the `submit_result → UNSAFE`
- * transition handler.
+ * role.
  */
 import { type PrismaAlertReader } from "../rules/findOpenAlert";
 
-/** The Prisma error code that signals a unique-constraint violation. */
+/** Prisma error code that signals a unique-constraint violation. */
 export const PRISMA_P2002 = "P2002";
 
-/** Narrow type guard for the Prisma P2002 race. The `code` field
+/** Type guard for the Prisma P2002 race. The `code` field
  *  is the only stable surface across Prisma versions. */
 export const isPrismaP2002 = (err: unknown): boolean => {
   if (typeof err !== "object" || err === null) return false;
@@ -24,9 +22,8 @@ export const isPrismaP2002 = (err: unknown): boolean => {
   return obj.code === PRISMA_P2002;
 };
 
-/** The narrow Prisma slice the writer needs. Production forwards to
- *  `tx.notification.create` / `tx.notification.findFirst`; tests
- *  inject a stub. */
+/** Narrow Prisma slice for production (`tx.notification.create` /
+ *  `tx.notification.findFirst`) and test stubs. */
 export interface NotificationWriterRepository {
   readonly notification: {
     create(args: {
@@ -62,14 +59,9 @@ export interface WriteNotificationOutput {
   readonly wasInserted: boolean;
 }
 
-/** Write a `Notification` row idempotently. On a P2002 collision
- *  (the partial unique index flagged a duplicate active row), the
- *  existing row is returned and `wasInserted: false`.
- *
- *  The `incidentId` and `alertId` are mutually-non-null in v1 (a
- *  notification is always backed by an Incident OR an Alert, never
- *  both). The function accepts either shape and pins the role to
- *  `Operator`. */
+/** Write a `Notification` row idempotently. Pins `recipientRole` to
+ *  `Operator`. The `incidentId` and `alertId` are mutually-non-null
+ *  in v1. */
 export const writeNotification = async (
   repo: NotificationWriterRepository,
   input: WriteNotificationInput,
@@ -128,8 +120,7 @@ export const writeNotification = async (
   }
 };
 
-/** The `notification:critical` write site. Used in the
- *  `submit_result → UNSAFE` transition handler. */
+/** The `notification:critical` write site. */
 export const writeCriticalNotification = async (
   repo: NotificationWriterRepository,
   args: { readonly incidentId: string; readonly alertId: string | null },
@@ -140,8 +131,7 @@ export const writeCriticalNotification = async (
     alertId: args.alertId,
   });
 
-/** The `notification:warning` write site. Used in the
- *  `applyOpenTransition` path. */
+/** The `notification:warning` write site. */
 export const writeWarningNotification = async (
   repo: NotificationWriterRepository,
   args: { readonly incidentId: string; readonly alertId: string },
@@ -152,6 +142,6 @@ export const writeWarningNotification = async (
     alertId: args.alertId,
   });
 
-/** Re-export the alert-reader type so the auto-create-from-alert
- *  path in `applyTransition.ts` does not need a separate import. */
+/** Re-export the alert-reader type for the auto-create-from-alert
+ *  path. */
 export type { PrismaAlertReader };

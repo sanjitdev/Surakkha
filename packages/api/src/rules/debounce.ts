@@ -1,40 +1,29 @@
 /**
  * Pure de-bounce core. Converts raw `BreachResult[]` (one frame) into
  * `BreachTransition[]` (open / clear events) by advancing rising-edge
- * / falling-edge timers per `(deviceId, metric, severity)` slot. No
- * DB IO — the hook layer composes this module with Prisma.
- *
- * Why pure (mirrors `engine.ts`'s seam):
- *   - Unit tests run without `vi.mock("@prisma/client")`.
- *   - Same input → same output; deterministic.
+ * / falling-edge timers per `(deviceId, metric, severity)` slot.
  *
  * Clock-skew handling: when `frameTs < lastSeenFrameTs`, both
  * `inViolationSince` and `clearedSince` clamp forward to `frameTs`
- * and the function emits a `console.warn`. Auto-recovery on the
- * next in-order frame.
+ * and `console.warn` fires.
  */
 
 import type { BreachResult, EngineRule } from "./engine";
 import type { RuleMetric, RuleSeverity } from "@surakkha/shared";
 
-/** One slot of de-bounce state — the per-(deviceId, metric, severity)
- *  pair of nullable timestamps. `null` means "not currently timing
- *  for that edge". On a rising edge, `clearedSince` resets to `null`
- *  (rising wins over the previous falling). On a falling edge,
- *  `inViolationSince` is preserved (pause-not-reset). */
+/** One slot of de-bounce state — per-(deviceId, metric, severity)
+ *  pair of nullable timestamps. Rising resets `clearedSince`; falling
+ *  preserves `inViolationSince` (pause-not-reset). */
 export interface DebounceSlot {
   readonly inViolationSince: Date | null;
   readonly clearedSince: Date | null;
 }
 
-/** The full per-device state passed into `debounceBreaches`. Keyed by
- *  a stable string form of `(metric, severity)`. Missing keys = no
- *  state for that slot yet. */
+/** Per-device state passed into `debounceBreaches`. Keyed by
+ *  NUL-delimited `(metric, severity)`. Missing keys = no state yet. */
 export type DebounceState = Readonly<Record<string, DebounceSlot>>;
 
-/** The IO side-effect emitted by the hook (NOT the hook's return
- *  value — the shared `IngestHooks.onRuleEvaluation` interface returns
- *  `Promise<readonly BreachResult[]>`). Discriminated by `kind`. */
+/** IO side-effect emitted by the hook. Discriminated by `kind`. */
 export type BreachTransition =
   | {
       readonly kind: "open";
@@ -55,16 +44,15 @@ export type BreachTransition =
     };
 
 /** Pure-module result. `transitions` is the IO action set the hook
- *  applies; `nextState` is the updated `DebounceState` the hook
- *  persists. */
+ *  applies; `nextState` is the updated state the hook persists. */
 export interface DebounceResult {
   readonly transitions: readonly BreachTransition[];
   readonly nextState: DebounceState;
 }
 
 /** Input shape for `debounceBreaches`. `lastSeenFrameTs` is used only
- *  for clock-skew detection — `null` means "no prior frame for this
- *  device" (post-restart; the clamp is silently skipped). */
+ *  for clock-skew detection — `null` means no prior frame for this
+ *  device (post-restart). */
 export interface DebounceArgs {
   readonly rawBreaches: readonly BreachResult[];
   readonly currentState: DebounceState;
@@ -75,15 +63,12 @@ export interface DebounceArgs {
 }
 
 /** Internal: the slot key for `(metric, severity)`. NUL delimiter —
- *  NUL is illegal in every metric + severity literal, so the slot key
- *  is unambiguous. */
+ *  NUL is illegal in every metric + severity literal. */
 const slotKey = (metric: RuleMetric, severity: RuleSeverity): string =>
   `${metric}\u0000${severity}`;
 
-/** Returns true when the field is a valid finite, non-negative integer
- *  (treated as seconds). Reject fractional values — Prisma's `Int`
- *  column silently floors `0.5` on write, which would trip the boot
- *  guard on the next reload. */
+/** Valid finite, non-negative integer (treated as seconds). Rejects
+ *  fractional values — Prisma's `Int` column silently floors `0.5`. */
 const isValidDuration = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 && Number.isInteger(v);
 
@@ -104,10 +89,9 @@ export const debounceBreaches = (args: DebounceArgs): DebounceResult => {
   const rulesBySlot = indexRulesBySlot(rules);
   const breachSlots = collectBreachSlots(rawBreaches);
 
-  // Walk the union of slots-with-rules AND slots-with-breaches so we
-  // advance falling-edge even when a rule exists but didn't fire this
-  // frame. Slots present in `breachSlots` but NOT in `rulesBySlot`
-  // (rule deactivated) leave their state row untouched.
+  // Walk the union so falling-edge advances even when a rule exists
+  // but didn't fire this frame. Slots in `breachSlots` but NOT in
+  // `rulesBySlot` (rule deactivated) leave their state row untouched.
   const allSlots = new Set<string>([...rulesBySlot.keys(), ...breachSlots]);
 
   for (const key of allSlots) {
@@ -138,12 +122,9 @@ const logClockSkew = (deviceId: string, frameTs: Date, lastSeenFrameTs: Date | n
   );
 };
 
-/** Index rules by slot key. If multiple rules hit the same slot
- *  (e.g. range halves on `(ph, critical)`), the FIRST valid rule wins.
- *  Sort the input list deterministically by `(threshold, rule.id)`
- *  before the loop so the winner is stable across hot-reloads. ICU
- *  collation is locale-dependent — use plain string compare for the
- *  id tiebreak so multi-replica deploys agree. */
+/** Index rules by slot key. If multiple rules hit the same slot, the
+ *  FIRST valid rule wins. Sort deterministically by `(threshold,
+ *  rule.id)` so the winner is stable across hot-reloads. */
 const indexRulesBySlot = (rules: readonly EngineRule[]): Map<string, EngineRule> => {
   const rulesBySlot = new Map<string, EngineRule>();
   const sortedRules = [...rules].sort((a, b) => {
@@ -172,9 +153,8 @@ const collectBreachSlots = (rawBreaches: readonly BreachResult[]): Set<string> =
   return slots;
 };
 
-/** The per-slot IO result. `transition` is the IO request (or `null`
- *  for "no transition this frame"); `nextSlot` is the slot's
- *  post-frame state to persist. */
+/** Per-slot IO result. `transition` is the IO request (or `null`
+ *  for no transition this frame); `nextSlot` is the post-frame state. */
 interface AdvanceSlotResult {
   readonly transition: BreachTransition | null;
   readonly nextSlot: DebounceSlot;
