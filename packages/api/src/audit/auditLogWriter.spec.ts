@@ -1,62 +1,34 @@
 /**
  * `auditLogWriter.spec.ts` — Story 5.6.
  *
- * Unit tests for the v2 `AuditLogger` writer
- * (`packages/api/src/audit/auditLogWriter.ts`). Pins the
+ * Unit tests for the v2 `AuditLogger` writer. Pins the
  * `AuditAction → { resource, resourceId }` mapping + the
- * swallow-and-log failure mode the spec promises. Mirrors the
- * `auditLogRepository.spec.ts` style (helper-focused unit tests,
- * no Express + no auth).
+ * swallow-and-log failure mode. Helper-focused, no Express.
  *
- * Coverage (each I/O matrix row → at least one `it(...)`):
- *
- *   - WRITE_HAPPY: `audit.emit({ login_success, userId, outcome })`
- *     persists an `AuditLog` row with `actorUserId`, `resource:
- *     "Session"`, `resourceId: null` (the `login_success` map entry
- *     uses `resourceIdKey: "sessionId"`; absent context yields
- *     `resourceId: null`).
- *   - WRITE_NO_USER: `audit.emit({ logout })` (no `userId`) persists
- *     with `actorUserId: null`, `resource: "Other"`, `resourceId:
- *     null` per the resource-less default.
- *   - WRITE_INCIDENT_RESOURCE: `audit.emit({ incident_state_changed,
- *     context: { incidentId } })` persists with `resource:
- *     "Incident"`, `resourceId: incidentId`.
- *   - WRITE_DB_FAIL: `prisma.auditLog.create` rejects → the writer
- *     swallows + emits a `audit_log_write_failed` warn line. The
- *     warn payload MUST include `auditAction`, `outcome`,
- *     `actorUserId`, `resource`, AND `resourceId` so an SRE can
- *     recover the dropped row (F-5.6-D18).
- *   - WRITE_LOGOUT: explicit `logout` action → `resource: "Other"`,
- *     `resourceId: null`.
- *
- * The writer's `emit` is fire-and-forget (the v1 interface is
- * `(event) => void`) so each test uses a polling drain helper to
- * wait for the Prisma stub to observe the write (F-5.6-D16).
+ * The writer's `emit` is fire-and-forget; each test uses
+ * `drainWarns` / `drainRows` to wait for the stub to observe the
+ * write (F-5.6-D16).
  */
-import { type Logger } from "pino";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   type AuditLogCreateClient,
+  type AuditLoggerSink,
   createAuditLogWriter,
   resolveResourceBinding,
-  resolveResourceId,
 } from "./auditLogWriter.js";
 
 const ACTOR_ID = "00000000-0000-4000-8000-000000000001";
 const INCIDENT_ID = "00000000-0000-4000-8000-000000000002";
 
-/**
- * Build a writable `Logger` spy. The `warn` sink is captured so the
- * `WRITE_DB_FAIL` test can assert the structured log payload.
- */
-const buildSpyLogger = (): { logger: Logger; warns: unknown[] } => {
+/** Build a writable `warn`-sink spy for the structured-log assertions. */
+const buildSpyLogger = (): { logger: AuditLoggerSink; warns: unknown[] } => {
   const warns: unknown[] = [];
-  const logger = {
+  const logger: AuditLoggerSink = {
     warn: (...args: unknown[]) => {
       warns.push(args);
     },
-  } as unknown as Logger;
+  };
   return { logger, warns };
 };
 
@@ -100,18 +72,28 @@ const buildCaptureClient = (
 };
 
 /**
- * Poll the `sink.rows` array until `expected` rows have been
- * captured (or the 50-iteration cap trips). The writer's `emit`
- * is fire-and-forget, so the test rig yields the event loop via
- * `setImmediate` between checks (F-5.6-D16 — polling drain).
+ * Poll `sink.rows` / `sink.warns` until `expected` items have
+ * landed (F-5.6-D16). The writer's `emit` is fire-and-forget; the
+ * test rig yields the event loop via `setImmediate` between
+ * checks. 50-iteration cap trips if the write never lands.
  */
-const drain = async (sink: { rows: readonly unknown[] }, expected: number): Promise<void> => {
+const pollFor = async (
+  source: { readonly length: number },
+  expected: number,
+  label: string,
+): Promise<void> => {
   for (let i = 0; i < 50; i += 1) {
-    if (sink.rows.length >= expected) return;
+    if (source.length >= expected) return;
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  throw new Error(`drain timed out: expected ${expected} row(s), got ${sink.rows.length}`);
+  throw new Error(`${label} drain timed out: expected ${expected}, got ${source.length}`);
 };
+
+const drain = async (sink: { rows: readonly unknown[] }, expected: number): Promise<void> =>
+  pollFor(sink.rows, expected, "rows");
+
+const drainWarns = async (warns: readonly unknown[], expected: number): Promise<void> =>
+  pollFor(warns, expected, "warns");
 
 beforeEach(() => {
   // Each test owns its own logger / prisma sink; nothing global.
@@ -207,15 +189,7 @@ describe("Story 5.6 — auditLogWriter.createAuditLogWriter", () => {
       outcome: "success",
       context: { incidentId: INCIDENT_ID },
     });
-    // F-5.6-D16 — drain the warn array via setImmediate polling.
-    const drainWarns = async (expected: number): Promise<void> => {
-      for (let i = 0; i < 50; i += 1) {
-        if (warns.length >= expected) return;
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-      throw new Error("drain timed out waiting for warn");
-    };
-    await drainWarns(1);
+    await drainWarns(warns, 1);
     expect(warns).toHaveLength(1);
     const warnArgs = warns[0] as [unknown, string];
     expect(warnArgs[1]).toBe("audit_log_write_failed");
@@ -271,26 +245,20 @@ describe("Story 5.6 — auditLogWriter.createAuditLogWriter", () => {
       userId: ACTOR_ID,
       outcome: "success",
     });
-    const drainWarns = async (expected: number): Promise<void> => {
-      for (let i = 0; i < 50; i += 1) {
-        if (warns.length >= expected) return;
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-      throw new Error("drain timed out waiting for warn");
-    };
-    await drainWarns(1);
+    await drainWarns(warns, 1);
     const warnArgs = warns[0] as [unknown, string];
     const payload = warnArgs[0] as { reason: string; event: string };
     expect(payload.reason).toBe("prisma_resolve");
     expect(payload.event).toBe("audit_log_write_failed");
   });
 
-  it("WRITE_RESOLVED_BUT_NO_AUDITLOG: client resolves but lacks auditLog.create → swallow + prisma_resolve warn (belt-and-braces)", async () => {
-    // Pin the runtime guard added in loop-2 review — a future
-    // Prisma client shape change (or a degraded stub) that
-    // resolves successfully but lacks `auditLog.create` should
-    // log a `prisma_resolve`-reasoned warn, NOT a misleading
-    // `audit_create` warn.
+  it("WRITE_RESOLVED_BUT_NO_AUDITLOG: client resolves but lacks auditLog.create → prisma.auditLog.create throws, swallowed as audit_log_write_failed", async () => {
+    // The structural cast in `ensureClient` lets through a client
+    // that lacks `auditLog.create`. The throw surfaces inside the
+    // per-emit try/catch, which logs an `audit_log_write_failed`
+    // warn (no `reason: "prisma_resolve"` — that field is reserved
+    // for resolver-rejection, not write-rejection). This is the
+    // regression guard against a future Prisma shape drift.
     const { logger, warns } = buildSpyLogger();
     const audit = createAuditLogWriter({
       resolvePrismaClient: async () =>
@@ -300,54 +268,22 @@ describe("Story 5.6 — auditLogWriter.createAuditLogWriter", () => {
       logger,
     });
     audit.emit({ auditAction: "logout", outcome: "success" });
-    const drainWarns = async (expected: number): Promise<void> => {
-      for (let i = 0; i < 50; i += 1) {
-        if (warns.length >= expected) return;
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-      throw new Error("drain timed out waiting for warn");
-    };
-    await drainWarns(1);
+    await drainWarns(warns, 1);
     const warnArgs = warns[0] as [unknown, string];
-    const payload = warnArgs[0] as { reason: string };
-    expect(payload.reason).toBe("prisma_resolve");
+    expect(warnArgs[1]).toBe("audit_log_write_failed");
+    const payload = warnArgs[0] as { event: string; auditAction: string };
+    expect(payload.event).toBe("audit_log_write_failed");
+    expect(payload.auditAction).toBe("logout");
   });
 });
 
-describe("Story 5.6 — resolveResourceId (resource extraction helper)", () => {
-  it("returns null when the action has no resourceIdKey (resource-less default)", () => {
-    expect(resolveResourceId("logout", undefined)).toBeNull();
-    expect(resolveResourceId("rbac_allowed", undefined)).toBeNull();
-    expect(resolveResourceId("rbac_allowed", {})).toBeNull();
-  });
+describe("Story 5.6 — resolveResourceBinding", () => {
+  const idOnly = (action: string, context: unknown): string | null =>
+    resolveResourceBinding(
+      action as Parameters<typeof resolveResourceBinding>[0],
+      context as Record<string, unknown>,
+    ).resourceId;
 
-  it("returns null when context is undefined", () => {
-    expect(resolveResourceId("incident_state_changed", undefined)).toBeNull();
-  });
-
-  it("returns null when the context is missing the key", () => {
-    expect(resolveResourceId("incident_state_changed", { from: "OPEN" })).toBeNull();
-  });
-
-  it("returns null when the value is not a string", () => {
-    expect(resolveResourceId("incident_state_changed", { incidentId: 42 })).toBeNull();
-    expect(resolveResourceId("incident_state_changed", { incidentId: null })).toBeNull();
-  });
-
-  it("F-5.6-D19: returns null when the string trims to empty (whitespace-only)", () => {
-    expect(resolveResourceId("incident_state_changed", { incidentId: "   " })).toBeNull();
-    expect(resolveResourceId("incident_state_changed", { incidentId: "\n\t" })).toBeNull();
-  });
-
-  it("returns the raw value when the trimmed string is non-empty (no trim mutation)", () => {
-    // The writer does NOT trim the persisted value — a leading
-    // or trailing space in a legitimate id stays intact. The
-    // zero-length check is the only place `.trim()` appears.
-    expect(resolveResourceId("incident_state_changed", { incidentId: " id " })).toBe(" id ");
-  });
-});
-
-describe("Story 5.6 — resolveResourceBinding (resource tuple)", () => {
   it("returns the mapped resource + extracted resourceId", () => {
     expect(resolveResourceBinding("incident_state_changed", { incidentId: INCIDENT_ID })).toEqual({
       resource: "Incident",
@@ -355,7 +291,7 @@ describe("Story 5.6 — resolveResourceBinding (resource tuple)", () => {
     });
   });
 
-  it("returns the resource-less default for logout / rbac_allowed", () => {
+  it("returns resource-less default for actions with no resourceIdKey", () => {
     expect(resolveResourceBinding("logout", undefined)).toEqual({
       resource: "Other",
       resourceId: null,
@@ -364,5 +300,25 @@ describe("Story 5.6 — resolveResourceBinding (resource tuple)", () => {
       resource: "Other",
       resourceId: null,
     });
+  });
+
+  it("returns null when the key is missing from context", () => {
+    expect(idOnly("incident_state_changed", { from: "OPEN" })).toBeNull();
+  });
+
+  it("returns null when the value is not a string (incl. number / null)", () => {
+    expect(idOnly("incident_state_changed", { incidentId: 42 })).toBeNull();
+    expect(idOnly("incident_state_changed", { incidentId: null })).toBeNull();
+  });
+
+  it("F-5.6-D19: collapses whitespace-only strings to null", () => {
+    expect(idOnly("incident_state_changed", { incidentId: "   " })).toBeNull();
+    expect(idOnly("incident_state_changed", { incidentId: "\n\t" })).toBeNull();
+  });
+
+  it("returns the raw value when the trimmed string is non-empty (no trim mutation)", () => {
+    // The writer does NOT trim the persisted value — a leading
+    // or trailing space in a legitimate id stays intact.
+    expect(idOnly("incident_state_changed", { incidentId: " id " })).toBe(" id ");
   });
 });

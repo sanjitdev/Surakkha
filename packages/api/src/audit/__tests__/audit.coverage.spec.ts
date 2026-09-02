@@ -1,50 +1,28 @@
 /**
  * `audit.coverage.spec.ts` — Story 5.6.
  *
- * End-to-end coverage contract for the v2 `AuditLogger` writer
- * (`packages/api/src/audit/auditLogWriter.ts`). The spec is the
- * regression guard: every audited action in the api MUST land at
- * least one `AuditLog` row when invoked through its real router +
- * middleware. A future refactor that silently re-routes `audit.emit`
- * away from the Prisma writer will fail here.
+ * End-to-end coverage: every audited action lands at least one
+ * `AuditLog` row through the real router + middleware. The spec
+ * file (`spec-5-6-negative-tests-for-the-audit-log.md`) is the
+ * authority for the I/O matrix amendments (Path A); this file
+ * asserts them.
  *
- * Each test stands up a fresh Express app that:
- *
- *   - mounts the REAL router under test (auth, incidents,
- *     thresholds, simulator, attachments)
- *   - uses the REAL `AuditLogger` v2 writer — but with the Prisma
- *     dependency replaced by an in-memory capture stub
- *     (`sink.rows`).
- *
- * The writer's `emit` is fire-and-forget (the v1 interface is
- * `(event) => void`), so each test drains `sink.rows` via a
- * polling helper that yields the event loop with `setImmediate`
- * until the expected number of rows has been captured (F-5.6-D16
- * — polling drain replaces the two-microtask `flush()` that was
- * unreliable when the Prisma write settled across several turns).
- *
- * Per the spec's Path A amendments:
- *
- *   - COVERAGE_INCIDENT_ACK asserts `rbac_allowed` (the success-
- *     path type-machine miss emits `invalid_state_transition`; the
- *     success path itself emits only the socket event today, so
- *     the RBAC middleware row is the regression guard).
- *   - COVERAGE_THRESHOLD_EDIT asserts `rbac_allowed` (the rule-
- *     upsert router does not emit a `rule_created` row today; the
- *     writer pipeline + Admin permit is the guard).
- *   - COVERAGE_SIMULATOR asserts `rbac_allowed` (the success path
- *     also writes `simulator_event`, but the only row the spec
- *     can pin per-request is the RBAC middleware row).
- *   - COVERAGE_ATTACHMENT asserts `sink.rows.length > 0` (any
- *     auditAction — proves the writer pipeline reached the
- *     attachment router; F-5.6-D15 — NOT the tautological
- *     `Array.isArray`).
+ * Each test stands up a real Express app, real JWT, real routers,
+ * and a Prisma-shaped capture sink. The writer's `emit` is
+ * fire-and-forget, so each positive-path test uses a polling
+ * `drain(sink, expected)` (F-5.6-D16). Absence-assertion tests
+ * use a fixed-window `drainZero(sink)` to give in-flight IIFEs a
+ * chance to settle before asserting none landed.
  */
 import express, { type Express } from "express";
 import { type AddressInfo, createServer, type Server } from "node:http";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { type AuditLogCreateClient, createAuditLogWriter } from "../auditLogWriter.js";
+import {
+  type AuditLogCreateClient,
+  type AuditLoggerSink,
+  createAuditLogWriter,
+} from "../auditLogWriter.js";
 import { buildAuthRouter } from "../../auth/router.js";
 import { issueAccessToken } from "../../auth/jwt.js";
 import { authenticate } from "../../middleware/authorize.js";
@@ -117,19 +95,16 @@ const drain = async (sink: Sink, expected: number): Promise<void> => {
 };
 
 /**
- * Cooperative yield for "absence" assertions: give any in-flight
+ * Cooperative yield for "absence" assertions. Give in-flight
  * `audit.emit` IIFEs the same number of setImmediate ticks the
  * positive-path drain uses, but DO NOT require any rows to land.
  * Used by the no-enumeration-leak COVERAGE_LOGIN_FAIL test — the
- * contract is "no login_failure row", not "no rows at all", and
- * a fixed-window yield is the only way to assert absence without
- * a flaky time-based sleep.
+ * contract is "no login_failure row", not "no rows at all".
  */
-const drainZero = async (sink: Sink): Promise<void> => {
+const drainZero = async (): Promise<void> => {
   for (let i = 0; i < 50; i += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  void sink;
 };
 
 const tokenForRole = (role: "Admin" | "Operator" | "Technician" | "Viewer"): string =>
@@ -156,20 +131,15 @@ const startApp = async (
   args: StartArgs,
 ): Promise<{ url: string; close: () => Promise<void>; sink: Sink }> => {
   const { client, sink } = buildSink();
-  // Silent logger — the writer's failure-path log line is asserted
-  // directly in `auditLogWriter.spec.ts` (the unit suite); this
-  // spec focuses on the happy-path row persistence.
-  const silentLogger = {
-    info: () => undefined,
+  // Failure-path log lines are asserted directly in
+  // `auditLogWriter.spec.ts`; this spec focuses on happy-path row
+  // persistence and uses a no-op sink.
+  const silentLogger: AuditLoggerSink = {
     warn: () => undefined,
-    error: () => undefined,
-    debug: () => undefined,
-    trace: () => undefined,
-    fatal: () => undefined,
   };
   const audit = createAuditLogWriter({
     resolvePrismaClient: async () => client,
-    logger: silentLogger as never,
+    logger: silentLogger,
   });
   const app: Express = express();
   app.use(express.json({ limit: "32kb" }));
@@ -318,7 +288,7 @@ describe("Story 5.6 — coverage (audit writer reaches every audited action)", (
     // RBAC-middleware noise) gets a chance to land BEFORE the
     // assertion. The contract is "no login_failure row exists"
     // — we don't assert that no rows exist at all.
-    await drainZero(sink);
+    await drainZero();
     const failureRows = sink.rows.filter((r) => r.auditAction === "login_failure");
     expect(failureRows).toHaveLength(0);
     await close();

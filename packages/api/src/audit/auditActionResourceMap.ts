@@ -1,83 +1,38 @@
 /**
  * `auditActionResourceMap.ts` — Story 5.6.
  *
- * Single source of truth for the `AuditAction` → `{ resource,
- * resourceIdKey }` mapping the writer (`auditLogWriter.ts`)
- * applies on every `audit.emit` call. Extracted as a separate
- * module so future per-action customisation (e.g. extracting
- * `deviceId` from a `reading_ingested` payload) lands here
- * without touching the writer.
+ * `AuditAction` → `{ resource, resourceIdKey }` lookup the
+ * writer applies on every `audit.emit`. Closed enum at
+ * `@surakkha/shared/rbac` makes any missing entry a compile
+ * error here.
  *
- * Why a static lookup (vs a switch in the writer):
- *
- *   - A `Record<AuditAction, ...>` with all 24 enum entries lets
- *     `tsc` flag any future drift in `AuditActionSchema` — adding
- *     a value forces an update here at compile time. A `switch`
- *     with `default: "Other"` would silently swallow drift.
- *
- *   - The map is the seam where Story 5.6's spec promises "future
- *     per-action resource customisation would land" — the
- *     `resourceIdKey` field is a forward-compatible hook (the
- *     writer extracts `context[resourceIdKey]` for resource-bound
- *     actions and stores it as `resourceId`).
- *
- * Resource-less actions (`logout`, `rbac_allowed`) map to the
- * canonical `{ resource: "Other", resourceIdKey: null }` default.
- * The writer renders `resourceId: null` when the key is absent /
- * `null`.
+ * Resource-less rows (`logout`, `rbac_allowed`, `rbac_denied`,
+ * `jwt_secret_rotated`, `cron_run_completed`) map to
+ * `{ resource: "Other", resourceIdKey: null }`. The writer
+ * extracts `context[resourceIdKey]` for resource-bound actions
+ * and stores it as `resourceId`.
  */
 import { type AuditLogResource } from "@surakkha/shared/audit";
 import { type AuditAction } from "@surakkha/shared/rbac";
 
-/**
- * One row of the action → resource lookup. `resource` is the
- * closed `AuditLogResource` enum the wire schema accepts;
- * `resourceIdKey` is the `context` field the writer will copy
- * into the `resourceId` column (or `null` if the action has no
- * resource binding).
- */
-export interface AuditActionResourceEntry {
+interface AuditActionResourceEntry {
   readonly resource: AuditLogResource;
   /**
-   * The key the writer will look up on the `context` payload to
-   * populate `resourceId`. `null` for resource-less actions
-   * (`logout`, `rbac_allowed`, `simulator_event` when no device).
-   * Trimming + length-zero handling lives in `resolveResourceId`
-   * (see F-5.6-D19).
+   * `context` key the writer copies into `resourceId`. `null`
+   * for resource-less actions. Whitespace-trim + zero-length
+   * collapse to `null` lives in `resolveResourceBinding`
+   * (F-5.6-D19).
    */
   readonly resourceIdKey: string | null;
 }
 
 /**
- * 24-entry lookup. The closed `AuditActionSchema` enum in
- * `@surakkha/shared/rbac` is the authority source — any drift
- * here is a compile error (`Type 'X' is not assignable to type
- * 'AuditAction'` on the key type).
- *
- * Resource-less rows (`logout`, `rbac_allowed`) carry
- * `resourceIdKey: null`. Resource-bound rows name the
- * conventional key the corresponding `audit.emit` call site
- * populates:
- *
- *   - `incident_state_changed` → `incidentId` (from
- *     `transitionHelpers.ts` / `transitionSideEffects.ts`)
- *   - `incident_reopened` → `incidentId`
- *   - `alert_acknowledged` → `alertId`
- *   - `alert_cleared` → `alertId`
- *   - `rule_created` / `rule_archived` → `ruleId`
- *   - `threshold_changed` → `ruleId`
- *   - `device_created` / `device_updated` → `deviceId`
- *   - `notification_emitted` → `notificationId`
- *   - `csv_exported` → `deviceId` (the URL-param of the CSV export)
- *   - `simulator_event` → `deviceId`
- *   - `reading_ingested` → `deviceId`
- *   - `reading_rate_limited` → `deviceId`
- *   - `seq_drop_detected` / `seq_reorder_detected` → `deviceId`
- *   - `token_refresh` / `login_success` / `login_failure` →
- *     `sessionId` when present, else `null`.
- *   - `jwt_secret_rotated` / `cron_run_completed` / `logout` /
- *     `rbac_allowed` / `rbac_denied` / `invalid_state_transition`
- *     → `null` (no resource binding).
+ * Resource-less actions map to `{ resource: "Other", resourceIdKey: null }`.
+ * Session-bound (`login_*`, `token_refresh`) carry `sessionId` when present.
+ * `simulator_event` is snake_case (`device_id`) — matches the wire payload
+ * `simulatorRouter.ts:407` populates. All other resource-bound actions use
+ * camelCase singular: `{ entity }Id` for the per-entity id the emit site
+ * carries.
  */
 export const auditActionResourceMap: Record<AuditAction, AuditActionResourceEntry> = {
   login_success: { resource: "Session", resourceIdKey: "sessionId" },
