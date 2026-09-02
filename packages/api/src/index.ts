@@ -55,6 +55,7 @@ import { mountThresholdsRouter } from "./admin/thresholdsWiring.js";
 import { mountAlertRouters } from "./alerts/wiring.js";
 import { mountAttachmentRouter } from "./attachments/routerWiring.js";
 import { type AuditLogger } from "./audit";
+import { createAuditLogWriter } from "./audit/auditLogWriter.js";
 import { mountAuditRouter } from "./audit/routerWiring.js";
 import { buildActorUserIdResolver } from "./auth/actorUserIdResolver";
 import { assertJwtSecret } from "./auth/jwt";
@@ -91,14 +92,17 @@ assertJwtSecret();
 const logger = createLogger({ name: "surakkha-api", level: "info" });
 
 /**
- * v1 audit emitter — writes a structured log line that the audit-log
- * pipeline (Story 5.6) consumes. v2 will write to the database.
+ * v2 audit emitter — persists every `audit.emit` call to the
+ * `AuditLog` Prisma table (Story 5.6). Lazy-resolves Prisma on
+ * first emit so a transient DB outage at boot does NOT crash
+ * the api (the v1 logger-only emitter had no boot-time Prisma
+ * dependency; the v2 writer inherits that property via the
+ * `getPrisma` precedent at `boot/db.ts`).
  */
-const audit: AuditLogger = {
-  emit(event) {
-    logger.info({ audit: event }, `audit:${event.auditAction}`);
-  },
-};
+const audit: AuditLogger = createAuditLogWriter({
+  resolvePrismaClient: getPrisma,
+  logger,
+});
 
 const app: Express = express();
 app.use(express.json({ limit: "32kb" }));
