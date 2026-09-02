@@ -79,6 +79,7 @@ import {
 } from "./readings/csvRouter.js";
 import { buildLatestReadingsRouter } from "./readings/latestRouter.js";
 import { buildLatestReadingsListReader } from "./readings/wiring.js";
+import { scheduleRetentionCron } from "./retention/cronWiring.js";
 import { WriteAmplificationError } from "./rules/hooks.js";
 
 const DEFAULT_API_PORT = 3000;
@@ -232,6 +233,14 @@ mountAuditRouter({ app, audit, resolvePrismaClient: getPrisma });
 // Story 4.13 — mount `/api/incidents/:id/attachments` (POST + GET)
 // and `/api/attachments/:id` (DELETE).
 mountAttachmentRouter({ app, audit, resolvePrismaClient: getPrisma });
+
+// Story 5.5 — schedule the hourly retention cron. Returns a
+// `{ stop }` handle so a future shutdown hook can cancel the
+// interval; today the handle is dropped (the api process is
+// long-running and exits via SIGINT). The cron uses
+// `pg_try_advisory_lock` to skip-on-contention and emits
+// `cron_run_completed` audit rows on every success/failure.
+scheduleRetentionCron({ resolvePrismaClient: getPrisma, audit, logger });
 
 // Final 404 — registered AFTER every router mount (including the
 // incidents adapter above) so the catch-all only fires for paths

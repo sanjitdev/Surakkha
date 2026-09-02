@@ -98,6 +98,13 @@ model Reading {
 
   @@index([deviceId, ts])
   @@index([deviceId, seq])
+  // Story 5.5 — `Reading.ts` index for the cron's
+  // `WHERE ts < cutoff` range-scan. The existing
+  // `(deviceId, ts)` + `(deviceId, seq)` indexes cannot serve a
+  // device-agnostic range scan; without this index the hourly cron
+  // would seq-scan the raw table. Added via the
+  // `20260901000002_cron_runs` migration.
+  @@index([ts])
 }
 
 // ReadingAggregate — Story 5.4.
@@ -169,6 +176,46 @@ model ReadingAggregate {
   // edited to include it.
   @@unique([deviceId, bucketStart, metric])
   @@index([deviceId, bucketStart])
+}
+
+// CronRun — Story 5.5.
+//
+// One row per cron tick. Story 5.5's hourly retention cron writes
+// a `running` row when a tick starts, then updates it to `success`
+// or `failure` when the tick finishes (the row carries `startedAt`,
+// `finishedAt`, `aggregatedRows`, `deletedRows`, and the optional
+// `errorMessage`). The operator-facing audit trail
+// (`auditAction: "cron_run_completed"`) is the human-facing
+// surface; this table is the persisted engine-side record.
+//
+// Columns:
+//   - `id` (UUIDv4, server-generated).
+//   - `startedAt` / `finishedAt` — tick wall-clock boundaries.
+//   - `status` (free TEXT — the closed enum `{"running",
+//      "success", "failure"}` lives at the Zod layer
+//      `packages/shared/src/retention.ts`; storing as TEXT avoids a
+//      Prisma enum migration every time a status is added, same
+//      precedent as `AuditLog.outcome`).
+//   - `aggregatedRows` (Int) — number of upserts performed
+//      (across all batches in the tick).
+//   - `deletedRows` (Int) — number of raw `Reading` rows the
+//      tick removed after the upserts committed.
+//   - `errorMessage` (String?) — populated when `status =
+//      "failure"`; NULL on `success` / `running`.
+//
+// Index:
+//   - `@@index([startedAt])` — the "last run" / "recent ticks"
+//     lookup that any future operator surface (deferred) will use.
+model CronRun {
+  id             String    @id @default(uuid())
+  startedAt      DateTime
+  finishedAt     DateTime?
+  status         String
+  aggregatedRows Int
+  deletedRows    Int
+  errorMessage   String?
+
+  @@index([startedAt])
 }
 
 // Incident — Story 2.6 placeholder expanded in Story 4.2.

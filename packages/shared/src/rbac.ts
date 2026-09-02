@@ -545,5 +545,12 @@ export const AuditActionSchema = z.enum([
   // count permitted vs denied attempts; the wire shape mirrors
   // `rbac_denied` with `outcome: "allow"` instead of `"failure"`.
   "rbac_allowed",
+  // Story 5.5 — the hourly retention cron emits
+  // `cron_run_completed` on every tick (paired with
+  // `outcome: "success"` or `"failure"`). The operator-facing
+  // audit-lens read surface (Story 5.3) renders the rows so an
+  // operator can observe the cron's per-tick pass/fail without
+  // querying the `CronRun` table directly.
+  "cron_run_completed",
 ]);
 export type AuditAction = z.infer<typeof AuditActionSchema>;

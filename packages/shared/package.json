@@ -35,6 +35,14 @@
       "types": "./dist/audit.d.ts",
       "import": "./dist/audit.js"
     },
+    "./reading-aggregate": {
+      "types": "./dist/reading-aggregate.d.ts",
+      "import": "./dist/reading-aggregate.js"
+    },
+    "./retention": {
+      "types": "./dist/retention.d.ts",
+      "import": "./dist/retention.js"
+    },
     "./rbac": {
       "types": "./dist/rbac.d.ts",
       "import": "./dist/rbac.js"

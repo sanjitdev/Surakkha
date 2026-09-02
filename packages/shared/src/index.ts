@@ -23,3 +23,4 @@ export * from "./mimeAutoDetect.js";
 export * from "./attachment.js";
 export * from "./error-envelope.js";
 export * from "./schemas.js";
+export * from "./retention.js";
