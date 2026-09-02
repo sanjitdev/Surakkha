@@ -1,23 +1,9 @@
 /**
- * Seeded user store — Surakkha api (Story 1.4 + Story 4.2).
+ * Seeded user store — Surakkha api.
  *
- * Six canonical demo users matching the Prisma `seedUsers.ts` (1 Admin
- * + 2 Operators + 2 Technicians + 1 Viewer). The hashes are produced
- * at module-load time so the api can be tested without touching the
- * database. Persistence lands when the Prisma `User` model is the
- * source of truth at runtime (see Story 4.2's lazy-upsert in
- * `packages/api/src/index.ts`); the surface (`findUserByEmail`,
- * `findUserById`) stays stable so the swap is mechanical.
- *
- * Demo credentials (also documented in BRD §13):
- *   admin@surakkha.test    / demo-admin
- *   operator@surakkha.test / demo-operator
- *   operator2@surakkha.test / demo-operator2
- *   technician@surakkha.test / demo-technician
- *   technician2@surakkha.test / demo-technician2
- *   viewer@surakkha.test   / demo-viewer
- *
- * Cost factor 12 (Story 1.4 AC: "bcrypt cost factor 12").
+ * Six canonical demo users (1 Admin + 2 Operators + 2 Technicians +
+ * 1 Viewer). Passwords are hashed at module-load time so the api can
+ * be tested without touching the database.
  */
 import { type Role } from "@surakkha/shared/rbac";
 import bcrypt from "bcrypt";
@@ -90,9 +76,6 @@ const USERS: readonly UserRecord[] = SEED_SPECS.map((spec) => ({
   email: spec.email,
   displayName: spec.displayName,
   role: spec.role,
-  // bcrypt.hashSync at boot is fine for 4 users; for thousands of users
-  // the hash would land at seed-time (Story 3.x) and the store would
-  // hydrate from the database instead.
   passwordHash: bcrypt.hashSync(spec.password, BCRYPT_COST),
 }));
 
@@ -101,12 +84,6 @@ export const findUserByEmail = (email: string): UserRecord | null => {
   return USERS.find((user) => user.email === normalized) ?? null;
 };
 
-/**
- * Look up a user by their stable UUID. Used by Story 1.5's
- * authenticate middleware to translate the JWT `sub` into a `Role`.
- * Trivially stable on the seeded store; the Prisma-backed
- * implementation lands with Epic 3.
- */
 export const findUserById = (id: string): UserRecord | null =>
   USERS.find((user) => user.id === id) ?? null;
 

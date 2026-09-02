@@ -1,29 +1,9 @@
 /**
- * Auth routes — Surakkha api (Story 1.4).
+ * Auth routes — Surakkha api.
  *
- * Mounted by `packages/api/src/index.ts`. The route module is a plain
- * factory that returns handlers + a small typed `AuthDeps` interface so
- * unit tests can inject fakes for the audit logger and user store.
- *
- * Wire contract:
- *
- *   POST /auth/login
- *     body: { email, password }
- *     200 → { access_token, token_type: "Bearer", expires_in }
- *          Set-Cookie: surakkha_refresh=...; HttpOnly; SameSite=Strict;
- *                     Path=/auth; Secure (prod)
- *     401 → { error: "invalid_credentials" }   (no audit on failure)
- *     400 → { error: "validation_error", issues: [...] }
- *
- *   POST /auth/refresh
- *     body: (none)
- *     200 → new { access_token, token_type: "Bearer", expires_in }
- *     401 → { error: "invalid_refresh" }
- *
- * Story 1.4 AC: `// PUBLIC` markers on every login route so Story 1.5's
- * RBAC middleware skips them (architecture-appendix-rbac.md line 239).
- * Story 1.5 wire-up: the same intent is surfaced via `markPublic(handler)`
- * so a reviewer can see the bypass without scanning for the comment.
+ * Mounted by `packages/api/src/index.ts`. Returns an Express router plus
+ * a small typed `AuthDeps` interface so unit tests can inject fakes for
+ * the audit logger.
  */
 import {
   type AccessToken,
@@ -56,9 +36,6 @@ export interface AuthDeps {
 export const buildAuthRouter = (deps: AuthDeps): Router => {
   const router = express.Router();
 
-  // PUBLIC — login is the only way to obtain a token; Story 1.5's
-  // RBAC middleware skips this route. `markPublic` sets req.public=true
-  // so authenticate() tolerates an absent Authorization header.
   router.post(
     "/login",
     markPublic(async (req: Request, res: Response) => {
@@ -74,9 +51,6 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
       const { email, password } = parsed.data;
       const user = findUserByEmail(email);
       if (user === null) {
-        // Do not write a login_failure audit on bad email — Story 1.4 AC
-        // requires "no audit entry written on a wrong-password failure",
-        // and we treat unknown email the same way (no enumeration leak).
         res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_CREDENTIALS.value });
         return;
       }
@@ -108,9 +82,6 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
     }),
   );
 
-  // PUBLIC — refresh uses the cookie, not an access token, so it must
-  // skip the RBAC middleware. Story 1.7's interceptor hits this on
-  // 60s-before-expiry.
   router.post(
     "/refresh",
     markPublic((req: Request, res: Response) => {
@@ -125,11 +96,6 @@ export const buildAuthRouter = (deps: AuthDeps): Router => {
         return;
       }
 
-      // Story 1.7: stamp the role into the new access token so the SPA
-      // can decode role without an extra `/me` call. If the user has
-      // been removed since the refresh token was issued, treat as
-      // invalid_refresh (consistent with the orphaned-sub case in
-      // `authenticate`).
       const user = findUserById(verified.userId);
       if (user === null) {
         res.status(HTTP_UNAUTHORIZED).json({ error: ERROR_CODES.INVALID_REFRESH.value });
