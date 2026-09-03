@@ -1,18 +1,14 @@
 /**
- * `auditLogWriter.ts` — Story 5.6.
+ * `AuditLogger` implementation that persists every `audit.emit`
+ * to the `AuditLog` table. Wire contract is unchanged:
+ * `emit({ auditAction, userId?, outcome, context? })`.
  *
- * v2 `AuditLogger` — replaces the v1 logger-only emitter with a
- * Prisma-backed writer that persists every `audit.emit` to the
- * `AuditLog` table. Wire contract (`AuditLogger.emit({ auditAction,
- * userId?, outcome, context? })`) is unchanged: no call site
- * changes per the spec's "Never" rule.
- *
- * Lazy Prisma resolution (`() => Promise<unknown>`) mirrors
- * `boot/db.ts` — a transient DB outage at boot does not crash the
- * api. Resolver rejections and per-emit write rejections are
- * swallowed + logged as `audit_log_write_failed` (the audit trail
- * is best-effort; failing the parent request because the audit
- * write failed is wrong).
+ * Lazy Prisma resolution mirrors `boot/db.ts` — a transient DB
+ * outage at boot does not crash the api. Resolver rejections and
+ * per-emit write rejections are swallowed + logged as
+ * `audit_log_write_failed` (the audit trail is best-effort;
+ * failing the parent request because the audit write failed is
+ * wrong).
  */
 import { type AuditLogResource } from "@surakkha/shared/audit";
 import { type AuditAction } from "@surakkha/shared/rbac";
@@ -51,7 +47,7 @@ export interface AuditLogWriterDeps {
  * Resolve `{ resource, resourceId }` for an emit. Returns the
  * mapped resource plus the `context[resourceIdKey]` value, or
  * `null` if the action is resource-less, the key is missing /
- * non-string, or the value is whitespace-only (F-5.6-D19).
+ * non-string, or the value is whitespace-only.
  */
 export const resolveResourceBinding = (
   auditAction: AuditAction,
@@ -105,9 +101,9 @@ export const createAuditLogWriter = (deps: AuditLogWriterDeps): AuditLogger => {
             },
           });
         } catch (err) {
-          // F-5.6-D18 — failure-path log carries the full resource
-          // binding so an SRE inspecting `audit_log_write_failed`
-          // lines can recover the dropped row.
+          // Failure-path log carries the full resource binding so
+          // an SRE inspecting `audit_log_write_failed` lines can
+          // recover the dropped row.
           logger.warn(
             {
               err,

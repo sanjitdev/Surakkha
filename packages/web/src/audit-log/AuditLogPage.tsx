@@ -1,38 +1,16 @@
 /**
- * `AuditLogPage` — Story 5.3.
+ * `AuditLogPage` — admin-facing `/audit` read surface.
  *
- * The admin-facing `/audit` read surface. Renders the most-recent
- * 100 `AuditLog` rows in a table with:
+ * Renders a filter panel (actor chips + actor id input + event
+ * substring + resource chip row + date-range preset) plus a results
+ * panel (loading / error / empty / table). Each row expands to a
+ * JSON payload view + an entity link when one is wired for the
+ * row's resource type.
  *
- *   - Actor multi-select chips (each chip toggles a `userId`).
- *   - Event free-text substring filter.
- *   - Resource closed-enum chip.
- *   - Date-range preset selector (last 24h / 7d / 30d / custom
- *     — custom is a disabled no-op stub).
- *   - An expandable row panel that shows the row's metadata as
- *     JSON (id, actorUserId, auditAction, resource, resourceId,
- *     payload, outcome, createdAt) and a clickable entity link
- *     when `resourceId` is set: `/incidents/{resourceId}` for
- *     `resource: "Incident"`, `/admin/thresholds?rule_id={
- *     resourceId}` for `resource: "Rule"`. When `resourceId` is
- *     null (e.g., `logout`), no link — render a dash.
- *
- * RBAC double-defense:
- *
- *   - Page wrapped in `<RbacRoute>` (Story 1.6) so a non-Admin
- *     direct URL hit renders `<RbacDenied />` without mounting
- *     the hook.
- *   - `queryFn` throws `AdminAuditLogRbacDeniedError` on 403
- *     (mid-session token expiry or matrix drift). The page's
- *     `isError` branch renders `<RbacDenied />` as the defense
- *     in depth fallback.
- *
- * Read-only. No write affordance — the audit log is append-only
- * per epic-5-context §Audit and retention. The spec "Never" list
- * explicitly forbids edit / delete / re-emit affordances on this
- * surface.
+ * RBAC: the router guards this route; here, the 403 fallback renders
+ * `<RbacDenied>` without remounting the rest of the page tree.
  */
-/* eslint-disable max-lines -- 4 components (filter panel, results panel, row, page) + UUID guard + JSON-stringify try/catch + actor-input error state push the file past the 500-line limit. Story 5.3 review-cycle hardening (P3/P7/P8) added the seams; splitting is out of scope for this patch cycle. */
+/* eslint-disable max-lines -- 4 components + 2 helpers; splitting deferred. */
 import { type AuditLogEntry, type AuditLogResource } from "@surakkha/shared/audit";
 import { useMemo, useState } from "react";
 
@@ -42,15 +20,13 @@ import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { AdminAuditLogRbacDeniedError } from "./AdminAuditLogRbacDeniedError";
 import { type AuditLogHookFilters, useAuditLogList } from "./useAuditLogList";
 
-/** Date-range presets; `custom` is a no-op v1 stub for the date inputs. */
 type DateRangePreset = "24h" | "7d" | "30d" | "custom";
 const DATE_RANGE_PRESETS: readonly DateRangePreset[] = ["24h", "7d", "30d", "custom"];
 
-/** Date-range window lengths in milliseconds (the `custom` preset has none). */
-const HOURS_PER_DAY = 24;
-const MINUTES_PER_HOUR = 60;
+const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1000;
+const MINUTES_PER_HOUR = 60;
+const HOURS_PER_DAY = 24;
 const WINDOW_DAYS_24H = 1;
 const WINDOW_DAYS_7D = 7;
 const WINDOW_DAYS_30D = 30;
@@ -60,32 +36,12 @@ const WINDOW_MS_7D =
   WINDOW_DAYS_7D * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 const WINDOW_MS_30D =
   WINDOW_DAYS_30D * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
-
-/** Number of hex characters shown for ID columns (8 ≈ 32 bits of entropy). */
 const ID_SHORT_PREFIX_LENGTH = 8;
-
-/** Number of characters in an ISO-8601 datetime stamp (yyyy-mm-ddTHH:MM:SS). */
 const ISO_DATETIME_PREFIX_LENGTH = 19;
 
-/**
- * UUID v4-ish regex used to validate `resourceId` values before
- * interpolating them into hrefs. A future column that holds a
- * non-UUID value (e.g., `../foo` from a malformed payload or a
- * `javascript:alert(1)` injection) would otherwise escape into
- * the URL and either 404 or open an XSS vector on click. The
- * wire schema's `z.string().uuid()` is the source of truth for
- * valid resource ids; this regex mirrors it on the client.
- */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Closed list of resources rendered as filter chips. Mirrors
- * `AuditLogResourceSchema` from `@surakkha/shared/audit`
- * exactly so every enum value exposed on the wire is also
- * selectable from the filter row. Order mirrors the enum
- * declaration order; "Any" is rendered separately as a
- * sentinel chip above this list.
- */
+// Mirrors `AuditLogResourceSchema` from `@surakkha/shared/audit`.
 const RESOURCE_OPTIONS: readonly AuditLogResource[] = [
   "Device",
   "Reading",
@@ -102,12 +58,6 @@ const RESOURCE_OPTIONS: readonly AuditLogResource[] = [
   "Other",
 ];
 
-/**
- * Resolve the date-range preset to a window length in milliseconds.
- * Returns `undefined` for `custom` (no auto-fill) — the date input
- * is deferred. The hook re-derives `since = now - windowMs` per fetch
- * so the lower bound slides forward during 30s polling.
- */
 const sincePresetMsForPreset = (preset: DateRangePreset): number | undefined => {
   if (preset === "custom") return undefined;
   if (preset === "24h") return WINDOW_MS_24H;
@@ -115,14 +65,12 @@ const sincePresetMsForPreset = (preset: DateRangePreset): number | undefined => 
   return WINDOW_MS_30D;
 };
 
-/** Outcome → Tailwind pill color class. */
 const OUTCOME_PILL_CLASS: Record<string, string> = {
   success: "bg-severity-healthy-bg text-severity-healthy-text",
   failure: "bg-severity-critical-bg text-severity-critical-text",
   allow: "bg-severity-warning-bg text-severity-warning-text",
 };
 
-/** Format a Date / ISO string for the table. */
 const formatDate = (iso: string): string => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -130,41 +78,14 @@ const formatDate = (iso: string): string => {
     : d.toISOString().replace("T", " ").slice(0, ISO_DATETIME_PREFIX_LENGTH);
 };
 
-/**
- * Build the entity link href for an expanded row. Returns
- * `null` when no link should render. Mirrors the spec
- * Acceptance Criteria: `/incidents/{resourceId}` for
- * `resource: "Incident"`, `/admin/thresholds?rule_id={
- * resourceId}` for `resource: "Rule"`.
- *
- * Other resource types render a dash (no link) — the spec says
- * "When `resourceId` is null (e.g., `logout`), no link —
- * render a dash." Other resource types with a `resourceId`
- * also render a dash today (no other routes are wired yet);
- * a future story may add `/users/{id}` or `/devices/{id}` etc.
- */
 const entityHrefFor = (entry: AuditLogEntry): string | null => {
   if (entry.resourceId === null) return null;
-  // Only build a link when the resourceId is a valid UUID — a
-  // `resourceId: "../foo"` or `resourceId: "javascript:alert(1)"`
-  // would otherwise interpolate into the href and either redirect
-  // to a confusing 404 or open an XSS vector on click. The wire
-  // schema accepts only UUIDs, so any non-UUID is a structural
-  // drift; render a dash instead of the link.
   if (!UUID_REGEX.test(entry.resourceId)) return null;
-  if (entry.resource === "Incident") {
-    return `/incidents/${entry.resourceId}`;
-  }
-  if (entry.resource === "Rule") {
-    return `/admin/thresholds?rule_id=${entry.resourceId}`;
-  }
+  if (entry.resource === "Incident") return `/incidents/${entry.resourceId}`;
+  if (entry.resource === "Rule") return `/admin/thresholds?rule_id=${entry.resourceId}`;
   return null;
 };
 
-/**
- * The entity-link label for an expanded row. Falls back to a
- * dash when no link is rendered.
- */
 const entityLabelFor = (entry: AuditLogEntry): string => {
   if (entry.resourceId === null) return "—";
   const href = entityHrefFor(entry);
@@ -172,19 +93,6 @@ const entityLabelFor = (entry: AuditLogEntry): string => {
   return entry.resourceId.slice(0, ID_SHORT_PREFIX_LENGTH);
 };
 
-/**
- * Render the actor column. Audit rows are Admin-facing — the
- * goal is disambiguation across many actors, not personal
- * identification. We prefer a writer-supplied role label
- * (`payload.actorRole`) so a future Story 5.6 audit writer can
- * surface "Operator · Anjali" without a code change here; we
- * fall back to a 8-char UUID prefix for now so the column is
- * at least scannable. `null` actor (e.g. system-initiated
- * `logout`) renders "system".
- *
- * TODO(5.6): once the audit writer ships a structured
- * `payload.actorRole` for every row, drop the UUID fallback.
- */
 const actorLabelFor = (row: AuditLogEntry): string => {
   if (row.actorUserId === null) return "system";
   const payloadObj =
@@ -200,39 +108,15 @@ export interface AuditLogPageProps {
   readonly testId?: string;
 }
 
-/**
- * The page component. Mirrors `AdminNotificationsPage`: local
- * `useState` for the chip row + date-range UI, `useAuditLogList`
- * for the data, defensive error + RBAC branches.
- */
 export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) => {
   const [actorIds, setActorIds] = useState<readonly string[]>([]);
   const [event, setEvent] = useState<string>("");
   const [resource, setResource] = useState<AuditLogResource | "">("");
   const [preset, setPreset] = useState<DateRangePreset>("30d");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  /**
-   * Track a free-form "actor id" input + a list of selected actor
-   * chips. The textbox lets an Admin paste a UUID; clicking
-   * "Add" commits it to the chip list. This keeps the surface
-   * usable without a separate user roster fetch (which would
-   * balloon scope beyond Story 5.3).
-   */
   const [actorInput, setActorInput] = useState<string>("");
-  /** Inline error for the actor input — surfaced when the value is not a UUID. */
   const [actorInputError, setActorInputError] = useState<string | null>(null);
 
-  // Compose the filter object. `event` is always passed (the hook
-  // + api treat empty as "no filter applied" per spec I/O row
-  // EMPTY_FILTER_VALUE); `resource` is passed only when selected
-  // (the empty string is the sentinel).
-  //
-  // Memoized on `[actorIds, event, resource, preset]` so the
-  // *reference* is stable across re-renders that don't actually
-  // change the filters. Without useMemo the IIFE would return a
-  // fresh object every render, which would change TanStack
-  // Query's `queryKey` and trigger an infinite refetch loop.
   const filters: AuditLogHookFilters = useMemo<AuditLogHookFilters>(() => {
     const out: AuditLogHookFilters = {};
     if (actorIds.length > 0) {
@@ -244,9 +128,6 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
     if (resource.length > 0) {
       (out as { resource?: AuditLogResource }).resource = resource as AuditLogResource;
     }
-    // `preset` participates in the cache key so toggling 24h/7d/30d
-    // triggers a refetch (the wall-clock-derived `since`/`until`
-    // intentionally remain off the key per the hook comment).
     (out as { preset?: string }).preset = preset;
     const ms = sincePresetMsForPreset(preset);
     if (ms !== undefined) {
@@ -257,13 +138,8 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
 
   const { entries, total, truncated, query } = useAuditLogList(filters);
 
-  // Story 6.11 — read the viewer's role for the role-aware back
-  // link on the 403 surface.
   const viewerRole = useCurrentRole();
 
-  // Defense-in-depth: route-level `<RbacRoute>` already gates
-  // the non-Admin path; this branch handles the rare case where
-  // the matrix drifts mid-session.
   if (query.isError && query.error instanceof AdminAuditLogRbacDeniedError) {
     return <RbacDenied viewerRole={viewerRole} />;
   }
@@ -283,19 +159,12 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
         actorInput={actorInput}
         onActorInputChange={(next) => {
           setActorInput(next);
-          // Clear the inline error as soon as the user resumes
-          // editing so the message doesn't linger after they
-          // corrected the input.
           if (actorInputError !== null) setActorInputError(null);
         }}
         actorInputError={actorInputError}
         onAddActor={() => {
           const trimmed = actorInput.trim();
           if (trimmed.length === 0) return;
-          // Validate UUID format — a non-UUID actor id would
-          // silently return zero rows from the api (no chip, no
-          // filter applied) which is a confusing UX. Surface an
-          // inline error so the Admin knows to retry.
           if (!UUID_REGEX.test(trimmed)) {
             setActorInputError("Invalid actor ID — must be a UUID");
             return;
@@ -332,12 +201,6 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
   );
 };
 
-/**
- * The filter panel: actor chip row + event input + resource
- * chip row + date-range preset selector. Extracted from
- * `AuditLogPage` so the page render stays under the
- * `max-lines-per-function: 200` ESLint ceiling.
- */
 interface AuditLogFilterPanelProps {
   readonly actorIds: readonly string[];
   readonly onRemoveActor: (id: string) => void;
@@ -492,10 +355,6 @@ const AuditLogFilterPanel = (props: AuditLogFilterPanelProps) => {
           Range
         </h2>
         {DATE_RANGE_PRESETS.map((p) => {
-          // The `custom` preset is a no-op v1 stub (mirrors the
-          // 5.1 admin notifications page pattern). Disable the
-          // button so a click can't silently drop the `since`
-          // filter — a future story will wire custom inputs.
           const isStub = p === "custom";
           return (
             <button
@@ -532,11 +391,6 @@ const AuditLogFilterPanel = (props: AuditLogFilterPanelProps) => {
   );
 };
 
-/**
- * The results panel: 4-branch render — loading / error / empty /
- * table. Extracted from `AuditLogPage` so the page render stays
- * under the `max-lines-per-function: 200` ESLint ceiling.
- */
 interface AuditLogResultsPanelProps {
   readonly query: ReturnType<typeof useAuditLogList>["query"];
   readonly entries: readonly AuditLogEntry[];
@@ -576,12 +430,6 @@ const AuditLogResultsPanel = (props: AuditLogResultsPanelProps) => {
   if (entries.length === 0) {
     return (
       <div data-testid="audit-log-empty" className="text-md text-neutral-secondary">
-        {/* Filter-aware empty copy distinguishes default-filter
-            ("no events yet" — the table is fresh, no writers have
-            run yet) from a narrowed filter that matched nothing.
-            Filtered-empty surfaces a "Show last 30d" CTA so the
-            Admin can recover in one click; default-empty hints at
-            the 5.6 writer timeline so the silence is by-design. */}
         {isFiltered ? (
           <div className="flex flex-wrap items-center gap-3">
             <span>No audit events match the current filters.</span>
@@ -644,11 +492,7 @@ const AuditLogRow = ({ row, isExpanded, onToggle }: AuditLogRowProps) => {
   const outcomeClass = OUTCOME_PILL_CLASS[row.outcome] ?? "bg-neutral-bg text-neutral-secondary";
   const entityHref = entityHrefFor(row);
   const entityLabel = entityLabelFor(row);
-  // Defensive — a `payload` JSON column is `unknown` at the wire
-  // layer, and a future writer that emits a circular reference
-  // (a node pointing back to itself) would crash
-  // `JSON.stringify` with a `TypeError`. Render a fallback so
-  // the row stays expandable instead of throwing mid-render.
+  // Guard against a circular payload crashing JSON.stringify mid-render.
   let payloadJson: string;
   try {
     payloadJson = JSON.stringify(
@@ -673,11 +517,6 @@ const AuditLogRow = ({ row, isExpanded, onToggle }: AuditLogRowProps) => {
       <tr
         data-testid={`audit-log-row-${row.id}`}
         onClick={onToggle}
-        // Keyboard users must be able to expand rows; screen
-        // readers must announce the expansion state.
-        // `role="button"` + `tabIndex={0}` + the keydown handler
-        // covers keyboard navigation; `aria-expanded` +
-        // `aria-controls` link the row to its detail panel.
         role="button"
         tabIndex={0}
         aria-expanded={isExpanded}
@@ -727,12 +566,6 @@ const AuditLogRow = ({ row, isExpanded, onToggle }: AuditLogRowProps) => {
                 <a
                   data-testid={`audit-log-entity-link-${row.id}`}
                   href={entityHref}
-                  // Defensive: clicking the entity link bubbles
-                  // to the row's `onClick`. The link is inside a
-                  // sibling `<tr>` so the toggle does NOT
-                  // collapse the row, but `stopPropagation`
-                  // guards against a future refactor that nests
-                  // the link inside the toggle row.
                   onClick={(e) => e.stopPropagation()}
                   className="text-md text-primary underline"
                 >

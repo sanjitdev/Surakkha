@@ -1,16 +1,9 @@
 /**
- * `auditActionResourceMap.ts` — Story 5.6.
- *
- * `AuditAction` → `{ resource, resourceIdKey }` lookup the
- * writer applies on every `audit.emit`. Closed enum at
- * `@surakkha/shared/rbac` makes any missing entry a compile
- * error here.
- *
- * Resource-less rows (`logout`, `rbac_allowed`, `rbac_denied`,
- * `jwt_secret_rotated`, `cron_run_completed`) map to
- * `{ resource: "Other", resourceIdKey: null }`. The writer
- * extracts `context[resourceIdKey]` for resource-bound actions
- * and stores it as `resourceId`.
+ * `AuditAction` → `{ resource, resourceIdKey }` lookup the writer
+ * applies on every `audit.emit`. Closed enum at
+ * `@surakkha/shared/rbac` makes any missing entry a compile error
+ * here. Resource-less actions map to
+ * `{ resource: "Other", resourceIdKey: null }`.
  */
 import { type AuditLogResource } from "@surakkha/shared/audit";
 import { type AuditAction } from "@surakkha/shared/rbac";
@@ -18,21 +11,18 @@ import { type AuditAction } from "@surakkha/shared/rbac";
 interface AuditActionResourceEntry {
   readonly resource: AuditLogResource;
   /**
-   * `context` key the writer copies into `resourceId`. `null`
-   * for resource-less actions. Whitespace-trim + zero-length
-   * collapse to `null` lives in `resolveResourceBinding`
-   * (F-5.6-D19).
+   * `context` key the writer copies into `resourceId`. `null` for
+   * resource-less actions. Whitespace-trim + zero-length collapse
+   * to `null` lives in `resolveResourceBinding`.
    */
   readonly resourceIdKey: string | null;
 }
 
 /**
- * Resource-less actions map to `{ resource: "Other", resourceIdKey: null }`.
- * Session-bound (`login_*`, `token_refresh`) carry `sessionId` when present.
- * `simulator_event` is snake_case (`device_id`) — matches the wire payload
- * `simulatorRouter.ts:407` populates. All other resource-bound actions use
- * camelCase singular: `{ entity }Id` for the per-entity id the emit site
- * carries.
+ * Session-bound actions carry `sessionId`. `simulator_event` uses
+ * snake_case `device_id` to match the wire payload the simulator
+ * router populates. All other resource-bound actions use
+ * camelCase singular: `{ entity }Id`.
  */
 export const auditActionResourceMap: Record<AuditAction, AuditActionResourceEntry> = {
   login_success: { resource: "Session", resourceIdKey: "sessionId" },
