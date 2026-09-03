@@ -50,7 +50,7 @@ const SeverityCards = () => (
   <div data-testid="severity-cards">
     <h1 className="mb-4 text-2xl font-semibold text-neutral-body">Severity palette</h1>
     <p className="mb-6 text-md text-neutral-secondary">
-      Sample KpiStat cards — Story 1.9 verifies the saturated palette and the critical pulse.
+      Sample KpiStat cards — verifies the saturated palette and the critical pulse.
     </p>
     <div data-testid="severity-cards-grid" className="grid gap-4 lg:grid-cols-4 sm:grid-cols-2">
       <KpiStat severity="healthy" label="pH" value="7.2" sub="in range" />

@@ -1,9 +1,9 @@
 /**
- * `AppShell` — authenticated layout: connection + severity banner
- * slots, TopBar, fixed Sidebar (>= 1024px) or hamburger drawer
- * (< 1024px), main canvas with breakpoint-driven horizontal padding.
- * Initial render assumes `lg`; the resize effect upgrades / downgrades
- * after hydration (Story 1.2b AC only applies after mount).
+ * Authenticated layout: connection + severity banner slots, TopBar,
+ * fixed Sidebar (>= 1024px) or hamburger drawer (< 1024px), main
+ * canvas with breakpoint-driven horizontal padding. Initial render
+ * assumes `lg`; the resize effect upgrades / downgrades after
+ * hydration.
  */
 import { type Role } from "@surakkha/shared/rbac";
 import { type PropsWithChildren, useEffect, useState } from "react";

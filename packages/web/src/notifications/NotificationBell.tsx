@@ -1,11 +1,10 @@
 /**
- * `NotificationBell` — Story 4.10. Operator-facing bell icon
- * mounted in `TopBar`. Clicking opens a dropdown listing unread
- * notifications for the current viewer; each row has a "Mark
- * as read" affordance. Viewer / RBAC-denied render the shared
- * disabled variant (`data-testid="notification-bell-disabled"`).
- * Dropdown closes on click-outside, Escape, or row-link
- * navigation.
+ * Operator-facing bell icon mounted in `TopBar`. Clicking opens a
+ * dropdown listing unread notifications for the current viewer;
+ * each row has a "Mark as read" affordance. Viewer / RBAC-denied
+ * render the shared disabled variant
+ * (`data-testid="notification-bell-disabled"`). Dropdown closes on
+ * click-outside, Escape, or row-link navigation.
  */
 import { type NotificationPayload, type NotificationSeverity } from "@surakkha/shared/notification";
 import { type Role } from "@surakkha/shared/rbac";

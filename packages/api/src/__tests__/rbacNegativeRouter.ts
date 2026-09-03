@@ -1,15 +1,13 @@
 /**
- * Negative RBAC test router — Surakkha api (Story 1.8).
- *
- * A test-only fixture that mounts one stub route per (action × resource)
+ * Test-only fixture that mounts one stub route per (action × resource)
  * denial cell from `RBAC_NEGATIVE_CASES` plus the cross-cutting
- * ownership rule. Each route is gated with `authorize({ action, resource
- * }, audit)`, mirroring the real surface so a regression in the matrix
- * or the middleware surfaces as a 200 here.
+ * ownership rule. Each route is gated with `authorize({ action,
+ * resource }, audit)`, mirroring the real surface so a regression in
+ * the matrix or the middleware surfaces as a 200 here.
  *
- * NOT mounted by the production api (`packages/api/src/index.ts`) — the
- * file lives under `src/__tests__/` so vitest picks it up but the api's
- * production bundle never imports it.
+ * NOT mounted by the production api (`packages/api/src/index.ts`) —
+ * the file lives under `src/__tests__/` so vitest picks it up but
+ * the api's production bundle never imports it.
  */
 import {
   type Action,
@@ -75,13 +73,13 @@ export const mountOwnerRoute = (
 };
 
 /**
- * One entry per denial cell the Story 1.8 register pins. The set
- * superset'd `RBAC_NEGATIVE_CASES` (10 cases) plus extra cells that
- * catch obvious bypasses (Operator driving Simulator, Viewer
- * reading SeverityBanner, etc.).
+ * One entry per denial cell the register pins. The set superset'd
+ * `RBAC_NEGATIVE_CASES` (10 cases) plus extra cells that catch
+ * obvious bypasses (Operator driving Simulator, Viewer reading
+ * SeverityBanner, etc.).
  *
- * Note: Story 5.3 removed the `Operator → read → AuditLog` entry
- * because the production `/api/audit/list` mount is now covered by
+ * The `Operator → read → AuditLog` entry was removed because the
+ * production `/api/audit/list` mount is now covered by
  * `audit/router.spec.ts` RBAC_OPERATOR case, which exercises the
  * REAL endpoint rather than this test-only fixture.
  */
@@ -121,8 +119,8 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   { method: "post", path: "/incidents/x/acknowledge", action: "acknowledge", resource: "Incident" },
   // 15. Technician → resolve → Incident (extra)
   { method: "post", path: "/incidents/x/resolve", action: "resolve", resource: "Incident" },
-  // 16. Viewer → acknowledge → Alert (Story 3.5 AC3) and
-  // 17. Technician → acknowledge → Alert (Story 3.5 AC4) — RBAC
+  // 16. Viewer → acknowledge → Alert and
+  // 17. Technician → acknowledge → Alert — RBAC
   // matrix grants `Alert.acknowledge = false` to both. The test rig
   // drives BOTH subjects (NEGATIVE_CASES indices 16 + 17) against
   // the SINGLE mounted handler here (Express's `app.post` with
@@ -130,16 +128,16 @@ const NEGATIVE_ROUTES: readonly MountArgs[] = [
   // one handler survives per unique path). The shared gate enforces
   // both denies by virtue of the matrix cell.
   { method: "post", path: "/alerts/x/acknowledge", action: "acknowledge", resource: "Alert" },
-  // 18. Operator → update → Rule (Story 3.7 AC6) — mirrors the
+  // 18. Operator → update → Rule — mirrors the
   // existing #6 (Viewer → update → Rule) for the second deny cell.
   // The matrix grants `Operator.update.Rule = N`.
   { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
-  // 19. Technician → update → Rule (Story 3.7 AC6) — third deny cell
+  // 19. Technician → update → Rule — third deny cell
   // on the same handler; matrix grants `Technician.update.Rule = N`.
   // All three subjects (Viewer / Operator / Technician) drive the same
   // `(method, path)` slot; the matrix cell enforces each deny.
   { method: "patch", path: "/admin/thresholds/x", action: "update", resource: "Rule" },
-  // 20. Operator → POST /admin/thresholds/rules (Story 3.7 AC6) —
+  // 20. Operator → POST /admin/thresholds/rules —
   // matrix also gates POST on `update × Rule` (no `create × Rule`
   // cell exists). Distinct path so Express mounts a separate handler
   // for the POST variant.
@@ -197,8 +195,8 @@ export interface NegativeCase {
 }
 
 export const NEGATIVE_CASES: readonly NegativeCase[] = [
-  // Story 5.3 removed the former index 1 (`Operator → read →
-  // AuditLog` against `buildRbacNegativeApp`); the production
+  // The former index 1 (`Operator → read → AuditLog` against
+  // `buildRbacNegativeApp`) was removed; the production
   // `/api/audit/list` endpoint is now covered by
   // `audit/router.spec.ts`'s RBAC_OPERATOR case, which exercises
   // the real mount rather than this test-only fixture.
@@ -292,7 +290,7 @@ export const NEGATIVE_CASES: readonly NegativeCase[] = [
   },
   // 10. Technician → reopen → Incident (RBAC_NEGATIVE_CASES #10 was
   // mis-anchored — the matrix grants Technician submit_result on
-  // Incident but denies reopen. We pin the actual deny cell.)
+  // Incident but denies reopen. This pins the actual deny cell.)
   {
     index: 10,
     subject: "Technician",
@@ -304,8 +302,8 @@ export const NEGATIVE_CASES: readonly NegativeCase[] = [
     auditAction: "rbac_denied",
     appendixRow: "Incident · reopen (Technician)",
   },
-  // Extra cells beyond RBAC_NEGATIVE_CASES so the register exceeds the
-  // Story 1.8 floor of "at least 10 negative RBAC cases".
+  // Extra cells beyond RBAC_NEGATIVE_CASES so the register exceeds
+  // the "at least 10 negative RBAC cases" floor.
   {
     index: 11,
     subject: "Viewer",
@@ -361,8 +359,8 @@ export const NEGATIVE_CASES: readonly NegativeCase[] = [
     auditAction: "rbac_denied",
     appendixRow: "Incident · resolve (Technician)",
   },
-  // Story 3.5 — Alert lifecycle. The matrix cell
-  // `Alert.acknowledge = Admin + Operator only` is new; cases 16 + 17
+  // Alert lifecycle. The matrix cell
+  // `Alert.acknowledge = Admin + Operator only` is gated; cases 16 + 17
   // pin Viewer + Technician denials on the new endpoint so a future
   // matrix drift surfaces as a failed test rather than a silent
   // privilege escalation. The path `/alerts/x/acknowledge` mirrors
@@ -389,7 +387,7 @@ export const NEGATIVE_CASES: readonly NegativeCase[] = [
     auditAction: "rbac_denied",
     appendixRow: "Alert · acknowledge (Technician)",
   },
-  // Story 3.7 — `/admin/thresholds` admin tab. The matrix grants
+  // `/admin/thresholds` admin tab. The matrix grants
   // `Admin.update.Rule = Y` and `Operator/Technician/Viewer.update
   // .Rule = N`. Cases 18 + 19 + 20 pin the three deny cells. The
   // PATCH `/admin/thresholds/x` slot is shared (Express mounts ONE

@@ -15,7 +15,7 @@ export const SEVERITY_CLASS: Record<MapSeverity, string> = {
   offline: "bg-severity-offline-value",
 };
 
-/** Severity → glyph (a redundant non-colour cue per UX-DR-3). */
+/** Severity → glyph (a redundant non-colour cue). */
 export const SEVERITY_GLYPH: Record<MapSeverity, string> = {
   healthy: "\u2713",
   warning: "\u25B2",

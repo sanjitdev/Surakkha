@@ -272,9 +272,8 @@ export const buildAdminSimulatorRouter = (deps: SimulatorRouterDeps): Router => 
    * GET /admin/simulator/devices — Admin-only. Returns the six
    * default devices + their current scenarios. The matrix grants
    * Admin.read.Device but denies Simulator.read, so the route uses
-   * `Device.read` instead. Story 1.5 already grants Device.read to
-   * Admin/Operator/Technician/Viewer; the page is gated by
-   * `<RbacRoute>` so only Admin reaches it.
+   * `Device.read` instead. The page is gated by `<RbacRoute>` so
+   * only Admin reaches it.
    */
   router.get(
     "/devices",

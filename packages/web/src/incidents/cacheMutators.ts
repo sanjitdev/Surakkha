@@ -1,6 +1,4 @@
 /**
- * `cacheMutators.ts` — Story 4.4.
- *
  * Shared row-update helper for the `incident:state_changed` socket
  * event. Both the Kanban (`useKanbanBoardSocket`) and the detail
  * page (`useIncidentDetailSocket`) mutate their TanStack Query

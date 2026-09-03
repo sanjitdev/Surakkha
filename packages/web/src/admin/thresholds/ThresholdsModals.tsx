@@ -203,12 +203,11 @@ export const EditRuleModal = ({ rule, onClose, onSubmit }: EditRuleModalProps) =
         <p className="text-md text-neutral-secondary">
           Editing creates a new version. The old row is deactivated automatically.
         </p>
-        {/* Spec AC8: pre-fill the rule's current fields. Only
-            `threshold` is mutable (supersede key), so the rest are
-            surfaced read-only — a 3-field "key identity" summary
-            plus a <details> for the audit-log-only fields. Each
-            field has its own data-testid for the RTL pre-fill
-            assertions. */}
+        {/* Pre-fill the rule's current fields. Only `threshold` is
+            mutable (supersede key), so the rest are surfaced
+            read-only — a 3-field "key identity" summary plus a
+            <details> for the audit-log-only fields. Each field has
+            its own data-testid for the RTL pre-fill assertions. */}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-md">
           <dt className="text-neutral-secondary">Device</dt>
           <dd data-testid="thresholds-edit-field-deviceId" className="font-mono">

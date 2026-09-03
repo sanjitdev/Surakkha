@@ -1,9 +1,9 @@
 /**
- * `useNotificationBell` — Story 4.10. TanStack `useQuery` over
- * `GET /api/notifications`. Role-scoped cache key, 30s polling,
- * Viewer disabled at `enabled: false`. On 403 throws the tagged
- * `NotificationsRbacDeniedError` so the bell can distinguish RBAC
- * from generic failures without a separate `error` type.
+ * TanStack `useQuery` over `GET /api/notifications`. Role-scoped
+ * cache key, 30s polling, Viewer disabled at `enabled: false`. On
+ * 403 throws the tagged `NotificationsRbacDeniedError` so the bell
+ * can distinguish RBAC from generic failures without a separate
+ * `error` type.
  */
 import {
   type NotificationListEnvelope,

@@ -83,12 +83,12 @@ const csvLineFor = (args: CsvLineForArgs): string => {
  *
  * Iterates `Object.entries(row.metrics)` so v2 devices with a 7th
  * (or later) metric key emit that key as a CSV line — the
- * forward-compat escape hatch ADR 0001 promises. Metric keys are
- * validated against `MetricKeySchema` so an unknown key emits as a
- * quoted CSV cell with its raw key (preserving the wire shape); the
- * canonical 6 v1 keys are emitted in `MetricKeySchema.options` order
- * first so a downstream diff stays deterministic when the row's
- * `Object.keys` order changes.
+ * forward-compat escape hatch. Metric keys are validated against
+ * `MetricKeySchema` so an unknown key emits as a quoted CSV cell
+ * with its raw key (preserving the wire shape); the canonical 6 v1
+ * keys are emitted in `MetricKeySchema.options` order first so a
+ * downstream diff stays deterministic when the row's `Object.keys`
+ * order changes.
  *
  * `row.metrics` is validated via `TelemetryMetricsSchema.safeParse`
  * BEFORE iterating. If the metrics payload fails validation (the

@@ -1,10 +1,9 @@
 /**
- * `useAdminNotificationList` — Story 5.1. TanStack `useQuery`
- * over `GET /api/notifications/admin/list`. Filter-keyed cache;
- * 30s polling; severity is a `readonly NotificationSeverity[]`
- * so multi-chip selections produce a coherent cache key. On
- * 403 throws `AdminNotificationsRbacDeniedError`. Wire-shape
- * validated via `AdminNotificationListEnvelopeSchema` so
+ * TanStack `useQuery` over `GET /api/notifications/admin/list`.
+ * Filter-keyed cache; 30s polling; severity is a `readonly
+ * NotificationSeverity[]` so multi-chip selections produce a
+ * coherent cache key. On 403 throws `AdminNotificationsRbacDeniedError`.
+ * Wire-shape validated via `AdminNotificationListEnvelopeSchema` so
  * adapter drift surfaces as a parse failure.
  */
 import {
