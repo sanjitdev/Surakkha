@@ -39,6 +39,11 @@ Thumbs.db
 coverage/
 *.lcov
 
+# Playwright outputs (test report HTML, traces, videos — see
+# packages/web/playwright.config.ts `retain-on-failure` setting).
+playwright-report/
+test-results/
+
 # BMAD skill scripts (per-developer install, not a project artefact)
 _bmad/
 
