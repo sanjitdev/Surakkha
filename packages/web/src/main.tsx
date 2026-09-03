@@ -4,6 +4,27 @@
  * a direct URL hit by a non-permitted role renders `<RbacDenied />`.
  * `configureApiClient` runs once on mount with the router's navigate.
  *
+ * Route tree (nested):
+ *   /login                 → LoginRoute (public)
+ *   <RequireAuth/>         → auth gate (token present + not expired)
+ *     <ProtectedShell/>    → CurrentRoleProvider + AppShell (mounts ONCE)
+ *       /                  → Dashboard
+ *       /dashboard         → Dashboard
+ *       /severity-cards    → SeverityCards
+ *       /sensors           → PageStub
+ *       /incidents         → KanbanBoard
+ *       /incidents/:id     → IncidentDetailPage
+ *       /alerts            → PageStub
+ *       /reports           → RbacRoute → PageStub
+ *       /audit             → RbacRoute → AuditLogPage
+ *       /admin/simulator   → RbacRoute → SimulatorPage
+ *       /admin/notifications → RbacRoute → AdminNotificationsPage
+ *       /admin/thresholds  → RbacRoute → ThresholdsPage
+ *       /admin/users       → RbacRoute → PageStub
+ *       /admin/schools     → RbacRoute → PageStub
+ *       * (authed)         → Navigate to /dashboard
+ *   * (unauthed)           → Navigate to /login
+ *
  * `apiOrigin = ""` means same-origin; Vite / nginx proxies `/auth/`
  * and `/api/` to the api. A non-empty origin would double-prefix
  * (`/api/auth/login`).
@@ -11,7 +32,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { RbacRoute } from "./access/RbacRoute";
 import { SimulatorPage } from "./admin/simulator/SimulatorPage";
@@ -19,14 +40,14 @@ import { ThresholdsPage } from "./admin/thresholds/ThresholdsPage";
 import { AdminNotificationsPage } from "./admin-notifications/AdminNotificationsPage";
 import { apiLogin, configureApiClient } from "./api/apiClient";
 import { AuditLogPage } from "./audit-log/AuditLogPage";
-import { CurrentRoleProvider } from "./auth/CurrentRoleContext";
 import { LoginShell } from "./auth/LoginShell";
+import { RequireAuth } from "./auth/RequireAuth";
 import { KpiStat } from "./components/KpiStat";
 import { Dashboard } from "./dashboard/Dashboard";
 import { IncidentDetailPage } from "./incidents/IncidentDetailPage";
 import { KanbanBoard } from "./incidents/KanbanBoard";
 import { queryClient } from "./queryClient";
-import { AppShell } from "./shell/AppShell";
+import { ProtectedShell } from "./shell/ProtectedShell";
 
 import "./index.css";
 
@@ -64,8 +85,25 @@ const SeverityCards = () => (
 const API_ORIGIN = "";
 const HTTP_UNAUTHORIZED = 401;
 
+/** Resolve the post-login destination. Prefer `state.from` (set by
+ *  `<RequireAuth />` when it bounces an unauthenticated visitor).
+ *  Fall back to `?next=` from the URL query string (open-redirect
+ *  guarded). Default to `/dashboard` when neither is usable. */
+const resolveNextPath = (stateFrom: unknown, search: string): string => {
+  if (typeof stateFrom === "string" && stateFrom.startsWith("/") && !stateFrom.startsWith("//")) {
+    return stateFrom;
+  }
+  const params = new URLSearchParams(search);
+  const next = params.get("next");
+  if (next !== null && next.startsWith("/") && !next.startsWith("//")) {
+    return next;
+  }
+  return "/dashboard";
+};
+
 const LoginRoute = () => {
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     configureApiClient({
@@ -85,10 +123,7 @@ const LoginRoute = () => {
       }
       throw new Error("Sign-in is not available. Try again later.");
     }
-    const params = new URLSearchParams(window.location.search);
-    const next = params.get("next");
-    const safeNext =
-      next !== null && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+    const safeNext = resolveNextPath(location.state?.from, location.search);
     navigate(safeNext, { replace: true });
   };
 
@@ -101,160 +136,74 @@ createRoot(root).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
-          <Route
-            path="/"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <Dashboard />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/dashboard"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <Dashboard />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/severity-cards"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <SeverityCards />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/sensors"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <PageStub name="Sensors" />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/incidents"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <KanbanBoard />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/incidents/:id"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <IncidentDetailPage />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/alerts"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
-                  <PageStub name="Alerts" />
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/reports"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+          <Route element={<RequireAuth />}>
+            <Route element={<ProtectedShell />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/severity-cards" element={<SeverityCards />} />
+              <Route path="/sensors" element={<PageStub name="Sensors" />} />
+              <Route path="/incidents" element={<KanbanBoard />} />
+              <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+              <Route path="/alerts" element={<PageStub name="Alerts" />} />
+              <Route
+                path="/reports"
+                element={
                   <RbacRoute>
                     <PageStub name="Reports" />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/audit"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/audit"
+                element={
                   <RbacRoute>
                     <AuditLogPage />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/admin/simulator"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/admin/simulator"
+                element={
                   <RbacRoute>
                     <SimulatorPage />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/admin/notifications"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/admin/notifications"
+                element={
                   <RbacRoute>
                     <AdminNotificationsPage />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/admin/thresholds"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/admin/thresholds"
+                element={
                   <RbacRoute>
                     <ThresholdsPage />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/admin/users"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/admin/users"
+                element={
                   <RbacRoute>
                     <PageStub name="Users" />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
-          <Route
-            path="/admin/schools"
-            element={
-              <CurrentRoleProvider>
-                <AppShell>
+                }
+              />
+              <Route
+                path="/admin/schools"
+                element={
                   <RbacRoute>
                     <PageStub name="Schools" />
                   </RbacRoute>
-                </AppShell>
-              </CurrentRoleProvider>
-            }
-          />
+                }
+              />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Route>
+          </Route>
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>

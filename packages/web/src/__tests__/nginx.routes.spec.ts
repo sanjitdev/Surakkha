@@ -86,9 +86,7 @@ describe("web nginx.conf — proxy route coverage", () => {
     // WS upgrade headers are required for Socket.IO transport.
     // Without `Upgrade $http_upgrade`, the long-lived device
     // telemetry stream silently 426s on handshake.
-    const ingestBlock = conf.match(
-      /location\s+\/ingest\/\s*\{[\s\S]*?\n\s*\}/,
-    );
+    const ingestBlock = conf.match(/location\s+\/ingest\/\s*\{[\s\S]*?\n\s*\}/);
     expect(ingestBlock).not.toBeNull();
     expect(ingestBlock![0]).toMatch(/proxy_set_header\s+Upgrade\s+\$http_upgrade/);
     expect(ingestBlock![0]).toMatch(/proxy_set_header\s+Connection\s+"upgrade"/);
@@ -96,19 +94,26 @@ describe("web nginx.conf — proxy route coverage", () => {
 
   it("proxies /dashboard/ to the api container with WS upgrade headers", () => {
     expect(prefixes).toContain("/dashboard/");
-    const block = conf.match(
-      /location\s+\/dashboard\/\s*\{[\s\S]*?\n\s*\}/,
-    );
+    const block = conf.match(/location\s+\/dashboard\/\s*\{[\s\S]*?\n\s*\}/);
     expect(block).not.toBeNull();
     expect(block![0]).toMatch(/proxy_set_header\s+Upgrade\s+\$http_upgrade/);
     expect(block![0]).toMatch(/proxy_set_header\s+Connection\s+"upgrade"/);
   });
 
+  it("serves the SPA at exactly /dashboard (no trailing slash) so the reload lands on the React route", () => {
+    // `location =` is exact-match and outranks prefix locations.
+    // Without this block, nginx's `location /dashboard/` prefix
+    // captures the bare `/dashboard` URI (it normalizes trailing-
+    // slash-directory semantics) and proxies it to the api's
+    // `/dashboard` namespace, which 401s. Pin both the `=` exact-match
+    // form AND the SPA index.html response so a regression that drops
+    // either side is caught.
+    expect(conf).toMatch(/location\s+=\s+\/dashboard\s*\{[\s\S]*try_files\s+\/index\.html/);
+  });
+
   it("proxies /socket.io/ to the api container with WS upgrade headers", () => {
     expect(prefixes).toContain("/socket.io/");
-    const block = conf.match(
-      /location\s+\/socket\.io\/\s*\{[\s\S]*?\n\s*\}/,
-    );
+    const block = conf.match(/location\s+\/socket\.io\/\s*\{[\s\S]*?\n\s*\}/);
     expect(block).not.toBeNull();
     expect(block![0]).toMatch(/proxy_set_header\s+Upgrade\s+\$http_upgrade/);
     expect(block![0]).toMatch(/proxy_set_header\s+Connection\s+"upgrade"/);
@@ -116,10 +121,26 @@ describe("web nginx.conf — proxy route coverage", () => {
 
   it("passthrough /health to the api", () => {
     // Exact-match form: `location = /health { proxy_pass ... }`.
-    expect(conf).toMatch(/location\s+=\s+\/health\s*\{[\s\S]*proxy_pass\s+http:\/\/api:3000\/health/);
+    expect(conf).toMatch(
+      /location\s+=\s+\/health\s*\{[\s\S]*proxy_pass\s+http:\/\/api:3000\/health/,
+    );
   });
 
-  it("preserves the SPA fallback at /", () => {
-    expect(conf).toMatch(/location\s+\/\s*\{[\s\S]*try_files\s+\$uri\s+\$uri\/\s+\/index\.html/);
+  it("preserves the SPA fallback at / without a directory-index lookup", () => {
+    // `try_files $uri /index.html;` (no `$uri/` fallback) — the
+    // directory-index lookup 301s `/dashboard` → `/dashboard/` and
+    // corrupts the SPA's `<BrowserRouter>` pathname on reload. See
+    // nginx.conf for the matching `absolute_redirect off` block.
+    expect(conf).toMatch(/location\s+\/\s*\{[\s\S]*try_files\s+\$uri\s+\/index\.html/);
+  });
+
+  it("disables nginx-injected absolute and server-name redirects", () => {
+    // Without `absolute_redirect off`, nginx's directory-index 301
+    // re-encodes the URL on the `try_files $uri $uri/ …` path
+    // (the historical cause of the `/dashboard` → `/dashboard/`
+    // reload bug). Both flags must remain present so a future
+    // edit that re-adds the `$uri/` fallback is caught.
+    expect(conf).toMatch(/absolute_redirect\s+off/);
+    expect(conf).toMatch(/server_name_in_redirect\s+off/);
   });
 });
