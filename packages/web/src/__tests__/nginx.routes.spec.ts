@@ -12,6 +12,9 @@
  *     `/admin/simulator/<uuid>/scenario`,
  *     `/admin/thresholds`, `/admin/users`,
  *     `/admin/schools`                        (admin tabs)
+ *   - `/admin/simulator`, `/admin/notifications`,
+ *     `/admin/thresholds`, `/admin/users`,
+ *     `/admin/schools`                        (SPA route — exact-match)
  *   - `/ingest/<uuid>`                       (Socket.IO WS, devices)
  *   - `/dashboard`                           (Socket.IO WS, operators)
  *   - `/socket.io`                           (Socket.IO engine handshake)
@@ -109,6 +112,29 @@ describe("web nginx.conf — proxy route coverage", () => {
     // form AND the SPA index.html response so a regression that drops
     // either side is caught.
     expect(conf).toMatch(/location\s+=\s+\/dashboard\s*\{[\s\S]*try_files\s+\/index\.html/);
+  });
+
+  it("serves the SPA at the bare /admin/* SPA routes so the React page can mount", () => {
+    // Same prefix-matching capture as `/dashboard`: the `/admin/`
+    // proxy block grabs the bare `/admin/simulator` etc. URIs (nginx
+    // prefix matching doesn't need a trailing slash) and proxies them
+    // to the api, which 401s — the browser renders the raw JSON error
+    // and React Router never gets a chance to mount. Exact-match
+    // blocks before the proxy intercept the bare URI and serve the
+    // SPA. Sub-paths like `/admin/simulator/status` still match the
+    // prefix proxy and forward to the api as intended.
+    for (const path of [
+      "/admin/simulator",
+      "/admin/notifications",
+      "/admin/thresholds",
+      "/admin/users",
+      "/admin/schools",
+    ]) {
+      const escaped = path.replace(/\//g, "\\/");
+      expect(conf, `expected an exact-match block for ${path}`).toMatch(
+        new RegExp(`location\\s+=\\s+${escaped}\\s*\\{[\\s\\S]*try_files\\s+\\/index\\.html`),
+      );
+    }
   });
 
   it("proxies /socket.io/ to the api container with WS upgrade headers", () => {
