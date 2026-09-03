@@ -1,13 +1,9 @@
 /**
- * Simulator contract types — Surakkha shared (Story 2.5).
- *
+ * Simulator contract types.
  * Re-declared here (rather than imported from `@surakkha/simulator`)
- * so the api can validate inbound scenario names without taking a
- * dependency on the simulator package. The simulator is a separate
- * process; packages other than itself may not import it.
- *
- * Adding a scenario is a wire-contract-adjacent change — bump both
- * this enum and the simulator's `SCENARIO_NAMES` in lockstep.
+ * so the api can validate inbound scenario names without depending on
+ * the simulator package. Adding a scenario requires bumping both this
+ * enum and the simulator's `SCENARIO_NAMES` in lockstep.
  */
 import { z } from "zod";
 
@@ -23,15 +19,12 @@ export const SCENARIO_NAMES = [
 ] as const;
 export type ScenarioName = (typeof SCENARIO_NAMES)[number];
 
-/** Zod schema mirroring the closed enum above. Use this on inbound
- *  request bodies so an unknown name rejects with a 400 validation
- *  error rather than being silently dropped. */
+/** Zod schema mirroring the closed enum above. */
 export const ScenarioNameSchema = z.enum(SCENARIO_NAMES);
 
 /** Simulator firmware version — surfaced in telemetry frame metadata.
- *  The api logs a `console.warn` if a frame arrives with a newer
- *  `fw_version` than this constant so on-call engineers know when a
- *  device fleet has rolled forward. */
+ *  The api logs a warning if a frame arrives with a newer `fw_version`
+ *  than this constant. */
 export const SIMULATOR_FW_VERSION = "1.4.0" as const;
 
 /** Baseline metrics for the "Normal" scenario (and the first 5 ticks

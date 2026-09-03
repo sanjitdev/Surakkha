@@ -1,18 +1,9 @@
 /**
- * `validateHttpUrl` — pure helper that accepts a string and returns
- * `{ url: URL }` parsed if it's an http:// or https:// URL, throws
- * otherwise. Rejects every other scheme (`javascript:`, `data:`,
- * `file:`, `vbscript:`, `ftp:`, `mailto:`, etc.) plus relative paths
- * and malformed URLs.
- *
- * SECURITY: this is the boundary between user-supplied text and the
- * URL we render into an `<a href>`. A regression that lets
- * `javascript:` or `data:text/html,...` through would be an XSS
- * vector.
- *
- * The thrown error message is intentionally structured: it surfaces
- * to the web toast (so the operator sees "URL must be http:// or
- * https://") and to the api's 400 body (same message).
+ * SSRF-safe URL validation for user-supplied attachment URLs.
+ * Boundary between user text and the URL rendered into an `<a href>` —
+ * a regression that lets `javascript:` or `data:text/html,...` through
+ * would be an XSS vector. Throws `InvalidUrlError` on non-http(s),
+ * malformed, or relative inputs.
  */
 
 export interface ValidatedUrl {
@@ -29,16 +20,16 @@ export class InvalidUrlError extends Error {
 }
 
 /**
- * Parse and validate an http(s) URL string. Throws `InvalidUrlError`
- * on any non-http(s) scheme, malformed input, or relative path.
+ * Parse and validate an http(s) URL. Throws on non-http(s) scheme,
+ * malformed input, or relative path.
  *
  * Examples:
  *   - `validateHttpUrl("https://example.com/photo.png")` → `{ url: URL }`
  *   - `validateHttpUrl("javascript:alert(1)")` → throws
  *   - `validateHttpUrl("data:text/plain,hello")` → throws
  *   - `validateHttpUrl("file:///etc/passwd")` → throws
- *   - `validateHttpUrl("/relative/path")` → throws (relative)
- *   - `validateHttpUrl("not-a-url")` → throws (malformed)
+ *   - `validateHttpUrl("/relative/path")` → throws
+ *   - `validateHttpUrl("not-a-url")` → throws
  */
 export const validateHttpUrl = (input: string): ValidatedUrl => {
   if (typeof input !== "string" || input.trim() === "") {

@@ -1,8 +1,6 @@
 /**
- * Shared pino logger factory.
- *
- * Use this instead of `console.log` in committed code (AGENTS.md §1.4).
- * The api and simulator import from here so log formatting is consistent.
+ * Shared pino logger factory. Api and simulator import from here so
+ * log formatting is consistent across processes.
  */
 import pino, { type Logger } from "pino";
 

@@ -1,25 +1,16 @@
 /**
  * Dashboard wire types + placeholder severity.
  *
- * Source-of-truth surface for the operator-facing `/dashboard`.
- * `placeholderSeverity` is a TEMPORARY helper that derives a
- * severity bucket from a `Reading` using hard-reject ranges as a
- * sane fallback. The rule-driven engine replaces this in Story 3.5;
- * callers should treat the returned value as ephemeral and re-fetch
- * via `placeholderSeverity` on every render rather than memoizing.
+ * Source-of-truth surface for the operator-facing `/dashboard`. The
+ * placeholder helpers derive a severity bucket from a `Reading` using
+ * the healthy-range bands as a sane fallback.
  */
 import type { TelemetryMetrics } from "./telemetry.js";
 
-/** Dashboard-facing severity enum. `offline` is resolved by the
- *  absence of a reading, not by the reading itself, so the placeholder
- *  severity function never returns it. */
+/** Dashboard-facing severity enum. `offline` is resolved by the absence of a reading, not by the reading itself. */
 export type Severity = "healthy" | "warning" | "critical";
 
-/** Minimum wire shape the dashboard needs to render one row in the
- *  Live Readings table + a corresponding KPI count. `name` is the
- *  device's human label (nullable for legacy rows). `metrics` and
- *  `flags` mirror the api→web `reading:new` event shape so the REST
- *  initial-load path and the realtime path are interchangeable. */
+/** Minimum wire shape the dashboard needs to render one row in the Live Readings table. */
 export interface LatestReadingPayload {
   readonly device_id: string;
   readonly name: string | null;
@@ -29,15 +20,12 @@ export interface LatestReadingPayload {
   readonly flags: readonly string[];
 }
 
-/** Wire shape of `GET /api/readings/latest`. `readings` is the
- *  latest reading per device, ordered by `server_received_at DESC`. */
+/** Wire shape of `GET /api/readings/latest`. */
 export interface LatestReadingsResponse {
   readonly readings: readonly LatestReadingPayload[];
 }
 
-/** Minimum wire shape for the Recent Incidents preview. The endpoint
- *  currently returns `{ incidents: [] }` so the dashboard can render
- *  the empty state without a wire drift; Story 4.2 expands this. */
+/** Minimum wire shape for the Recent Incidents preview. */
 export interface RecentIncidentSummary {
   readonly id: string;
   readonly device_id: string;
@@ -51,9 +39,7 @@ export interface RecentIncidentsResponse {
   readonly incidents: readonly RecentIncidentSummary[];
 }
 
-/** Inline "healthy" ranges for the placeholder severity function.
- *  Story 3.3 seeds the canonical `Rule` table from these same bands;
- *  Story 3.5 then replaces this helper with the rule-driven engine. */
+/** Inline "healthy" ranges for the placeholder severity function. */
 export const PLACEHOLDER_HEALTHY_RANGES: Readonly<
   Record<keyof TelemetryMetrics, { readonly min: number; readonly max: number }>
 > = {
@@ -65,19 +51,7 @@ export const PLACEHOLDER_HEALTHY_RANGES: Readonly<
   water_level_cm: { min: 50, max: 120 },
 };
 
-/** TEMPORARY severity derivation — placeholder until the rule-driven
- *  engine lands.
- *  - Any metric outside its `PLACEHOLDER_HEALTHY_RANGES` envelope returns
- *    `critical`.
- *  - Otherwise `healthy`.
- *  - `warning` is reserved; no current path returns it.
- *
- *  `NaN` / `Infinity` are NOT out-of-range here — the wire contract
- *  rejects them at parse time. If a future path delivers a non-finite
- *  value, conservatively returns `critical` (silent NaN = the metric
- *  is wrong; surfacing that as critical is the safe default).
- *
- *  Pure: same input → same output. No I/O, no clocks, no globals. */
+/** Severity derivation from a reading's metrics. Any out-of-range metric returns `critical`; non-finite values also return `critical`. Pure: same input → same output. */
 export const placeholderSeverity = (reading: Pick<LatestReadingPayload, "metrics">): Severity => {
   const m = reading.metrics;
   for (const key of Object.keys(PLACEHOLDER_HEALTHY_RANGES) as ReadonlyArray<
@@ -93,23 +67,13 @@ export const placeholderSeverity = (reading: Pick<LatestReadingPayload, "metrics
   return "healthy";
 };
 
-/** Dashboard-facing severity including the `offline` bucket. The
- *  map's offline threshold can surface a device whose `last_reading_at`
- *  lapsed as `offline`. `placeholderSeverity` keeps the three-bucket
- *  shape; the KPI band + map route through this combined enum and
- *  resolve `offline` via `isOffline()`. */
+/** Dashboard-facing severity including the `offline` bucket. */
 export type MapSeverity = Severity | "offline";
 
-/** Per-device staleness threshold. A device whose latest reading is
- *  older than this — or has never emitted — renders with the `offline`
- *  severity token. The simulator ticks every 2 s; 60 s = 30× a normal
- *  tick (clearly lapsed). */
+/** Per-device staleness threshold — a device whose latest reading is older than this renders as `offline`. */
 export const OFFLINE_THRESHOLD_MS = 60_000;
 
-/** Wire shape of `GET /api/devices`. One row per Device, joined to
- *  `MAX(Reading.serverReceivedAt)`. `last_reading_at` is `null` when
- *  a device has never connected — the map renders these in the
- *  `offline` token ("No reading yet"). */
+/** Wire shape of `GET /api/devices`. */
 export interface DeviceSummary {
   readonly id: string;
   readonly name: string | null;
@@ -122,11 +86,7 @@ export interface DevicesResponse {
   readonly devices: readonly DeviceSummary[];
 }
 
-/** Decide whether a device should render with the `offline` severity
- *  token. Returns `true` when the device has never connected
- *  (`last_reading_at === null`), OR the most recent reading lapsed
- *  more than `OFFLINE_THRESHOLD_MS` before `now`. Pure: same input
- *  → same output. `now` is injected so callers control the clock. */
+/** Decide whether a device should render with the `offline` severity token. Pure: `now` is injected so callers control the clock. */
 export const isOffline = (device: Pick<DeviceSummary, "last_reading_at">, now: number): boolean => {
   if (device.last_reading_at === null) return true;
   const ts = Date.parse(device.last_reading_at);
@@ -134,9 +94,7 @@ export const isOffline = (device: Pick<DeviceSummary, "last_reading_at">, now: n
   return now - ts > OFFLINE_THRESHOLD_MS;
 };
 
-/** Resolve a device's map severity from its roster row + latest reading.
- *  The map's marker colour is driven by this function so the same
- *  "worst-current-bucket" rule the KPI band uses drives the map. */
+/** Resolve a device's map severity from its roster row + latest reading. */
 export const deviceMapSeverity = (
   device: Pick<DeviceSummary, "last_reading_at">,
   latestReading: Pick<LatestReadingPayload, "metrics"> | undefined,
@@ -147,10 +105,7 @@ export const deviceMapSeverity = (
   return placeholderSeverity(latestReading);
 };
 
-/** Resolve the "breached metric" — the first metric outside its
- *  `PLACEHOLDER_HEALTHY_RANGES` envelope. Returns `null` when every
- *  metric is healthy. The map's popup surfaces this so the operator
- *  sees at a glance which telemetry band tripped the critical severity. */
+/** Resolve the "breached metric" — the first metric outside its `PLACEHOLDER_HEALTHY_RANGES` envelope. */
 export const breachedMetric = (
   reading: Pick<LatestReadingPayload, "metrics">,
 ): { readonly key: keyof TelemetryMetrics; readonly value: number } | null => {

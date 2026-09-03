@@ -1,16 +1,8 @@
 /**
- * `attachment.ts` — wire-shape contracts for the attachment feature
- * (Story 4.13).
- *
- * Single source of truth for both the api's `attachmentRouter.ts`
- * and the web's `useAttachments.ts` — a structural drift surfaces
- * as a Zod parse failure at the fetch site.
- *
- * `mime` is `string | null` (when the caller omits the field and
- * the URL extension is unknown, the server stamps
- * `application/octet-stream`; the web renders the fallback badge).
- * `label` is also `string | null` (operator may omit it; the UI
- * renders the URL itself when label is null).
+ * Attachment wire-shape contracts.
+ * `url` validates as an http(s) URL (the api re-checks via validateHttpUrl).
+ * `mime` and `label` accept null: server stamps `application/octet-stream`
+ * when unknown; UI renders the URL when label is omitted.
  */
 import { z } from "zod";
 

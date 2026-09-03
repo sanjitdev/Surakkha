@@ -1,8 +1,8 @@
 /**
- * WebSocket event payloads (architecture §3.5, AR-11).
+ * WebSocket event payloads.
  *
- * Backend emitters (Epic 4) and frontend listeners (Epic 2) agree on shape by
- * construction because they import from this file.
+ * Backend emitters and frontend listeners agree on shape by construction
+ * because both import from this file.
  */
 import { z } from "zod";
 
@@ -15,10 +15,7 @@ export const ReadingNewEventSchema = z.object({
   ts: z.number().int().nonnegative(),
   server_received_at: ISO8601,
   metrics: TelemetryMetricsSchema,
-  /** Per-frame flags stamped by the ingest handler. Closed enum —
-   *  the wire does not accept firmware-supplied flags. `.default([])`
-   *  keeps an unflagged frame's payload identical to the pre-Story-2.3
-   *  wire shape. */
+  /** Per-frame flags stamped by the ingest handler. Closed enum — the wire does not accept firmware-supplied flags. */
   flags: z.array(ReadingFlagSchema).default([]).readonly(),
 });
 export type ReadingNewEvent = z.infer<typeof ReadingNewEventSchema>;
@@ -47,9 +44,7 @@ export const IncidentUpdatedEventSchema = z.object({
 });
 export type IncidentUpdatedEvent = z.infer<typeof IncidentUpdatedEventSchema>;
 
-/** Incident auto-created from an alert (Story 3.6). Distinct from
- *  `IncidentStateChangedEvent` — no `from_state` (row was just created)
- *  and `actor_user_id` is `null` (system-driven path). */
+/** Incident auto-created from an alert. No `from_state` (row was just created) and `actor_user_id` is `null` (system-driven path). */
 export const IncidentOpenedEventSchema = z.object({
   incident_id: z.string().uuid(),
   device_id: z.string().uuid(),
@@ -71,8 +66,7 @@ export const IncidentStateChangedEventSchema = z.object({
 });
 export type IncidentStateChangedEvent = z.infer<typeof IncidentStateChangedEventSchema>;
 
-/** Verb literals for the AC4 observability log line. The 5 RBAC verbs
- *  plus `auto_create` (system-driven, not in `ActionVerbSchema`). */
+/** Verb literals for the observability log line. The 5 RBAC verbs plus `auto_create` (system-driven, not in `ActionVerbSchema`). */
 export const INCIDENT_TRANSITION_VERB_LITERALS = [
   "acknowledge",
   "assign",

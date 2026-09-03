@@ -1,12 +1,11 @@
 /**
- * Incident state machine (ADR 0009, architecture §5.1).
+ * Incident state machine + transition wire types.
  *
- * Source of truth for the 7-state lifecycle:
- *   OPEN → ACKNOWLEDGED → INSPECTING → {SAFE | UNSAFE | MONITORING} → RESOLVED
- *   RESOLVED → OPEN (REOPENED via Admin comment of severity=critical)
- *
- * The Kanban 4-column view (AR-9) is a derived projection over this enum, not a
- * stored state. One source of truth — no epic renumbers or renames a state.
+ * The 7-state lifecycle (OPEN → ACKNOWLEDGED → INSPECTING → {SAFE |
+ * UNSAFE | MONITORING} → RESOLVED, with REOPENED as a transition alias)
+ * is the canonical pin for the api transition handler + the web Kanban
+ * projection. The Kanban 4-column view is a derived projection, not a
+ * stored state.
  */
 import { z } from "zod";
 
@@ -38,27 +37,18 @@ export const INCIDENT_STABLE_STATES = [
 export const IncidentSeveritySchema = z.enum(["info", "warning", "critical"]);
 export type IncidentSeverity = z.infer<typeof IncidentSeveritySchema>;
 
-/** Closed subset of `IncidentSeverity` that auto-creates an Incident
- *  row from a just-committed Alert. `info` is excluded — informational
- *  alerts do not generate work items. */
+/** Closed subset of `IncidentSeverity` that auto-creates an Incident row from a just-committed Alert. */
 export type IncidentCreatingSeverity = Extract<IncidentSeverity, "warning" | "critical">;
 
-/** Pure predicate — does a just-committed Alert of `severity` merit
- *  an auto-created Incident? No DB or socket side effects.
- *  `severity` is typed `string` (Alert.severity is a free-form
- *  `String` column, not a Prisma enum); anything outside
- *  `IncidentSeverity` returns `false`. */
+/** Pure predicate — does a just-committed Alert of `severity` merit an auto-created Incident? */
 export const shouldCreateIncident = (severity: string): severity is IncidentCreatingSeverity =>
   severity === "warning" || severity === "critical";
 
-/** Inspection outcome enum — what a Technician submits in Story 4.7. */
+/** Inspection outcome enum — what a Technician submits. */
 export const InspectionOutcomeSchema = z.enum(["SAFE", "UNSAFE", "MONITORING"]);
 export type InspectionOutcome = z.infer<typeof InspectionOutcomeSchema>;
 
-/**
- * Kanban columns (derived projection, AR-9).
- * Resolved at render time from IncidentState; never stored on the row.
- */
+/** Kanban columns (derived projection). Resolved at render time from IncidentState; never stored. */
 export const KanbanColumnSchema = z.enum([
   "OPEN_CRITICAL",
   "OPEN_WARNING",
@@ -77,20 +67,11 @@ export function projectKanbanColumn(
   if (state === "ACKNOWLEDGED" || state === "INSPECTING") {
     return "ACKNOWLEDGED";
   }
-  // OPEN / UNSAFE — split by severity per UX-DR-9
   if (state === "UNSAFE" || severity === "critical") {
     return "OPEN_CRITICAL";
   }
   return "OPEN_WARNING";
 }
-
-/* ============================================================================
- * Story 4.2 — Incident state machine types.
- *
- * `ActionVerb` is the closed vocabulary of state transitions; mirrors
- * `ActionSchema`'s incident verbs 1:1. Drift between the two is caught
- * by the source-walk pin in the api's `incident-actions.schema.spec.ts`.
- * ========================================================================== */
 
 /** Closed enumeration of valid incident transitions. */
 export const ActionVerbSchema = z.enum([
@@ -102,10 +83,7 @@ export const ActionVerbSchema = z.enum([
 ]);
 export type ActionVerb = z.infer<typeof ActionVerbSchema>;
 
-/** Closed enumeration of incident-event audit types. Mirrors the Prisma
- *  `IncidentEventType_` enum 1:1. `invalid_transition_attempt` is the
- *  synthetic type written when a transition is rejected
- *  (optimistic-concurrency loser or a `TRANSITIONS` table miss). */
+/** Closed enumeration of incident-event audit types. */
 export const IncidentEventTypeSchema = z.enum([
   "acknowledge",
   "assign",
@@ -116,10 +94,7 @@ export const IncidentEventTypeSchema = z.enum([
 ]);
 export type IncidentEventType = z.infer<typeof IncidentEventTypeSchema>;
 
-/** Full wire row for an Incident. Field order matches the Prisma
- *  `Incident` model. `assignee_user_id` is nullable (NULL while
- *  unassigned); `acknowledged_at` / `resolved_at` are nullable
- *  ISO 8601 with offset. */
+/** Full wire row for an Incident. */
 export const IncidentPayloadSchema = z.object({
   id: z.string().uuid(),
   device_id: z.string().uuid(),
@@ -145,20 +120,13 @@ export const IncidentEventPayloadSchema = z.object({
 });
 export type IncidentEventPayload = z.infer<typeof IncidentEventPayloadSchema>;
 
-/** Result of the pure `transition()` function in the api. Either a
- *  successful next-state payload or a typed error with the original
- *  `from` state and the rejected `attempted` action. The route layer
- *  maps the typed error to a 409 response. */
+/** Result of the pure `transition()` function in the api. */
 export type TransitionResult =
   | {
       readonly ok: true;
       readonly next_state: IncidentState;
       readonly event_type: IncidentEventType;
-      /** Event payload for the `IncidentEvent` audit row. Carries
-       *  action-specific data:
-       *   - `submit_result`: `{ outcome, actorUserId }`
-       *   - `assign`: `{ assigneeUserId, actorUserId }`
-       *   - other verbs: `{ actorUserId }` */
+      /** Event payload for the `IncidentEvent` audit row. */
       readonly event_payload: {
         readonly outcome?: "SAFE" | "UNSAFE" | "MONITORING";
         readonly assigneeUserId?: string;

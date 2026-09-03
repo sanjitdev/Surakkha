@@ -1,18 +1,12 @@
 /**
- * Telemetry wire contract — `version: 1`, frozen (NFR-14, ADR 0001).
+ * Telemetry wire contract — `version: 1`, frozen.
  *
- * Every change to this file is a contract bump and must be called out in the PR
- * description with a v2-bump justification (per Story 1.10).
- *
- * Both `packages/api` and `packages/simulator` import this schema. A contract
- * bump edits only this file.
+ * Every change to this file is a contract bump. Both `packages/api` and
+ * `packages/simulator` import this schema; a contract bump edits only
+ * this file.
  */
 import { z } from "zod";
 
-// Time unit helpers — kept local to telemetry.ts so the magic-number
-// lint rule has named handles for the stale-frame and clock-skew
-// thresholds. ESLint's `no-magic-numbers` rule fires on raw numeric
-// literals; these constants make the arithmetic readable AND lintable.
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
 const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
@@ -27,12 +21,7 @@ export const MetricRanges = {
   water_level_cm: { min: 0, max: 500 },
 } as const;
 
-/**
- * Extended observation envelope (architecture §3.2) — sensor's plausible
- * range. `turbidity_ntu 0–3000` and `chlorine_ppm 0–10` extend past the
- * hard-reject `MetricRanges` (real-world ST-102 / CL-17 probe headroom).
- * Story 3.3 reads these to seed rule thresholds.
- */
+/** Extended observation envelope — sensor's plausible range. `turbidity_ntu 0–3000` and `chlorine_ppm 0–10` extend past the hard-reject `MetricRanges` (real-world ST-102 / CL-17 probe headroom). */
 export const MetricExtendedRanges = {
   ph: { min: 0, max: 14 },
   tds_ppm: { min: 0, max: 5_000 },
@@ -55,11 +44,7 @@ export type MetricKey = z.infer<typeof MetricKeySchema>;
 const rangedFloat = (key: MetricKey) =>
   z.number().finite().min(MetricRanges[key].min).max(MetricRanges[key].max);
 
-/**
- * v1 metrics object — REQUIRED keys are the full v1 metric set per ADR 0001.
- * Each enum key gets its `MetricRanges` hard-reject envelope. Adding an
- * entry to `MetricKeySchema` automatically extends this schema.
- */
+/** v1 metrics object — REQUIRED keys are the full v1 metric set. */
 export const TelemetryMetricsSchema = z.object(
   Object.fromEntries(
     MetricKeySchema.options.map((key) => [key, rangedFloat(key)]),
@@ -67,10 +52,7 @@ export const TelemetryMetricsSchema = z.object(
 );
 export type TelemetryMetrics = z.infer<typeof TelemetryMetricsSchema>;
 
-/**
- * v1 frame. `.strict()` rejects unknown TOP-LEVEL keys (firmware contract).
- * Missing required fields → 400 `bad_request` via `translateZodError`.
- */
+/** v1 frame. `.strict()` rejects unknown TOP-LEVEL keys. */
 const FW_VERSION_MAX_LENGTH = 64;
 export const TelemetryFrameSchema = z
   .object({
@@ -84,11 +66,7 @@ export const TelemetryFrameSchema = z
   .strict();
 export type TelemetryFrame = z.infer<typeof TelemetryFrameSchema>;
 
-/**
- * Server processing order (architecture §3.2, ADR 0013). The api's
- * `packages/api/src/ingest/frame.ts` handler runs these steps in this
- * exact order; reordering any adjacent pair is a contract violation.
- */
+/** Server processing order — the api's ingest handler runs these in this exact order. */
 export const PROCESSING_ORDER = [
   "validate",
   "auth check",
@@ -103,57 +81,29 @@ export const PROCESSING_ORDER = [
 ] as const;
 export type ProcessingOrderStep = (typeof PROCESSING_ORDER)[number];
 
-/**
- * Canonical error envelope for failed `TelemetryFrameSchema.safeParse()`.
- * `missing_fields` is the dotted-path list of every field that failed
- * validation (covers missing, out-of-range, NaN, wrong-version, non-UUID).
- */
+/** Canonical error envelope for failed `TelemetryFrameSchema.safeParse()`. */
 export interface TelemetryBadRequest {
   readonly error: "bad_request";
   readonly missing_fields: string[];
 }
 
-/**
- * Canonical envelope for a frame whose device-side `ts` is older than
- * the stale-frame window (see `STALE_FRAME_THRESHOLD_MS`). The connection
- * stays open so a backlog of fresh frames behind the stale one is still
- * accepted; `age_seconds` lets the device decide whether to reset its clock.
- */
+/** Canonical envelope for a frame whose device-side `ts` is older than the stale-frame window. */
 export interface TelemetryStaleFrame {
   readonly error: "stale_frame";
   readonly age_seconds: number;
 }
 
-/**
- * v1 flag set — closed enum (architecture §3.6). The server stamps every
- * flag; the wire contract does not let firmware set them. A typo fails
- * `ReadingFlagSchema.parse` at the seam so a bad row cannot silently slip
- * into ops queries.
- */
+/** v1 flag set — closed enum. The server stamps every flag; the wire contract does not let firmware set them. */
 export const ReadingFlagSchema = z.enum(["out_of_order", "clock_skew_detected", "rate_limited"]);
 export type ReadingFlag = z.infer<typeof ReadingFlagSchema>;
 
-/**
- * Stale-frame window. Frames whose device-side `ts` is more than this many
- * ms in the past (relative to `serverReceivedAt`) are rejected with a
- * `stale_frame` envelope. Real devices emit every 2s; longer offline
- * periods are *lost* frames, not late frames.
- */
+/** Stale-frame window — frames whose device-side `ts` is more than this many ms in the past are rejected. */
 export const STALE_FRAME_THRESHOLD_MS = 5 * MS_PER_MINUTE;
 
-/**
- * Clock-skew detection threshold. Frames whose `|serverReceivedAt − ts|`
- * exceeds this are persisted with `flags:["clock_skew_detected"]`. NTP-
- * disciplined devices drift <1s; undisciplined RTCs drift ~1min/month.
- */
+/** Clock-skew detection threshold — frames whose `|serverReceivedAt − ts|` exceeds this are flagged. */
 export const CLOCK_SKEW_DETECT_MS = MS_PER_MINUTE;
 
-/**
- * Single source of truth for flag-derivation logic from a parsed frame's
- * timestamp. Returns `["clock_skew_detected"]` when `|skew| > CLOCK_SKEW_DETECT_MS`;
- * `[]` otherwise. The `out_of_order` and `rate_limited` flags are stamped
- * by their own dedicated steps.
- */
+/** Single source of truth for flag-derivation logic from a parsed frame's timestamp. */
 export const classifyFlags = (
   parsed: TelemetryFrame,
   serverReceivedAt: Date,
@@ -165,13 +115,7 @@ export const classifyFlags = (
   return [];
 };
 
-/**
- * Translate a Zod failure into the wire error envelope the api surfaces to
- * clients. Each issue path is joined with `.` (e.g. `metrics.ph`).
- * De-duplication is by `path + issue code` so two issues on the same path
- * with different codes are both surfaced. For `unrecognized_keys` issues
- * each offending key emits a separate entry.
- */
+/** Translate a Zod failure into the wire error envelope the api surfaces to clients. */
 export const translateZodError = (error: z.ZodError): TelemetryBadRequest => {
   const missingFields: string[] = [];
   const seen = new Set<string>();

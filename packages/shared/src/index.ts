@@ -1,9 +1,7 @@
 /**
- * Public surface of `@surakkha/shared`.
- *
- * Every epic imports cross-epic types from this entry point only. The ESLint
- * `import/no-restricted-paths` rule enforces that no epic imports from another
- * epic's directory directly (ADR 0007).
+ * Public surface of `@surakkha/shared`. Every epic imports
+ * cross-epic types from this entry point only — ESLint
+ * `import/no-restricted-paths` blocks direct epic-to-epic imports.
  */
 export * from "./telemetry.js";
 export * from "./auth.js";

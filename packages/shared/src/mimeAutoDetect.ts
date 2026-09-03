@@ -1,12 +1,8 @@
 /**
- * `detectMimeFromURL` — pure helper that takes an http(s) URL string
- * and returns the MIME type inferred from the URL's extension.
- * Falls back to `application/octet-stream` for unknown extensions.
- *
- * SECURITY: this is a UX hint, NOT a security boundary. The server
- * trusts the client's `mime` field after the explicit regex check;
- * the detail page renders the mime as a TEXT badge, never as a
- * script tag or `<object>`.
+ * Extension-to-MIME lookup for attachment badges.
+ * UX hint only — not a security boundary. The server trusts the
+ * client's `mime` field after explicit regex validation; the detail
+ * page renders the MIME as a TEXT badge, never as a script tag.
  */
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -30,7 +26,7 @@ const EXT_TO_MIME: Record<string, string> = {
   zip: "application/zip",
   tar: "application/x-tar",
   gz: "application/gzip",
-  // Audio/video (rare for incident evidence but supported)
+  // Audio/video
   mp3: "audio/mpeg",
   mp4: "video/mp4",
 };
@@ -39,14 +35,12 @@ export const FALLBACK_MIME = "application/octet-stream";
 
 /**
  * Infer the MIME type from a URL's extension. The URL must already
- * have been validated by `validateHttpUrl` (the caller passes
- * `url.pathname`); this helper doesn't re-validate.
+ * have been validated by `validateHttpUrl` (caller passes the parsed
+ * pathname context); this helper does not re-validate.
  *
- * Returns `FALLBACK_MIME` ("application/octet-stream") when:
- *   - The pathname has no extension
- *   - The extension is not in the whitelist
- *   - The extension is uppercase or has trailing whitespace (normalised
- *     before lookup)
+ * Returns `FALLBACK_MIME` when the pathname has no extension, the
+ * extension is not in the whitelist, or the extension is upper-case
+ * / has trailing whitespace (normalised before lookup).
  */
 export const detectMimeFromURL = (urlString: string): string => {
   let pathname: string;
@@ -56,10 +50,8 @@ export const detectMimeFromURL = (urlString: string): string => {
   } catch {
     return FALLBACK_MIME;
   }
-  // Strip query string / hash already handled by URL parsing.
   const lastDot = pathname.lastIndexOf(".");
   const lastSlash = pathname.lastIndexOf("/");
-  // No extension if the last dot is before the last slash (or absent).
   if (lastDot === -1 || lastDot < lastSlash) return FALLBACK_MIME;
   const ext = pathname
     .slice(lastDot + 1)

@@ -1,18 +1,15 @@
 /**
- * Audit log wire types (Story 5.3).
+ * Audit log wire types.
  *
  * Read surface for `/api/audit/list`. The closed `AuditActionSchema`
- * enum lives in `rbac.ts` (the writer-side surface in Story 5.6 will
- * move it here). `payload` is intentionally `unknown` — audit rows
- * are heterogeneous by design.
+ * enum lives in `rbac.ts`. `payload` is intentionally `unknown` — audit
+ * rows are heterogeneous by design.
  */
 import { z } from "zod";
 
 const ISO8601 = z.string().datetime({ offset: true });
 
-/** Closed enumeration of resource types an `AuditLog` row may target.
- *  Kept separate from the Prisma `String` column so the wire surface
- *  has a closed shape while the DB stays write-flexible. */
+/** Closed enumeration of resource types an `AuditLog` row may target. */
 export const AuditLogResourceSchema = z.enum([
   "Device",
   "Reading",
@@ -30,13 +27,7 @@ export const AuditLogResourceSchema = z.enum([
 ]);
 export type AuditLogResource = z.infer<typeof AuditLogResourceSchema>;
 
-/** Wire row for an `AuditLog` entry. Read by `GET /api/audit/list`.
- *  `actorUserId` is nullable (FK is ON DELETE SET NULL; UI surfaces
- *  `null` as the literal string `"system"`). `resourceId` is nullable
- *  (actions like `logout` have no resource binding). `auditAction` is
- *  `z.string()` rather than the closed enum so a future writer-side
- *  action added before this read surface knows about it still renders
- *  in the admin UI. `payload` is `unknown` — see module preamble. */
+/** Wire row for an `AuditLog` entry. `actorUserId` and `resourceId` are nullable; `auditAction` is `z.string()` (not the closed enum) so unknown future writers still render in the admin UI. */
 export const AuditLogEntrySchema = z.object({
   id: z.string().uuid(),
   actorUserId: z.string().uuid().nullable(),
@@ -49,9 +40,7 @@ export const AuditLogEntrySchema = z.object({
 });
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
-/** List envelope returned by `GET /api/audit/list`. Carries
- *  `total` + `truncated` so the page can render "showing 100 of
- *  250 events" copy when the table is full. */
+/** List envelope returned by `GET /api/audit/list`. Carries `total` + `truncated` so the page can render the "showing 100 of 250 events" copy. */
 export const AuditLogListEnvelopeSchema = z.object({
   rows: z.array(AuditLogEntrySchema),
   total: z.number().int().nonnegative(),
@@ -59,9 +48,7 @@ export const AuditLogListEnvelopeSchema = z.object({
 });
 export type AuditLogListEnvelope = z.infer<typeof AuditLogListEnvelopeSchema>;
 
-/** Wire shape of the admin list's filter query params. Both web
- *  and api import this type so the URL → query object contract
- *  has a single source of truth. */
+/** Wire shape of the admin list's filter query params. */
 export interface AuditLogFilters {
   readonly actorIds?: readonly string[];
   readonly event?: string;
