@@ -8,7 +8,6 @@ import {
   PROCESSING_ORDER,
   type ReadingFlag,
   type ReadingNewEvent,
-  type RuleMetric,
   STALE_FRAME_THRESHOLD_MS,
   type TelemetryFrame,
   TelemetryFrameSchema,
@@ -35,7 +34,6 @@ export interface ReadingRepository {
     findMany(args: {
       readonly where: {
         readonly deviceId: string;
-        readonly metric: RuleMetric;
         readonly ts: { readonly gte: Date };
       };
       readonly orderBy: { readonly ts: "asc" };

@@ -4,7 +4,7 @@
  * reading row inside `processFrame`) and the `findMany` path
  * (loading the rate-rule window for backfill).
  */
-import { type RuleMetric, type TelemetryFrame } from "@surakkha/shared";
+import { type TelemetryFrame } from "@surakkha/shared";
 
 import { getPrisma } from "./db.js";
 
@@ -23,7 +23,6 @@ export interface ReadingDelegate {
     findMany(args: {
       readonly where: {
         readonly deviceId: string;
-        readonly metric: RuleMetric;
         readonly ts: { readonly gte: Date };
       };
       readonly orderBy: { readonly ts: "asc" };

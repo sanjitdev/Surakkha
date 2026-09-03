@@ -7,12 +7,21 @@
  * that the rules-engine rate/absence pre-filter chain uses.
  *
  * The hook's `installRuleEngineHooks(...)` calls
- * `readingRepository.reading.findMany({ where: { deviceId, metric,
+ * `readingRepository.reading.findMany({ where: { deviceId,
  * ts: { gte } }, orderBy: { ts: "asc" }, take: ... })`. A
  * regression that drops any of these args (e.g. switches the
  * `orderBy` to `"desc"`, removes `take`, or drops the `ts.gte`
  * filter) silently breaks the rate-rule regression without a
  * compile-time error.
+ *
+ * FR-2 note: per-frame readings are stored as one row per timestamp
+ * with the eight metric values packed into a `metrics` JSONB
+ * column. The Prisma `ReadingWhereInput` therefore has NO `metric`
+ * field — the hook filters by `(deviceId, ts)` only and extracts
+ * the per-metric value at the application layer (see
+ * `packages/api/src/rules/hooks.ts:buildRecentReadings`). This
+ * contract test pins THAT shape, not a fictitious per-metric
+ * filter.
  *
  * Why a source-walk test (mirrors `auth.no-rotation.spec.ts`):
  *   - The interface extension is the seam; the only way to pin
@@ -35,12 +44,12 @@ describe("Story 3.2 — ReadingRepository.findMany extension", () => {
     //    method already there).
     expect(source).toMatch(/readonly reading:\s*\{[\s\S]*?findMany\s*\(/);
 
-    // 2. The `where` clause carries `deviceId`, `metric`, AND
-    //    `ts: { gte: Date }`. All three are load-bearing — the
-    //    hook's window query depends on the device filter, the
-    //    metric filter, and the lower-bound on `ts`.
+    // 2. The `where` clause carries `deviceId` AND `ts: { gte: Date }`.
+    //    Both are load-bearing — the hook's window query depends on the
+    //    device filter and the lower-bound on `ts`. There is intentionally
+    //    NO `metric` field: the Prisma `Reading` table has no per-metric
+    //    column (FR-2 — readings are a `metrics` JSONB blob).
     expect(source).toMatch(/deviceId:\s*string/);
-    expect(source).toMatch(/metric:\s*RuleMetric/);
     expect(source).toMatch(/ts:\s*\{\s*readonly gte:\s*Date\s*\}/);
 
     // 3. The `orderBy` is `{ ts: "asc" }` — defence-in-depth against

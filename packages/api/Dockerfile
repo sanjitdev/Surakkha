@@ -91,6 +91,7 @@ COPY --from=build /repo/packages/shared/dist ./packages/shared/dist
 COPY --from=build /repo/packages/db/package.json ./packages/db/
 COPY --from=build /repo/packages/db/prisma/schema.prisma ./packages/db/prisma/schema.prisma
 COPY --from=build /repo/packages/db/prisma/migrations ./packages/db/prisma/migrations
+COPY --from=build /repo/packages/db/scripts ./packages/db/scripts
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate \
     && pnpm install --frozen-lockfile --filter @surakkha/api... --ignore-scripts && \
     cd /app && pnpm rebuild --filter @surakkha/api... bcrypt

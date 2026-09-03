@@ -39,7 +39,7 @@ COPY --from=build /repo/packages/simulator/src/devices.json ./packages/simulator
 COPY --from=build /repo/packages/shared/package.json ./packages/shared/
 COPY --from=build /repo/packages/shared/dist ./packages/shared/dist
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate \
-    && pnpm install --frozen-lockfile --prod --filter @surakkha/simulator...
+    && pnpm install --frozen-lockfile --prod --filter @surakkha/simulator... --ignore-scripts
 USER node
 WORKDIR /app/packages/simulator
 CMD ["node", "dist/index.js"]

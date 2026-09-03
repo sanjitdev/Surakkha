@@ -420,22 +420,27 @@ describe("Story 3.2 — installRuleEngineHooks", () => {
     // set to ~now-60s and `orderBy.ts = "asc"`.
     expect(rig.findMany).toHaveBeenCalledTimes(1);
     const call = rig.findMany.mock.calls[0]![0] as {
-      where: { deviceId: string; metric: string; ts: { gte: Date } };
+      where: { deviceId: string; ts: { gte: Date } };
       orderBy: { ts: "asc" };
     };
     expect(call.orderBy).toEqual({ ts: "asc" });
     expect(call.where.deviceId).toBe(DEVICE_ID);
-    expect(call.where.metric).toBe("tds_ppm");
+    // FR-2: per-frame readings are stored as one row per timestamp with
+    // the eight metric values packed into a `metrics` JSONB column — there
+    // is no per-metric `metric` column. The hook filters by `(deviceId, ts)`
+    // and extracts the per-metric value at the application layer.
     expect(call.where.ts.gte.getTime()).toBeLessThanOrEqual(FRAME_TS_MS);
     expect(call.where.ts.gte.getTime()).toBeGreaterThanOrEqual(FRAME_TS_MS - 60_000);
   });
 
-  it("(e) rate rule with 6 readings from findMany: hook queries with take: 5", async () => {
-    // Six readings so the stub has 6 to return. The hook is pinned
-    // to ask the DB for `take: 5` — defence-in-depth against the
-    // DB returning every row in the window. The slice to 5 happens
-    // at the DB-side; the engine itself takes the 5 and computes
-    // the slope.
+  it("(e) rate rule with 6 readings from findMany: hook over-fetches then slices to 5", async () => {
+    // FR-2: per-frame readings are stored as one row per timestamp with
+    // the eight metric values packed into a `metrics` JSONB column — the
+    // hook cannot filter by metric at the DB side, so it over-fetches
+    // `RATE_MAX_POINTS * 8` (= 40) rows covering the 60 s window and the
+    // application layer picks the last 5 per-metric points out of those.
+    // Six readings so the stub has at least one window-worth of points
+    // per metric.
     const rig = buildRig([
       { ts: new Date(FRAME_TS_MS - 50_000), metrics: { tds_ppm: 0 } },
       { ts: new Date(FRAME_TS_MS - 40_000), metrics: { tds_ppm: 10 } },
@@ -458,9 +463,10 @@ describe("Story 3.2 — installRuleEngineHooks", () => {
     ]);
     const frame = buildFrame();
     const breaches = await callOnRuleEvaluation(rig, cache, frame);
-    // `take: 5` is pinned by the hook so the DB does not return
-    // every row in the 60 s window.
-    expect(rig.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 5 }));
+    // `take: RATE_MAX_POINTS * 8` (= 40) is pinned by the hook so the
+    // DB-side filter caps the window scan; the per-metric slice to 5
+    // happens at the application layer (see buildRecentReadings).
+    expect(rig.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 40 }));
     expect(breaches).toHaveLength(1);
     expect((breaches[0] as BreachResult).ruleType).toBe("rate");
   });

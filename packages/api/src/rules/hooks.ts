@@ -41,6 +41,13 @@ const RATE_WINDOW_MS = 60_000;
 /** Maximum rows the engine consumes for the slope calculation. */
 const RATE_MAX_POINTS = 5;
 
+/** Number of metric values packed into the Reading `metrics` JSONB
+ *  column (pH / TDS / turbidity / temp / DO / ORP / conductivity /
+ *  battery). The over-fetch below multiplies by this count so the
+ *  per-metric extraction at line 129 has enough rows to pick from
+ *  even when the latest frames only contain a subset of metrics. */
+const RATE_METRICS_PER_FRAME = 8;
+
 /** Stable exit code for "configuration error" (sysexits.h EX_CONFIG).
  *  The api process exits with this code when the write-amplification
  *  boot guard fires. */
@@ -115,9 +122,15 @@ const buildRecentReadings = async (
 ): Promise<ReadonlyArray<{ readonly ts: Date; readonly value: number }>> => {
   const since = new Date(args.observedAt.getTime() - RATE_WINDOW_MS);
   const rows = await readingRepository.reading.findMany({
-    where: { deviceId: args.deviceId, metric: args.metric, ts: { gte: since } },
+    where: { deviceId: args.deviceId, ts: { gte: since } },
     orderBy: { ts: "asc" },
-    take: RATE_MAX_POINTS,
+    // FR-2 stores per-frame readings as one row per timestamp with the
+    // eight metric values packed into a `metrics` JSONB column. There
+    // is no per-metric `metric` column — the per-metric value is
+    // extracted at the application layer (line 129, `r.metrics[metric]`),
+    // so the DB-side WHERE filters on `(deviceId, ts)` only and lets
+    // the loop below pick out the metric it needs.
+    take: RATE_MAX_POINTS * RATE_METRICS_PER_FRAME,
   });
   // Sort ascending (defence-in-depth against DB-side ORDER BY drift).
   const sorted = [...rows].sort((a, b) => a.ts.getTime() - b.ts.getTime());
