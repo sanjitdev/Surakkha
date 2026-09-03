@@ -73,24 +73,18 @@ export const IncidentDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const viewerRole = useCurrentRole();
-  // Sourced from the access token's `sub` claim; synchronous read
-  // so the action-slot gate is consistent across renders.
   const viewerUserId = readUserIdFromStore();
   const { toasts, pushToast } = useToasts();
   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
   const assignMutation = useAssignMutation(id ?? "");
   const submitResultMutation = useSubmitResultMutation(id ?? "");
   const reopenMutation = useReopenMutation(id ?? "");
-  // CSV export lives on the page (not in `useDetailActionHandlers`)
-  // because the success path is a browser download, not a row-query
-  // invalidation.
   const exportCsvMutation = useDownloadReadingsCsvMutation();
 
   useIncidentDetailSocket(id ?? "");
 
   const { rowQuery, incident, timeline } = useIncidentDetailPageQueries(id);
 
-  // Wire each verb's success/error to the page-local toast queue.
   const { handleAcknowledge, handleAssign, handleSubmitResult, handleReopen } =
     useDetailActionHandlers({
       acknowledgeMutation,
@@ -100,10 +94,9 @@ export const IncidentDetailPage = () => {
       pushToast,
     });
 
-  // CSV export: branch on the permanent-denial error so RBAC
-  // failures don't show "Try again" (the role will never gain the
-  // permission).
-  // rather than the classifier's generic "Try again" copy.
+  // CSV export branches on the permanent-denial error so RBAC failures
+  // don't show the generic "Try again" copy — the role will never
+  // gain the permission.
   const handleExportCsv = (): void => {
     if (incident === undefined) return;
     exportCsvMutation.mutate(
@@ -151,10 +144,10 @@ export const IncidentDetailPage = () => {
 };
 
 /**
- * State-dispatch: pick the right render branch based on the
- * row query's error/success state. Extracted from
- * `IncidentDetailPage` to keep its cyclomatic complexity under
- * the `complexity: 10` lint ceiling.
+ * State-dispatch: pick the right render branch based on the row
+ * query's error/success state. Extracted from `IncidentDetailPage`
+ * to keep its cyclomatic complexity under the `complexity: 10` lint
+ * ceiling.
  */
 const IncidentDetailDispatch = ({
   rowQuery,
@@ -195,8 +188,6 @@ const IncidentDetailDispatch = ({
     return <NotFound />;
   }
   if (rowQuery.isError && rowQuery.error instanceof IncidentDetailRbacDeniedError) {
-    // Story 6.11 — thread the role so the back-link picks the
-    // role-aware destination.
     return <RbacDenied viewerRole={viewerRole} />;
   }
   if (rowQuery.isError) {

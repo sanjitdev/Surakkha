@@ -1,9 +1,9 @@
 /**
- * `KanbanBoard` — the 4-column active-incidents Kanban at
- * `/incidents`. TanStack Query owns the active-list cache;
- * `useKanbanBoardSocket` reconciles `incident:state_changed` events
- * in place. The column grouping is a pure helper (`groupByColumn`)
- * so the test rig can assert it without rendering.
+ * `KanbanBoard` — the 4-column active-incidents Kanban at `/incidents`.
+ * TanStack Query owns the active-list cache; `useKanbanBoardSocket`
+ * reconciles `incident:state_changed` events in place. The column
+ * grouping is a pure helper (`groupByColumn`) so the test rig can
+ * assert it without rendering.
  */
 import {
   type IncidentPayload,
@@ -64,9 +64,8 @@ interface KanbanColumnView {
 }
 
 /**
- * Group incidents by column key. Pure helper (no React, no fetch)
- * — the test rig asserts the grouping directly against a canned
- * `IncidentPayload[]` fixture.
+ * Group incidents by column key. Pure helper — the test rig asserts
+ * the grouping directly against a canned `IncidentPayload[]` fixture.
  */
 export const groupByColumn = (
   incidents: readonly IncidentPayload[],
@@ -98,10 +97,6 @@ export interface KanbanBoardProps {
 const fetchActiveIncidents = async (): Promise<ActiveIncidentsEnvelope> => {
   const res = await apiFetch("/api/incidents/active");
   if (res.status === HTTP_FORBIDDEN) {
-    // RBAC denial — surface the existing denied surface (per
-    // the 4.1 pattern). We throw a tagged error so the query's
-    // `isError` branch can distinguish RBAC from generic
-    // failures without a separate `error` type.
     throw new KanbanRbacDeniedError();
   }
   if (!res.ok) {
@@ -112,31 +107,15 @@ const fetchActiveIncidents = async (): Promise<ActiveIncidentsEnvelope> => {
     console.error("incidents/active wire-shape mismatch", parsed.error);
     throw new Error("incidents/active wire-shape mismatch");
   }
-  // The wire schema is structural; the runtime cast keeps the
-  // type narrow at the consumer.
   return parsed.data as unknown as ActiveIncidentsEnvelope;
 };
 
 export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
   const queryClient = useQueryClient();
-  // Story 4.4 — clicking a card navigates to the read-only
-  // detail page at `/incidents/:id`. The detail page handles
-  // 404 / 403 / 500 / loading / success; the Kanban stays focused
-  // on the active-list projection.
   const navigate = useNavigate();
-  // Story 4.12 — the role + userId drive the render-time Tech
-  // filter and the empty-state branch. The hooks return `null`
-  // for unauthenticated; the route gate handles that case before
-  // this component renders.
   const role = useCurrentRole();
   const currentUserId = useCurrentUserId();
 
-  // Mount the realtime subscription (per-page lifecycle). The hook
-  // mutates the SHARED `["incidents", "active"]` cache in place —
-  // it does NOT apply the Tech filter (see `useKanbanBoardSocket.ts`
-  // header). The render-time filter below is the single place the
-  // Tech-only view is enforced; the cache stays authoritative for
-  // `useSeverityBanner` (a global safety surface).
   useKanbanBoardSocket(socketUrl);
 
   const query = useQuery<ActiveIncidentsEnvelope>({
@@ -144,45 +123,25 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
     queryFn: fetchActiveIncidents,
   });
 
-  // Story 4.12 — render-time Tech filter. The server's `/api/
-  // incidents/active` endpoint returns EVERY active row (the
-  // server doesn't know the viewer is a Tech until they pass the
-  // token; the shared cache also feeds the severity banner which
-  // is global). The Kanban filters its rendered slice by
-  // `assignee_user_id === currentUserId` for Technicians.
-  //
-  // Why render-time and not query-time: the cache is shared with
-  // `useSeverityBanner` (Story 4.8). A cache-time filter would
-  // hide other-Tech UNSAFE rows from the banner — a global
-  // safety surface must NOT be Tech-filtered (spec line 144 +
-  // AC9). The Kanban's Tech-only view is a render concern; the
-  // underlying data is global.
+  // Render-time Tech filter. The cache stays authoritative — the
+  // underlying data feeds the severity banner, which is global.
+  // Filtering at the cache layer would hide other-Tech UNSAFE rows
+  // from a global safety surface.
   const renderedIncidents = useMemo<readonly IncidentPayload[]>(() => {
     const all = query.data?.incidents ?? [];
     if (role !== "Technician" || currentUserId === null) return all;
     return all.filter((i) => i.assignee_user_id === currentUserId);
   }, [query.data?.incidents, role, currentUserId]);
 
-  // Project incidents into columns. `useMemo` because the
-  // grouping is O(N) over the active list and re-running on
-  // every render is wasteful for a board that may render
-  // hundreds of cards.
-  //
-  // The columns are ALWAYS rendered, even when the query is
-  // loading or the envelope is `undefined`. AC: "Given the board
-  // renders with zero incidents, when the page mounts, then all
-  // 4 columns render the 'No incidents' empty-state copy." A
-  // loading-then-empty swap would unmount + remount the columns
-  // and break the React-keyed DOM identity (the columns are the
-  // layout seam; their order matters to the grid).
+  // Columns always render, even while the query is loading or the
+  // envelope is undefined — a loading→empty swap would unmount the
+  // columns and break React-keyed DOM identity.
   const columns = useMemo<readonly KanbanColumnView[]>(
     () => groupByColumn(renderedIncidents),
     [renderedIncidents],
   );
 
   if (query.isError && query.error instanceof KanbanRbacDeniedError) {
-    // Story 6.11 — thread the role so the back-link picks the
-    // role-aware destination.
     return <RbacDenied viewerRole={role} />;
   }
 
@@ -198,13 +157,8 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
     );
   }
 
-  // Story 4.12 — Tech-empty-state branch. The branch only fires
-  // when the QUERY has finished loading (no flash during the
-  // initial fetch — a Tech with a still-loading board should NOT
-  // see the empty state for a frame). The Tech-empty branch
-  // counts the render-time-filtered rows (NOT the raw envelope),
-  // so a Tech whose server envelope has rows but none are theirs
-  // also sees the empty state.
+  // Branch only fires when the QUERY has settled — a Tech with a
+  // still-loading board must not flash the empty state for a frame.
   const isQuerySettled = !query.isLoading && !query.isFetching;
   const isTechEmpty = isQuerySettled && renderedIncidents.length === 0 && role === "Technician";
 
@@ -214,18 +168,6 @@ export const KanbanBoard = ({ socketUrl }: KanbanBoardProps = {}) => {
       className="grid gap-4"
       style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
     >
-      {/*
-        Story 4.12 — Tech-specific empty state. UX-DR-14 mandates
-        "No incidents assigned to you." for a Technician whose
-        active list is empty. The branch is positioned above the
-        column loop (instead of inside the per-column empty-state
-        fallback) so the message replaces the four-column grid for
-        a Tech with zero assignments — a Tech should NOT see "No
-        incidents" repeated four times, that implies "the system is
-        empty" rather than "your queue is empty". Admin / Operator
-        / Viewer keep the per-column "No incidents" fallback
-        (4.3's surface).
-      */}
       {isTechEmpty ? (
         <p
           data-testid="kanban-empty-state-technician"
@@ -273,10 +215,6 @@ const KanbanColumnGrid = ({ columns, onCardClick }: KanbanColumnGridProps) => (
         ) : (
           <ul data-testid={`kanban-column-${column}-list`} className="flex flex-col gap-2">
             {incidents.map((incident) => (
-              // The React key is the incident id (stable per row),
-              // NOT the column key — when a card flips columns,
-              // the React tree remaps the SAME node into a NEW
-              // `<li>` parent, which preserves component state.
               <li key={incident.id} className="list-none">
                 <KanbanCard incident={incident} onClick={onCardClick} />
               </li>
@@ -287,9 +225,3 @@ const KanbanColumnGrid = ({ columns, onCardClick }: KanbanColumnGridProps) => (
     ))}
   </>
 );
-
-/**
- * `applyStateChangeToCache` and `IncidentStateChangedEvent` are
- * imported directly from `./useKanbanBoardSocket` + the shared
- * events module — no re-export here.
- */

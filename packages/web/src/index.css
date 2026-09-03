@@ -2,29 +2,19 @@
  * Surakkha web — global stylesheet.
  *
  * Layered:
- *   1. @tailwind base/components/utilities — design tokens flow through
- *      from `tailwind.config.ts`.
- *   2. Dark-mode severity inversion (DESIGN.md §Coverage & Provenance,
- *      "Dark-mode severity lift"). One custom property per severity `bg`
- *      and severity `text` is published so dark-mode CSS can override
- *      without rewriting the class name.
- *   3. prefers-reduced-motion overrides (DESIGN.md §Do's and Don'ts;
- *      EXPERIENCE.md §Prefer reduced motion): critical pulse, pin pulse,
- *      and banner fade-in are disabled under reduced motion; the live
- *      update pulse collapses to a single instant frame.
- *   4. Three pulse keyframes, one per motion token (live_pulse_ms 1200ms,
- *      critical_pulse_ms 1500ms, pin_pulse_ms 2000ms).
- *   5. Base body typography (DESIGN.md §Typography).
- *
- * Story 1.2a ACs live next to each block. Tests live at
- * `packages/web/src/tokens.spec.ts` to lock the values.
+ *   1. `@tailwind base/components/utilities` — design tokens flow
+ *      through from `tailwind.config.ts`.
+ *   2. Severity `bg` + lifted `text` tokens so dark-mode CSS can
+ *      override without rewriting the class name.
+ *   3. Three pulse keyframes for the live-pulse / critical-pulse /
+ *      pin-pulse motion tokens.
+ *   4. `prefers-reduced-motion` overrides disable every pulse.
  */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /* Severity lift — dark-mode `bg` + lifted `text` (DESIGN.md coverage). */
   :root {
     --severity-healthy-bg: #e8f6ee;
     --severity-healthy-text: #0f6b3a;
@@ -75,12 +65,8 @@
     }
   }
 
-  /* WCAG 2.5.5 minimum touch target: 44×44 px (Level AAA — but the
-     practice is costless at the design-token layer and unlocks mobile /
-     tablet operators on a 3G uplink). Applied to native interactive
-     elements so a one-off `className="..."` edit can't ship a
-     sub-spec target. Per-component classes (`btn-sm`, etc.) can override
-     via `min-h-0` if a dense toolbar is intentional. */
+  /* WCAG 2.5.5 minimum touch target: 44×44 px. Per-component
+     classes can override via `min-h-0` for dense toolbars. */
   button,
   select,
   input[type="button"],
@@ -91,15 +77,9 @@
 }
 
 @layer components {
-  /* StatusPill — pill-shaped severity surface.
-     DESIGN.md §Components mandates the severity `bg` surface with the
-     matching `value` text (which is what a real Design System does for
-     accessibility — saturated fills don't carry 4.5:1 contrast for the
-     labelled text). The pair lands text contrast well over 4.5:1 on the
-     default light surface and the lifted severity lift in dark mode.
-     Story 1.2a AC2 is satisfied: the pill background is the severity-
-     tinted surface, and the labelled text contrast is measured by the
-     contract test in `tokens.spec.ts`. */
+  /* Pill-shaped severity surface — saturated fills don't carry
+     4.5:1 contrast for the labelled text, so the pair (tinted
+     bg + neutral-readable text) lands well over 4.5:1. */
   .status-pill {
     border-radius: 9999px;
     padding: 4px 12px;
@@ -108,24 +88,22 @@
 
   .status-pill--healthy {
     background-color: var(--severity-healthy-bg);
-    color: #0f6b3a; /* severity.healthy.text — DESIGN.md §Colors, "Healthy text on bg" */
+    color: #0f6b3a;
   }
   .status-pill--warning {
     background-color: var(--severity-warning-bg);
-    color: #92400e; /* severity.warning.text */
+    color: #92400e;
   }
   .status-pill--critical {
     background-color: var(--severity-critical-bg);
-    color: #7f1d1d; /* severity.critical.text */
+    color: #7f1d1d;
   }
   .status-pill--offline {
     background-color: var(--severity-offline-bg);
-    color: #475569; /* severity.offline.text */
+    color: #475569;
   }
 
-  /* MetricCard — 20px padding, 10px radius, elevation.card shadow. The
-     base card every KPIStat, KanbanCard, and ScenarioTile builds on
-     (DESIGN.md §Components; Story 1.2a AC3). */
+  /* Base card every KPIStat, KanbanCard, and ScenarioTile builds on. */
   .metric-card {
     background-color: #ffffff; /* color.neutral.surface */
     border: 1px solid #e2e8f0; /* color.neutral.border */
@@ -136,9 +114,8 @@
       0 4px 12px rgba(15, 23, 42, 0.06); /* elevation.card */
   }
 
-  /* RbacDenied back-link focus ring — 2px outer with a 2px white
-     spacer (DESIGN.md accessibility.standard). The white inner ring
-     keeps the indicator visible on the dark primary fill. */
+  /* RbacDenied back-link focus ring — white inner ring keeps the
+     indicator visible on the dark primary fill. */
   .rbac-denied-back:focus-visible {
     outline: 2px solid #1e5bb8; /* color.primary */
     outline-offset: 2px;
@@ -147,9 +124,7 @@
 }
 
 @layer utilities {
-  /* Live update pulse — 1200ms transient outline glow (EXPERIENCE.md
-     §State Patterns → Live update). Applied to a card / KPI / row when
-     a new reading lands. Under reduced motion, collapses to one frame. */
+  /* Live update pulse — 1200ms transient outline glow. */
   @keyframes surakkha-live-pulse {
     0% {
       box-shadow: 0 0 0 0 rgba(30, 91, 184, 0.25);
@@ -162,9 +137,7 @@
     animation: surakkha-live-pulse 1200ms ease-out 1;
   }
 
-  /* Critical pulse — 1500ms steady-state severity heartbeat (EXPERIENCE.md
-     §State Patterns → Critical pulse). Applied to .k-critical, .r-critical,
-     and MetricCard.crit. Disabled under reduced motion. */
+  /* Critical pulse — 1500ms steady-state severity heartbeat. */
   @keyframes surakkha-critical-pulse {
     0%,
     100% {
@@ -186,8 +159,7 @@
     animation: surakkha-critical-pulse 1500ms ease-in-out infinite;
   }
 
-  /* Pin pulse — 2000ms halo on the critical map marker. Disabled under
-     reduced motion. */
+  /* Pin pulse — 2000ms halo on the critical map marker. */
   @keyframes surakkha-pin-pulse {
     0%,
     100% {
@@ -202,8 +174,6 @@
   }
 }
 
-/* Honour prefers-reduced-motion across every pulse (DESIGN.md §Do's and
-   Don'ts; EXPERIENCE.md §State Patterns → Prefer reduced motion). */
 @media (prefers-reduced-motion: reduce) {
   .animate-live-pulse {
     animation: none;

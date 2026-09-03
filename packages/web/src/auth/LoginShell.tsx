@@ -1,7 +1,7 @@
 /**
- * `LoginShell` — Story 1.3 split-screen login form.
- * Layout: lg (>=1024px) shows hero + form side-by-side; below 1024px
- * the hero hides and the form takes the full viewport.
+ * `LoginShell` — split-screen login form. Layout: `lg` (>=1024px)
+ * shows hero + form side-by-side; below 1024px the hero hides and
+ * the form takes the full viewport.
  */
 import { type FormEvent, useEffect, useState } from "react";
 
@@ -31,13 +31,6 @@ interface LoginShellProps {
   readonly onSubmit: (email: string, password: string) => Promise<void>;
 }
 
-/**
- * Per-field error slot. The dual-shape keeps the email error inside the
- * `FormField` (design-system affordance) and the password / submit error
- * in the inline `<p data-testid="login-submit-error">` below the form
- * — same UX as the dual-slot predecessor, one state read instead of
- * two parallel `useState` calls.
- */
 type FieldError =
   | { readonly field: "email"; readonly message: string }
   | { readonly field: "password" | "submit"; readonly message: string };
@@ -88,7 +81,6 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
 
   return (
     <div data-testid="login-shell" className="flex min-h-screen flex-col lg:flex-row">
-      {/* Hero panel — hidden below 1024px. */}
       <aside
         data-testid="login-hero"
         aria-label="Surakkha"
@@ -114,7 +106,6 @@ export const LoginShell = ({ onSubmit }: LoginShellProps) => {
         <p className="text-md text-white/70">Surakkha</p>
       </aside>
 
-      {/* Form panel — full width below 1024px, right half above. */}
       <main
         data-testid="login-form-panel"
         className={[
