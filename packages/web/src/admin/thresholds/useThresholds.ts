@@ -12,12 +12,8 @@ import {
   RuleRowSchema,
   RuleSupersedeResponseSchema,
 } from "@surakkha/shared";
-import {
-  type SafeParseReturnType,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type SafeParseReturnType } from "zod";
 
 import { apiFetch } from "../../api/apiClient";
 

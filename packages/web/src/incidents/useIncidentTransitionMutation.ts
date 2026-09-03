@@ -91,9 +91,9 @@ const safeJson = async (res: Response): Promise<unknown> => {
   }
 };
 
-const messageForConflict = async (
+const messageForConflict = async <TVariables>(
   res: Response,
-  config: TransitionMutationConfig<unknown>,
+  config: TransitionMutationConfig<TVariables>,
 ): Promise<string> => {
   const envelope = parseTransitionEnvelope(await safeJson(res));
   return envelope !== null
@@ -101,17 +101,17 @@ const messageForConflict = async (
     : config.conflictFallback;
 };
 
-const messageForBadRequest = async (
+const messageForBadRequest = async <TVariables>(
   res: Response,
-  config: TransitionMutationConfig<unknown>,
+  config: TransitionMutationConfig<TVariables>,
 ): Promise<string> => {
   if (config.validationFallback === undefined) return "Invalid request";
   return firstIssueMessage(await safeJson(res)) ?? config.validationFallback;
 };
 
-const classifyTransitionError = async (
+const classifyTransitionError = async <TVariables>(
   res: Response,
-  config: TransitionMutationConfig<unknown>,
+  config: TransitionMutationConfig<TVariables>,
 ): Promise<TransitionMutationError> => {
   const { status } = res;
   if (status === HTTP_CONFLICT) {
@@ -121,11 +121,9 @@ const classifyTransitionError = async (
     return new TransitionMutationError(status, await messageForBadRequest(res, config));
   }
   if (status in STATIC_STATUS_MESSAGE) {
-    // Cast through `unknown` because `Record<number, string>` lets TS
-    // widen the keyspace; the `in` guard narrows the index type.
     return new TransitionMutationError(
       status,
-      (STATIC_STATUS_MESSAGE as Record<number, string>)[status],
+      STATIC_STATUS_MESSAGE[status as keyof typeof STATIC_STATUS_MESSAGE] as string,
     );
   }
   return new TransitionMutationError(status, config.retryCopy);
