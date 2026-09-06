@@ -26,42 +26,48 @@ const RuleRowRenderer = ({
   onDeactivate,
   onActivate,
 }: RuleRowRendererProps) => (
-  <tr data-testid={`thresholds-row-${row.id}`} data-slot-key={slotKeyFn(row)}>
-    <td className="border-b px-2 py-1">{row.deviceId ?? "global"}</td>
-    <td className="border-b px-2 py-1">{row.metric}</td>
-    <td className="border-b px-2 py-1">{row.operator}</td>
-    <td className="border-b px-2 py-1">{row.threshold}</td>
-    <td className="border-b px-2 py-1">{row.severity}</td>
-    <td className="border-b px-2 py-1">{row.version}</td>
-    <td className="border-b px-2 py-1">{row.isActive ? "yes" : "no"}</td>
-    <td className="border-b px-2 py-1">
-      <button
-        type="button"
-        data-testid={`thresholds-edit-${row.id}`}
-        onClick={() => onEdit(row)}
-        className="mr-2 rounded-input border border-neutral-border px-2 py-1 text-sm"
-      >
-        Edit
-      </button>
-      {row.isActive ? (
+  <tr
+    data-testid={`thresholds-row-${row.id}`}
+    data-slot-key={slotKeyFn(row)}
+    className="border-b border-neutral-border text-md text-neutral-body last:border-b-0 hover:bg-neutral-page"
+  >
+    <td className="px-4 py-3">{row.deviceId ?? "global"}</td>
+    <td className="px-4 py-3 font-mono tabular-nums">{row.metric}</td>
+    <td className="px-4 py-3 font-mono tabular-nums">{row.operator}</td>
+    <td className="px-4 py-3 font-mono tabular-nums">{row.threshold}</td>
+    <td className="px-4 py-3">{row.severity}</td>
+    <td className="px-4 py-3 font-mono tabular-nums">{row.version}</td>
+    <td className="px-4 py-3">{row.isActive ? "yes" : "no"}</td>
+    <td className="px-4 py-3">
+      <div className="flex items-center gap-2">
         <button
           type="button"
-          data-testid={`thresholds-deactivate-${row.id}`}
-          onClick={() => onDeactivate(row)}
-          className="rounded-input border border-neutral-border px-2 py-1 text-sm"
+          data-testid={`thresholds-edit-${row.id}`}
+          onClick={() => onEdit(row)}
+          className="rounded-input border border-neutral-border bg-neutral-surface px-3 py-1 text-md text-neutral-body hover:bg-neutral-page"
         >
-          Deactivate
+          Edit
         </button>
-      ) : (
-        <button
-          type="button"
-          data-testid={`thresholds-activate-${row.id}`}
-          onClick={() => onActivate(row)}
-          className="rounded-input border border-neutral-border px-2 py-1 text-sm"
-        >
-          Activate
-        </button>
-      )}
+        {row.isActive ? (
+          <button
+            type="button"
+            data-testid={`thresholds-deactivate-${row.id}`}
+            onClick={() => onDeactivate(row)}
+            className="rounded-input border border-neutral-border bg-neutral-surface px-3 py-1 text-md text-neutral-body hover:bg-neutral-page"
+          >
+            Deactivate
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid={`thresholds-activate-${row.id}`}
+            onClick={() => onActivate(row)}
+            className="rounded-input border border-primary bg-primary px-3 py-1 text-md font-medium text-white hover:bg-primary-hover"
+          >
+            Activate
+          </button>
+        )}
+      </div>
     </td>
   </tr>
 );
@@ -107,17 +113,25 @@ export const ThresholdsPopulatedView = ({
         title="Thresholds"
         actions={
           <>
-            <span data-testid="thresholds-active-count" className="text-md text-neutral-secondary">
+            <span
+              data-testid="thresholds-active-count"
+              className="rounded-pill bg-neutral-page px-2 py-0.5 text-md text-neutral-secondary"
+            >
               {activeCount} active
             </span>
-            <label className="text-md text-neutral-secondary">
+            <label className="flex items-center gap-2 text-md text-neutral-secondary">
               <input
                 type="checkbox"
                 data-testid="thresholds-show-history"
                 checked={isShown}
                 onChange={(e) => onToggleHistory(e.target.checked)}
+                // The Tailwind spacing-scale replacement in
+                // `tailwind.config.ts` strips `size-*` / `w-*` /
+                // `h-*` utilities; use inline dimensions to keep the
+                // checkbox tap target readable.
+                style={{ width: "16px", height: "16px" }}
               />
-              <span className="ml-1">Show history</span>
+              <span>Show history</span>
             </label>
             <button
               type="button"
@@ -131,43 +145,57 @@ export const ThresholdsPopulatedView = ({
         }
       />
 
-      <table data-testid="thresholds-table" className="w-full border-collapse bg-neutral-surface">
-        <thead>
-          <tr>
-            <th className="border-b px-2 py-1 text-left">Device</th>
-            <th className="border-b px-2 py-1 text-left">Metric</th>
-            <th className="border-b px-2 py-1 text-left">Operator</th>
-            <th className="border-b px-2 py-1 text-left">Threshold</th>
-            <th className="border-b px-2 py-1 text-left">Severity</th>
-            <th className="border-b px-2 py-1 text-left">Version</th>
-            <th className="border-b px-2 py-1 text-left">Active</th>
-            <th className="border-b px-2 py-1 text-left">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((row) => (
-            <RuleRowRenderer
-              key={row.id}
-              row={row}
-              slotKeyFn={slotKeyFn}
-              onEdit={setEditing}
-              onDeactivate={onDeactivate}
-              onActivate={onActivate}
-            />
-          ))}
-          {visible.length === 0 ? (
-            <tr>
-              <td
-                colSpan={8}
-                data-testid="thresholds-empty"
-                className="border-b px-2 py-4 text-center text-neutral-secondary"
-              >
-                No thresholds yet.
-              </td>
+      {/* `metric-card rounded-card border border-neutral-border
+          bg-neutral-surface shadow-elevation-card` matches the
+          dashboard region's chrome (see RegionCard.tsx). The table
+          inside uses `border-collapse` with explicit
+          `border-neutral-border` row separators + `last:border-b-0`
+          on the final row so the bottom edge of the table aligns
+          with the card's `rounded-card` radius without an extra
+          stray line. */}
+      <section
+        data-testid="thresholds-table-card"
+        aria-label="Active threshold rules"
+        className="metric-card rounded-card border border-neutral-border bg-neutral-surface p-0 shadow-elevation-card"
+      >
+        <table data-testid="thresholds-table" className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-neutral-border bg-neutral-page text-xs uppercase tracking-wider text-neutral-secondary">
+              <th className="px-4 py-2 text-left font-semibold">Device</th>
+              <th className="px-4 py-2 text-left font-semibold">Metric</th>
+              <th className="px-4 py-2 text-left font-semibold">Operator</th>
+              <th className="px-4 py-2 text-left font-semibold">Threshold</th>
+              <th className="px-4 py-2 text-left font-semibold">Severity</th>
+              <th className="px-4 py-2 text-left font-semibold">Version</th>
+              <th className="px-4 py-2 text-left font-semibold">Active</th>
+              <th className="px-4 py-2 text-left font-semibold">Actions</th>
             </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {visible.map((row) => (
+              <RuleRowRenderer
+                key={row.id}
+                row={row}
+                slotKeyFn={slotKeyFn}
+                onEdit={setEditing}
+                onDeactivate={onDeactivate}
+                onActivate={onActivate}
+              />
+            ))}
+            {visible.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={8}
+                  data-testid="thresholds-empty"
+                  className="px-4 py-8 text-center text-md text-neutral-secondary"
+                >
+                  No thresholds yet.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </section>
 
       {isShown && inactiveCount > 0 ? (
         <p data-testid="thresholds-history-summary" className="text-md text-neutral-secondary">
