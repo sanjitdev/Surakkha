@@ -14,11 +14,16 @@
  *                          The left side uses a single longhand
  *                          arbitrary (not `px-6`) so the cascade
  *                          doesn't push content back to x=24.
+ *                          Bottom gutter is 24px (pb-6) so the
+ *                          last region card doesn't sit flush
+ *                          against the viewport bottom.
  *   - viewport 768 - 1023px: canvas horizontal padding is symmetric
  *                          16px (px-4) — the rail is collapsed at
  *                          `md` so the canvas is full-width.
+ *                          Bottom gutter is 16px (pb-4).
  *   - viewport <  768px:    canvas horizontal padding is symmetric
  *                          12px (px-3) — same reason as `md`.
+ *                          Bottom gutter is 12px (pb-3).
  *
  * The role-aware nav filter is also pinned: a Viewer session never sees
  * the Admin group; an Operator sees Monitor + Operate but not Admin.
@@ -120,51 +125,58 @@ describe("Story 1.2b — sidebar at viewport < 1024px", () => {
 describe("Story 1.2b — canvas horizontal padding per breakpoint", () => {
   afterEach(() => cleanup());
 
-  // The canvas horizontal padding has two regimes:
+  // The canvas padding has two regimes:
   //
-  //   - At `lg+` the rail is fixed and the canvas uses `pr-6` for
-  //     the right gutter + `lg:pl-[264px]` to clear the rail AND
-  //     add a 24px gutter on the left. The combined longhand
-  //     arbitrary keeps the cascade clean — there's only ever ONE
-  //     rule setting `padding-left` at `lg+`. Right-only padding
-  //     (`pr-6` vs `px-6`) keeps the shorthand `padding-left` from
-  //     cascade-ordering against `lg:pl-[264px]` and leaving
-  //     content at x=24 (behind the rail).
-  //   - At `md` / `sm` the rail is collapsed (`hidden lg:block`) and
-  //     `lg:pl-[264px]` doesn't activate, so the canvas falls back
-  //     to symmetric `px-{4|3}` to keep the DESIGN.md gutter on
-  //     BOTH sides. (Earlier `pr-*`-only variants left content
-  //     hugging the left viewport edge on mobile / tablet.)
+  //   - At `lg+` the rail is fixed and the canvas uses `pr-6 pb-6`
+  //     for the right + bottom gutter + `lg:pl-[264px]` to clear
+  //     the rail AND add a 24px gutter on the left. The combined
+  //     longhand arbitrary keeps the cascade clean — there's only
+  //     ever ONE rule setting `padding-left` at `lg+`. Right-only
+  //     padding (`pr-6` vs `px-6`) keeps the shorthand
+  //     `padding-left` from cascade-ordering against
+  //     `lg:pl-[264px]` and leaving content at x=24 (behind the
+  //     rail).
+  //   - At `md` / `sm` the rail is collapsed (`hidden lg:block`)
+  //     and `lg:pl-[264px]` doesn't activate, so the canvas falls
+  //     back to symmetric `px-{4|3} pb-{4|3}` to keep the
+  //     DESIGN.md gutter on both sides + the bottom. (Earlier
+  //     `pr-*`-only variants left content hugging the left
+  //     viewport edge on mobile / tablet; the bottom gutter was
+  //     missing entirely before the same fix.)
   //
   // The `lg:` prefix governs CSS application only — the literal
   // `pl-[264px]` substring is present in the className at every
   // breakpoint, so we can't pin "absence" via a substring check.
 
-  it(">= 1024px applies pr-6 (24px right gutter) + lg:pl-[264px] rail clear + left gutter", () => {
+  it(">= 1024px applies pr-6 pb-6 (24px right + bottom gutter) + lg:pl-[264px] rail clear + left gutter", () => {
     setViewport(1280);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
     expect(cls).toContain("pr-6");
+    expect(cls).toContain("pb-6");
     expect(cls).toContain("lg:pl-[264px]");
   });
 
-  it("768 - 1023px applies px-4 (16px symmetric gutter)", () => {
+  it("768 - 1023px applies px-4 pb-4 (16px symmetric + bottom gutter)", () => {
     setViewport(900);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
     expect(cls).toContain("px-4");
+    expect(cls).toContain("pb-4");
     // Symmetric padding is intentional — the rail is collapsed at
-    // `md`, so the canvas is full-width and the left edge needs the
-    // same 16px gutter as the right.
+    // `md`, so the canvas is full-width and the left edge needs
+    // the same 16px gutter as the right. The bottom gutter keeps
+    // the last region card off the viewport bottom edge.
   });
 
-  it("< 768px applies px-3 (12px symmetric gutter)", () => {
+  it("< 768px applies px-3 pb-3 (12px symmetric + bottom gutter)", () => {
     setViewport(420);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
     expect(cls).toContain("px-3");
+    expect(cls).toContain("pb-3");
     // Symmetric padding at `sm` for the same reason as `md` —
-    // content should not hug the left viewport edge.
+    // content should not hug the left viewport edge or the bottom.
   });
 });
 
