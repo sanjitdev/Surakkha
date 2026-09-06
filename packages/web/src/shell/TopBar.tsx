@@ -27,7 +27,11 @@ interface TopBarProps {
 export const TopBar = ({ onHamburger, onSignOut }: TopBarProps) => (
   <header
     data-testid="topbar"
-    className="sticky top-0 z-30 flex items-center gap-3 bg-neutral-surface px-4 shadow-elevation-topbar lg:px-6"
+    // `fixed` (rather than `sticky`) pins the topbar to the viewport
+    // for the same reason the sidebar uses fixed: predictable layout
+    // that doesn't share a scroll context with the document. The
+    // `<main>` clears this chrome with `pt-[56px]`.
+    className="fixed inset-x-0 top-0 z-30 flex items-center gap-3 bg-neutral-surface px-4 shadow-elevation-topbar lg:px-6"
     style={{ height: `${TOPBAR_HEIGHT_PX}px` }}
   >
     <button

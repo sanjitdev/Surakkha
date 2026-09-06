@@ -1,5 +1,5 @@
 /**
- * `Sidebar` — 240px navigation rail. Sticky at >= 1024px (pinned to
+ * `Sidebar` — 240px navigation rail. Fixed at >= 1024px (pinned to
  * the viewport so the rail stays visible while the canvas scrolls);
  * below that, `AppShell` reveals it as a drawer via the `drawerOpen`
  * prop. Items are filtered by role (see `nav.filterNav`). Visual
@@ -12,10 +12,18 @@
  * beneath the topbar, so duplicating "S" + "Surakkha" wordmark at
  * the rail head was creating two logos stacked on the same column).
  *
- * Earlier revisions rendered the sidebar as a plain flex sibling of
- * the canvas (`hidden lg:block` only), which made the rail scroll
- * away with the page. The fix: `sticky top-0 h-screen overflow-y-auto`
- * pins the rail to the viewport while the canvas scrolls behind it.
+ * Earlier revisions rendered the rail as a `sticky top-0 self-start`
+ * flex sibling of the canvas. Sticky pins a child within its NEAREST
+ * scrollable ancestor; with the rail inside a flex row next to the
+ * (very tall) `<main>`, that ancestor was the flex parent — and the
+ * flex parent grew to the height of its tallest child. As the user
+ * scrolled the document, the rail moved with the flex parent's own
+ * scroll position and slid off-screen. The fix: `position: fixed`
+ * with explicit viewport coordinates (`top: 56px` to clear the fixed
+ * topbar, `left: 0`, full viewport height minus topbar) anchors the
+ * rail to the viewport regardless of document scroll. The `<main>`
+ * then offsets its own padding (`pt-[56px] lg:pl-[240px]`) so the
+ * content doesn't slip behind the fixed chrome.
  */
 import { NavLink } from "react-router-dom";
 
@@ -122,12 +130,18 @@ const SidebarBody = ({
   );
 };
 
+const TOPBAR_HEIGHT_PX = 56;
+
+// `position: fixed` pins the rail to the viewport regardless of
+// document scroll. `top: 56px` clears the fixed topbar; `bottom: 0`
+// is shorthand for "extend to the bottom of the viewport" and is
+// paired with the inline `height` so the nav's own `overflow-y-auto`
+// has a known inner height to scroll within.
 const fixedStyles: React.CSSProperties = {
   width: `${SIDEBAR_WIDTH_PX}px`,
-  // `position: sticky` keeps the rail pinned to the top of the
-  // viewport while the canvas scrolls behind it.
-  top: 0,
-  height: "100vh",
+  top: `${TOPBAR_HEIGHT_PX}px`,
+  bottom: 0,
+  height: `calc(100vh - ${TOPBAR_HEIGHT_PX}px)`,
 };
 const drawerStyles: React.CSSProperties = { width: `${SIDEBAR_WIDTH_PX}px` };
 
@@ -163,7 +177,7 @@ export const Sidebar = ({ currentRole, mode, isOpen, onClose }: SidebarProps) =>
     <aside
       data-testid="sidebar-fixed"
       aria-label="Primary navigation"
-      className="sticky hidden self-start lg:block"
+      className="fixed hidden lg:block"
       style={fixedStyles}
     >
       <SidebarBody currentRole={currentRole} />
