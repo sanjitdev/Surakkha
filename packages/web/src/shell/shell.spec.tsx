@@ -110,22 +110,45 @@ describe("Story 1.2b — sidebar at viewport < 1024px", () => {
 describe("Story 1.2b — canvas horizontal padding per breakpoint", () => {
   afterEach(() => cleanup());
 
-  it(">= 1024px applies px-6 (24px)", () => {
+  // The canvas applies `pr-*` (right-only) for the page gutter rather
+  // than `px-*` so the `padding-left` slot stays free for the
+  // `lg:pl-[240px]` rule that clears the fixed sidebar. The `pr-*`
+  // assertion pins the gutter at each breakpoint; the rail-clear
+  // assertion below pins the `lg:pl-[240px]` separately.
+
+  it(">= 1024px applies pr-6 (24px right gutter) + lg:pl-[240px] rail clear", () => {
     setViewport(1280);
     renderShell("Admin");
-    expect(screen.getByTestId("app-canvas").className).toContain("px-6");
+    const cls = screen.getByTestId("app-canvas").className;
+    expect(cls).toContain("pr-6");
+    expect(cls).toContain("lg:pl-[240px]");
   });
 
-  it("768 - 1023px applies px-4 (16px)", () => {
+  it("768 - 1023px applies pr-4 (16px right gutter)", () => {
     setViewport(900);
     renderShell("Admin");
-    expect(screen.getByTestId("app-canvas").className).toContain("px-4");
+    const cls = screen.getByTestId("app-canvas").className;
+    expect(cls).toContain("pr-4");
+    // The rail-clear class is `lg:pl-[240px]` — the `lg:` prefix
+    // constrains when the CSS rule applies. At `md` the fixed
+    // Sidebar is collapsed (`hidden lg:block`) so the rail-clear
+    // does NOT activate, and the canvas reflows to full width.
+    // We can't pin "absence" via a substring check here because
+    // the literal `pl-[240px]` is present in the className at every
+    // breakpoint (the `lg:` prefix governs CSS application, not
+    // className membership). The `lg+` assertion above pins that
+    // the rail-clear IS in the className; this assertion pins that
+    // the right-gutter is `pr-4` at this breakpoint.
   });
 
-  it("< 768px applies px-3 (12px)", () => {
+  it("< 768px applies pr-3 (12px right gutter)", () => {
     setViewport(420);
     renderShell("Admin");
-    expect(screen.getByTestId("app-canvas").className).toContain("px-3");
+    const cls = screen.getByTestId("app-canvas").className;
+    expect(cls).toContain("pr-3");
+    // Same caveat as the `md` case above — the `lg:pl-[240px]`
+    // substring is always present in the className, but the `lg:`
+    // prefix means it doesn't activate at `sm`.
   });
 });
 
