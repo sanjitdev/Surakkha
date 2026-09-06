@@ -4,11 +4,18 @@
  * The test matrix covers every breakpoint AC:
  *
  *   - viewport >= 1024px: fixed sidebar present, hamburger hidden
- *   - viewport <  1024px: hamburger visible, fixed sidebar hidden,
+ *   - viewport <  1024px:  hamburger visible, fixed sidebar hidden,
  *                          drawer sidebar in DOM
- *   - viewport 768 - 1023px: canvas horizontal padding is 16px (px-4)
- *   - viewport <  768px:   canvas horizontal padding is 12px (px-3)
- *   - viewport >= 1024px:  canvas horizontal padding is 24px (px-6)
+ *   - viewport >= 1024px:  canvas right gutter is 24px (pr-6) and
+ *                          the rail-clear is `lg:pl-[240px]`. The
+ *                          left side uses longhand `lg:pl-[240px]`
+ *                          (not `px-6`) so the cascade doesn't push
+ *                          content back to x=24 behind the rail.
+ *   - viewport 768 - 1023px: canvas horizontal padding is symmetric
+ *                          16px (px-4) — the rail is collapsed at
+ *                          `md` so the canvas is full-width.
+ *   - viewport <  768px:    canvas horizontal padding is symmetric
+ *                          12px (px-3) — same reason as `md`.
  *
  * The role-aware nav filter is also pinned: a Viewer session never sees
  * the Admin group; an Operator sees Monitor + Operate but not Admin.
@@ -110,11 +117,23 @@ describe("Story 1.2b — sidebar at viewport < 1024px", () => {
 describe("Story 1.2b — canvas horizontal padding per breakpoint", () => {
   afterEach(() => cleanup());
 
-  // The canvas applies `pr-*` (right-only) for the page gutter rather
-  // than `px-*` so the `padding-left` slot stays free for the
-  // `lg:pl-[240px]` rule that clears the fixed sidebar. The `pr-*`
-  // assertion pins the gutter at each breakpoint; the rail-clear
-  // assertion below pins the `lg:pl-[240px]` separately.
+  // The canvas horizontal padding has two regimes:
+  //
+  //   - At `lg+` the rail is fixed and the canvas uses `pr-6` for
+  //     the right gutter + `lg:pl-[240px]` to clear the rail. The
+  //     right-only padding keeps the `padding-left` slot free for
+  //     the rail-clear — using `px-6` here would let the shorthand
+  //     `padding-left` cascade-order against `lg:pl-[240px]` and
+  //     leave content sitting at x=24, behind the 240px rail.
+  //   - At `md` / `sm` the rail is collapsed (`hidden lg:block`) and
+  //     `lg:pl-[240px]` doesn't activate, so the canvas falls back
+  //     to symmetric `px-{4|3}` to keep the DESIGN.md gutter on
+  //     BOTH sides. (Earlier `pr-*`-only variants left content
+  //     hugging the left viewport edge on mobile / tablet.)
+  //
+  // The `lg:` prefix governs CSS application only — the literal
+  // `pl-[240px]` substring is present in the className at every
+  // breakpoint, so we can't pin "absence" via a substring check.
 
   it(">= 1024px applies pr-6 (24px right gutter) + lg:pl-[240px] rail clear", () => {
     setViewport(1280);
@@ -124,31 +143,23 @@ describe("Story 1.2b — canvas horizontal padding per breakpoint", () => {
     expect(cls).toContain("lg:pl-[240px]");
   });
 
-  it("768 - 1023px applies pr-4 (16px right gutter)", () => {
+  it("768 - 1023px applies px-4 (16px symmetric gutter)", () => {
     setViewport(900);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
-    expect(cls).toContain("pr-4");
-    // The rail-clear class is `lg:pl-[240px]` — the `lg:` prefix
-    // constrains when the CSS rule applies. At `md` the fixed
-    // Sidebar is collapsed (`hidden lg:block`) so the rail-clear
-    // does NOT activate, and the canvas reflows to full width.
-    // We can't pin "absence" via a substring check here because
-    // the literal `pl-[240px]` is present in the className at every
-    // breakpoint (the `lg:` prefix governs CSS application, not
-    // className membership). The `lg+` assertion above pins that
-    // the rail-clear IS in the className; this assertion pins that
-    // the right-gutter is `pr-4` at this breakpoint.
+    expect(cls).toContain("px-4");
+    // Symmetric padding is intentional — the rail is collapsed at
+    // `md`, so the canvas is full-width and the left edge needs the
+    // same 16px gutter as the right.
   });
 
-  it("< 768px applies pr-3 (12px right gutter)", () => {
+  it("< 768px applies px-3 (12px symmetric gutter)", () => {
     setViewport(420);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
-    expect(cls).toContain("pr-3");
-    // Same caveat as the `md` case above — the `lg:pl-[240px]`
-    // substring is always present in the className, but the `lg:`
-    // prefix means it doesn't activate at `sm`.
+    expect(cls).toContain("px-3");
+    // Symmetric padding at `sm` for the same reason as `md` —
+    // content should not hug the left viewport edge.
   });
 });
 
