@@ -50,6 +50,7 @@ import {
 } from "./useIncidentDetailPageQueries";
 import { incidentDetailQueryKey, useIncidentDetailSocket } from "./useIncidentDetailSocket";
 import { useReopenMutation } from "./useReopenMutation";
+import { useResolveMutation } from "./useResolveMutation";
 import { useSubmitResultMutation } from "./useSubmitResultMutation";
 
 /**
@@ -79,6 +80,7 @@ export const IncidentDetailPage = () => {
   const acknowledgeMutation = useAcknowledgeMutation(id ?? "");
   const assignMutation = useAssignMutation(id ?? "");
   const submitResultMutation = useSubmitResultMutation(id ?? "");
+  const resolveMutation = useResolveMutation(id ?? "");
   const reopenMutation = useReopenMutation(id ?? "");
   const exportCsvMutation = useDownloadReadingsCsvMutation();
 
@@ -86,11 +88,12 @@ export const IncidentDetailPage = () => {
 
   const { rowQuery, incident, timeline } = useIncidentDetailPageQueries(id);
 
-  const { handleAcknowledge, handleAssign, handleSubmitResult, handleReopen } =
+  const { handleAcknowledge, handleAssign, handleSubmitResult, handleResolve, handleReopen } =
     useDetailActionHandlers({
       acknowledgeMutation,
       assignMutation,
       submitResultMutation,
+      resolveMutation,
       reopenMutation,
       pushToast,
     });
@@ -126,11 +129,13 @@ export const IncidentDetailPage = () => {
         isAck={acknowledgeMutation.isPending}
         isAssign={assignMutation.isPending}
         isSubmitting={submitResultMutation.isPending}
+        isResolving={resolveMutation.isPending}
         isReopening={reopenMutation.isPending}
         isExporting={exportCsvMutation.isPending}
         onAcknowledge={handleAcknowledge}
         onAssign={handleAssign}
         onSubmitResult={handleSubmitResult}
+        onResolve={handleResolve}
         onReopen={handleReopen}
         onExportCsv={handleExportCsv}
         onRetry={() => {
@@ -159,11 +164,13 @@ const IncidentDetailDispatch = ({
   isAck,
   isAssign,
   isSubmitting,
+  isResolving,
   isReopening,
   isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onResolve,
   onReopen,
   onExportCsv,
   onRetry,
@@ -176,11 +183,13 @@ const IncidentDetailDispatch = ({
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isResolving: boolean;
   readonly isReopening: boolean;
   readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onResolve: () => void;
   readonly onReopen: (reason: string) => void;
   readonly onExportCsv: () => void;
   readonly onRetry: () => void;
@@ -212,11 +221,13 @@ const IncidentDetailDispatch = ({
       isAck={isAck}
       isAssign={isAssign}
       isSubmitting={isSubmitting}
+      isResolving={isResolving}
       isReopening={isReopening}
       isExporting={isExporting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
+      onResolve={onResolve}
       onReopen={onReopen}
       onExportCsv={onExportCsv}
     />
@@ -237,11 +248,13 @@ const IncidentDetailBody = ({
   isAck,
   isAssign,
   isSubmitting,
+  isResolving,
   isReopening,
   isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onResolve,
   onReopen,
   onExportCsv,
 }: {
@@ -252,11 +265,13 @@ const IncidentDetailBody = ({
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isResolving: boolean;
   readonly isReopening: boolean;
   readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onResolve: () => void;
   readonly onReopen: (reason: string) => void;
   readonly onExportCsv: () => void;
 }) => (
@@ -325,11 +340,13 @@ const IncidentDetailBody = ({
       isAck={isAck}
       isAssign={isAssign}
       isSubmitting={isSubmitting}
+      isResolving={isResolving}
       isReopening={isReopening}
       isExporting={isExporting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
+      onResolve={onResolve}
       onReopen={onReopen}
       onExportCsv={onExportCsv}
     />

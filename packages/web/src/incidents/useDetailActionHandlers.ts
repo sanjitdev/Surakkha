@@ -25,6 +25,7 @@ interface UseDetailActionHandlersInput {
     TransitionMutationError,
     { outcome: InspectionOutcome }
   >;
+  readonly resolveMutation: UseMutationResult<void, TransitionMutationError, void>;
   readonly reopenMutation: UseMutationResult<void, TransitionMutationError, { reason: string }>;
   readonly pushToast: PushToast;
 }
@@ -33,14 +34,21 @@ interface UseDetailActionHandlersOutput {
   readonly handleAcknowledge: () => void;
   readonly handleAssign: (assigneeUserId: string) => void;
   readonly handleSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly handleResolve: () => void;
   readonly handleReopen: (reason: string) => void;
 }
 
 export const useDetailActionHandlers = (
   input: UseDetailActionHandlersInput,
 ): UseDetailActionHandlersOutput => {
-  const { acknowledgeMutation, assignMutation, submitResultMutation, reopenMutation, pushToast } =
-    input;
+  const {
+    acknowledgeMutation,
+    assignMutation,
+    submitResultMutation,
+    resolveMutation,
+    reopenMutation,
+    pushToast,
+  } = input;
 
   const handleAcknowledge = (): void => {
     acknowledgeMutation.mutate(undefined, {
@@ -69,6 +77,13 @@ export const useDetailActionHandlers = (
     );
   };
 
+  const handleResolve = (): void => {
+    resolveMutation.mutate(undefined, {
+      onSuccess: () => pushToast("success", "Incident resolved"),
+      onError: (err: TransitionMutationError) => pushToast("error", err.message),
+    });
+  };
+
   const handleReopen = (reason: string): void => {
     reopenMutation.mutate(
       { reason },
@@ -79,5 +94,11 @@ export const useDetailActionHandlers = (
     );
   };
 
-  return { handleAcknowledge, handleAssign, handleSubmitResult, handleReopen };
+  return {
+    handleAcknowledge,
+    handleAssign,
+    handleSubmitResult,
+    handleResolve,
+    handleReopen,
+  };
 };

@@ -2964,3 +2964,153 @@ describe("/impeccable clarify — audit timeline typed renderer", () => {
     }
   });
 });
+
+// ============================================================================
+// Resolve-button coverage — closes the gap between the state machine (SAFE |
+// UNSAFE | MONITORING -> RESOLVED is valid) and the detail-page UI (no
+// Resolve CTA was rendered before this spec landed).
+//
+// Contract pinned here:
+//   1. Visibility — Resolve button appears only in SAFE / UNSAFE / MONITORING
+//      (per `actionSlotsFor` STATE_SLOTS for Admin + Operator).
+//   2. RBAC — Technician never sees Resolve, even for a MONITORING row that
+//      a Tech submits a result for.
+//   3. Happy path — clicking Resolve fires POST /api/incidents/:id/resolve,
+//      surfaces the 'Incident resolved' success toast, and the mutation
+//      hook invalidates the detail row query.
+// ============================================================================
+
+const RESOLVE_URL_SUFFIX = `/api/incidents/${INCIDENT_ID}/resolve`;
+
+describe("Resolve button — AC: visible only for SAFE / UNSAFE / MONITORING (Operator)", () => {
+  it.each(["OPEN", "ACKNOWLEDGED", "INSPECTING", "RESOLVED"] as const)(
+    "does NOT render Resolve for state=%s",
+    async (state) => {
+      installFetch(async (url) => {
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+          return new Response(JSON.stringify(baseIncident({ state })), { status: 200 });
+        }
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+          return new Response(JSON.stringify({ events: [] }), { status: 200 });
+        }
+        return new Response("{}", { status: 404 });
+      });
+
+      renderDetail("Operator");
+
+      // Wait for the row to settle before asserting button absence —
+      // otherwise the query is still loading and no button would render
+      // for any state, which would mask the assertion target.
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId("incident-detail-resolve-button")).toBeNull();
+    },
+  );
+
+  it.each(["SAFE", "UNSAFE", "MONITORING"] as const)(
+    "renders Resolve for state=%s",
+    async (state) => {
+      installFetch(async (url) => {
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+          return new Response(JSON.stringify(baseIncident({ state })), { status: 200 });
+        }
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+          return new Response(JSON.stringify({ events: [] }), { status: 200 });
+        }
+        return new Response("{}", { status: 404 });
+      });
+
+      renderDetail("Operator");
+
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-resolve-button")).toBeInTheDocument();
+      });
+      expect(screen.getByTestId("incident-detail-resolve-button")).toHaveTextContent("Resolve");
+    },
+  );
+});
+
+describe("Resolve button — AC: RBAC (Admin yes, Operator yes, Technician never, Viewer never)", () => {
+  const matrix: ReadonlyArray<{
+    readonly role: "Admin" | "Operator" | "Technician" | "Viewer";
+    readonly expected: boolean;
+  }> = [
+    { role: "Admin", expected: true },
+    { role: "Operator", expected: true },
+    { role: "Technician", expected: false },
+    { role: "Viewer", expected: false },
+  ];
+
+  for (const { role, expected } of matrix) {
+    it(`${role}: Resolve ${expected ? "rendered" : "absent"} for MONITORING row`, async () => {
+      installFetch(async (url) => {
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+          return new Response(JSON.stringify(baseIncident({ state: "MONITORING" })), {
+            status: 200,
+          });
+        }
+        if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+          return new Response(JSON.stringify({ events: [] }), { status: 200 });
+        }
+        return new Response("{}", { status: 404 });
+      });
+
+      renderDetail(role);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("incident-detail-root")).toBeInTheDocument();
+      });
+      const btn = screen.queryByTestId("incident-detail-resolve-button");
+      if (expected) {
+        expect(btn).toBeInTheDocument();
+      } else {
+        expect(btn).toBeNull();
+      }
+    });
+  }
+});
+
+describe("Resolve button — AC: happy path (POST 200 -> success toast -> row invalidated)", () => {
+  it("fires POST, surfaces 'Incident resolved' toast, and the button re-enables", async () => {
+    let resolveCallCount = 0;
+    installFetch(async (url, init) => {
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}`)) {
+        return new Response(JSON.stringify(baseIncident({ state: "MONITORING" })), {
+          status: 200,
+        });
+      }
+      if (url.endsWith(`/api/incidents/${INCIDENT_ID}/events`)) {
+        return new Response(JSON.stringify({ events: [] }), { status: 200 });
+      }
+      if (url.endsWith(RESOLVE_URL_SUFFIX)) {
+        resolveCallCount += 1;
+        // The api accepts an empty body for resolve. Pin that the
+        // mutation sends no payload — guards against accidental
+        // buildBody additions in `useResolveMutation`.
+        expect(init?.method).toBe("POST");
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    renderDetail("Operator");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-resolve-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("incident-detail-resolve-button"));
+
+    // The success toast is the user-facing success signal.
+    await waitFor(() => {
+      expect(screen.getByText("Incident resolved")).toBeInTheDocument();
+    });
+    expect(resolveCallCount).toBe(1);
+
+    // The button should re-enable once the mutation lands.
+    await waitFor(() => {
+      expect(screen.getByTestId("incident-detail-resolve-button")).not.toBeDisabled();
+    });
+  });
+});

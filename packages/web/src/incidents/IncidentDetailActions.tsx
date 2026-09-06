@@ -26,11 +26,13 @@ interface IncidentDetailActionsProps {
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isResolving: boolean;
   readonly isReopening: boolean;
   readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onResolve: () => void;
   readonly onReopen: (reason: string) => void;
   readonly onExportCsv: () => void;
 }
@@ -39,6 +41,7 @@ interface SlotFlags {
   readonly canAcknowledge: boolean;
   readonly canAssign: boolean;
   readonly canSubmitResult: boolean;
+  readonly canResolve: boolean;
   readonly canReopen: boolean;
   /** Client-side mirror of the `export Reading` RBAC matrix entry. */
   readonly canExportCsv: boolean;
@@ -54,6 +57,7 @@ const computeSlotFlags = (
     canAcknowledge: slots.includes("acknowledge"),
     canAssign: slots.includes("assign"),
     canSubmitResult: slots.includes("submit-result"),
+    canResolve: slots.includes("resolve"),
     canReopen: slots.includes("reopen"),
     canExportCsv:
       viewerRole !== null &&
@@ -68,17 +72,20 @@ export const IncidentDetailActions = ({
   isAck,
   isAssign,
   isSubmitting,
+  isResolving,
   isReopening,
   isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onResolve,
   onReopen,
   onExportCsv,
 }: IncidentDetailActionsProps) => {
   const flags = computeSlotFlags(incident, viewerRole, viewerUserId);
-  const { canAcknowledge, canAssign, canSubmitResult, canReopen, canExportCsv } = flags;
-  const anyVisible = canAcknowledge || canAssign || canSubmitResult || canReopen || canExportCsv;
+  const { canAcknowledge, canAssign, canSubmitResult, canResolve, canReopen, canExportCsv } = flags;
+  const anyVisible =
+    canAcknowledge || canAssign || canSubmitResult || canResolve || canReopen || canExportCsv;
   if (!anyVisible) {
     return null;
   }
@@ -88,11 +95,13 @@ export const IncidentDetailActions = ({
       isAck={isAck}
       isAssign={isAssign}
       isSubmitting={isSubmitting}
+      isResolving={isResolving}
       isReopening={isReopening}
       isExporting={isExporting}
       onAcknowledge={onAcknowledge}
       onAssign={onAssign}
       onSubmitResult={onSubmitResult}
+      onResolve={onResolve}
       onReopen={onReopen}
       onExportCsv={onExportCsv}
     />
@@ -104,11 +113,13 @@ interface ActionsProps {
   readonly isAck: boolean;
   readonly isAssign: boolean;
   readonly isSubmitting: boolean;
+  readonly isResolving: boolean;
   readonly isReopening: boolean;
   readonly isExporting: boolean;
   readonly onAcknowledge: () => void;
   readonly onAssign: (assigneeUserId: string) => void;
   readonly onSubmitResult: (outcome: InspectionOutcome) => void;
+  readonly onResolve: () => void;
   readonly onReopen: (reason: string) => void;
   readonly onExportCsv: () => void;
 }
@@ -121,15 +132,17 @@ const Actions = ({
   isAck,
   isAssign,
   isSubmitting,
+  isResolving,
   isReopening,
   isExporting,
   onAcknowledge,
   onAssign,
   onSubmitResult,
+  onResolve,
   onReopen,
   onExportCsv,
 }: ActionsProps) => {
-  const { canAcknowledge, canAssign, canSubmitResult, canReopen, canExportCsv } = flags;
+  const { canAcknowledge, canAssign, canSubmitResult, canResolve, canReopen, canExportCsv } = flags;
   return (
     <div data-testid="incident-detail-actions" className="flex flex-col gap-3">
       {canAcknowledge ? (
@@ -149,6 +162,20 @@ const Actions = ({
       {canAssign ? <AssignForm isPending={isAssign} onAssign={onAssign} /> : null}
       {canSubmitResult ? (
         <SubmitResultForm isPending={isSubmitting} onSubmitResult={onSubmitResult} />
+      ) : null}
+      {canResolve ? (
+        <button
+          type="button"
+          data-testid="incident-detail-resolve-button"
+          disabled={isResolving}
+          onClick={onResolve}
+          className={[
+            "self-start rounded-input border px-4 py-2 text-sm font-medium text-white",
+            ACTION_BUTTON_BASE,
+          ].join(" ")}
+        >
+          {isResolving ? "Resolving…" : "Resolve"}
+        </button>
       ) : null}
       {canReopen ? <ReopenForm isPending={isReopening} onReopen={onReopen} /> : null}
       {canExportCsv ? (
