@@ -19,7 +19,7 @@
  *       /dashboard         → Dashboard
  *       /severity-cards    → SeverityCards
  *       /sensors           → PageStub
- *       /incidents         → KanbanBoard
+ *       /incidents         → IncidentsPage (PageHeader + KanbanBoard)
  *       /incidents/:id     → IncidentDetailPage
  *       /alerts            → PageStub
  *       /reports           → RbacRoute → PageStub
@@ -54,7 +54,7 @@ import { KpiStat } from "./components/KpiStat";
 import { PageHeader } from "./components/PageHeader";
 import { Dashboard } from "./dashboard/Dashboard";
 import { IncidentDetailPage } from "./incidents/IncidentDetailPage";
-import { KanbanBoard } from "./incidents/KanbanBoard";
+import { IncidentsPage } from "./incidents/IncidentsPage";
 import { queryClient } from "./queryClient";
 import { ProtectedShell } from "./shell/ProtectedShell";
 
@@ -144,7 +144,7 @@ createRoot(root).render(
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/severity-cards" element={<SeverityCards />} />
                 <Route path="/sensors" element={<PageStub name="Sensors" />} />
-                <Route path="/incidents" element={<KanbanBoard />} />
+                <Route path="/incidents" element={<IncidentsPage />} />
                 <Route path="/incidents/:id" element={<IncidentDetailPage />} />
                 <Route path="/alerts" element={<PageStub name="Alerts" />} />
                 <Route

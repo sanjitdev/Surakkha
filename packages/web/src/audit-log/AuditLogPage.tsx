@@ -149,7 +149,7 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
     actorIds.length > 0 || event.length > 0 || resource.length > 0 || preset !== "30d";
 
   return (
-    <div data-testid={testId} className="p-6">
+    <div data-testid={testId} className="flex flex-col gap-6">
       <PageHeader
         title="Audit Log"
         description="Admin-only audit trail — read-only record of every audit emit across the platform."
@@ -233,63 +233,59 @@ const AuditLogFilterPanel = (props: AuditLogFilterPanelProps) => {
     onPresetChange,
   } = props;
   return (
-    <>
+    <section
+      aria-label="Audit log filters"
+      data-testid="audit-log-filters"
+      className="metric-card flex flex-col gap-4 rounded-card border border-neutral-border bg-neutral-surface p-4 shadow-elevation-card"
+    >
       <section
-        aria-labelledby="actor-filter-heading"
-        className="mb-4 flex flex-wrap items-center gap-2"
+        aria-labelledby="actor-filter-heading event-filter-heading"
+        className="grid grid-cols-[5rem_minmax(0,1fr)_5rem_minmax(0,1fr)] items-start gap-x-6 gap-y-2"
         data-testid="actor-filter"
       >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
-        <h2 id="actor-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
+        <h2
+          // eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec).
+          id="actor-filter-heading"
+          className="self-center text-sm font-medium text-neutral-body"
+        >
           Actor
         </h2>
-        {actorIds.map((id) => (
+        <div className="flex flex-wrap items-center gap-3">
+          {actorIds.map((id) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed="true"
+              onClick={() => onRemoveActor(id)}
+              data-testid={`actor-chip-${id}`}
+              className="flex items-center gap-2 rounded-full border border-primary bg-primary px-3 py-1 text-sm text-white"
+            >
+              {id.slice(0, ID_SHORT_PREFIX_LENGTH)}
+            </button>
+          ))}
+          <input
+            type="text"
+            value={actorInput}
+            onChange={(e) => onActorInputChange(e.target.value)}
+            placeholder="actor user id…"
+            data-testid="actor-input"
+            aria-label="Actor user id"
+            className="min-w-[10rem] flex-1 rounded-input border border-neutral-border bg-neutral-page px-3 py-1 text-sm"
+          />
           <button
-            key={id}
             type="button"
-            aria-pressed="true"
-            onClick={() => onRemoveActor(id)}
-            data-testid={`actor-chip-${id}`}
-            className="flex items-center gap-2 rounded-full border border-primary bg-primary px-3 py-1 text-sm text-white"
+            onClick={onAddActor}
+            data-testid="actor-add"
+            className="rounded-input border border-primary bg-primary px-3 py-1 text-sm font-medium text-white hover:bg-primary-hover"
           >
-            {id.slice(0, ID_SHORT_PREFIX_LENGTH)}
+            Add
           </button>
-        ))}
-        <input
-          type="text"
-          value={actorInput}
-          onChange={(e) => onActorInputChange(e.target.value)}
-          placeholder="actor user id…"
-          data-testid="actor-input"
-          aria-label="Actor user id"
-          className="rounded-md border border-neutral-border bg-white px-2 py-1 text-sm"
-        />
-        <button
-          type="button"
-          onClick={onAddActor}
-          data-testid="actor-add"
-          className="rounded-md border border-neutral-border bg-white px-3 py-1 text-sm text-neutral-body"
+        </div>
+        <h2
+          // eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec).
+          id="event-filter-heading"
+          className="self-center text-sm font-medium text-neutral-body"
         >
-          Add
-        </button>
-        {actorInputError !== null && (
-          <span
-            data-testid="actor-input-error"
-            role="alert"
-            className="basis-full text-xs text-severity-critical-text"
-          >
-            {actorInputError}
-          </span>
-        )}
-      </section>
-
-      <section
-        aria-labelledby="event-filter-heading"
-        className="mb-4 flex flex-wrap items-center gap-2"
-        data-testid="event-filter"
-      >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
-        <h2 id="event-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
           Event
         </h2>
         <input
@@ -299,96 +295,117 @@ const AuditLogFilterPanel = (props: AuditLogFilterPanelProps) => {
           placeholder="substring (e.g. incident)"
           data-testid="event-input"
           aria-label="Event substring filter"
-          className="rounded-md border border-neutral-border bg-white px-2 py-1 text-sm"
+          className="min-w-[10rem] flex-1 rounded-input border border-neutral-border bg-neutral-page px-3 py-1 text-sm"
         />
+        {actorInputError !== null && (
+          <span
+            data-testid="actor-input-error"
+            role="alert"
+            className="col-start-2 col-span-3 text-xs text-severity-critical-text"
+          >
+            {actorInputError}
+          </span>
+        )}
       </section>
 
       <section
         aria-labelledby="resource-filter-heading"
-        className="mb-4 flex flex-wrap items-center gap-2"
+        className="grid grid-cols-[5rem_1fr] items-start gap-x-3 gap-y-2"
         data-testid="resource-filter"
       >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
-        <h2 id="resource-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
+        <h2
+          // eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec).
+          id="resource-filter-heading"
+          className="self-center text-sm font-medium text-neutral-body"
+        >
           Resource
         </h2>
-        <button
-          type="button"
-          aria-pressed={resource === ""}
-          onClick={() => onResourceChange("")}
-          data-testid="resource-chip-any"
-          className={`flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${
-            resource === ""
-              ? "border-primary bg-primary text-white"
-              : "border-neutral-border bg-white text-neutral-body"
-          }`}
-        >
-          Any
-        </button>
-        {RESOURCE_OPTIONS.map((r) => {
-          const pressed = resource === r;
-          return (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={pressed}
-              onClick={() => onResourceChange(r)}
-              data-testid={`resource-chip-${r}`}
-              className={`flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${
-                pressed
-                  ? "border-primary bg-primary text-white"
-                  : "border-neutral-border bg-white text-neutral-body"
-              }`}
-            >
-              {r}
-            </button>
-          );
-        })}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            aria-pressed={resource === ""}
+            onClick={() => onResourceChange("")}
+            data-testid="resource-chip-any"
+            className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${
+              resource === ""
+                ? "border-primary bg-primary text-white"
+                : "border-neutral-border bg-neutral-page text-neutral-secondary"
+            }`}
+          >
+            Any
+          </button>
+          {RESOURCE_OPTIONS.map((r) => {
+            const pressed = resource === r;
+            return (
+              <button
+                key={r}
+                type="button"
+                aria-pressed={pressed}
+                onClick={() => onResourceChange(r)}
+                data-testid={`resource-chip-${r}`}
+                className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${
+                  pressed
+                    ? "border-primary bg-primary text-white"
+                    : "border-neutral-border bg-neutral-page text-neutral-secondary"
+                }`}
+              >
+                {r}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section
         aria-labelledby="date-filter-heading"
-        className="mb-6 flex flex-wrap items-center gap-2"
+        className="grid grid-cols-[5rem_1fr] items-start gap-x-3 gap-y-2"
         data-testid="date-range-filter"
       >
-        {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec). */}
-        <h2 id="date-filter-heading" className="mr-2 text-sm font-medium text-neutral-body">
+        <h2
+          // eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-labelledby` (ARIA spec).
+          id="date-filter-heading"
+          className="self-center text-sm font-medium text-neutral-body"
+        >
           Range
         </h2>
-        {DATE_RANGE_PRESETS.map((p) => {
-          const isStub = p === "custom";
-          return (
-            <button
-              key={p}
-              type="button"
-              aria-pressed={preset === p}
-              onClick={() => onPresetChange(p)}
-              disabled={isStub}
-              aria-describedby={isStub ? "range-custom-coming-soon" : undefined}
-              title={isStub ? "Custom date range inputs are deferred to a future story" : undefined}
-              data-testid={`range-${p}`}
-              className={`rounded-md border px-3 py-1 text-sm ${
-                preset === p
-                  ? "border-primary bg-primary text-white"
-                  : "border-neutral-border bg-white text-neutral-body"
-              } ${isStub ? "cursor-not-allowed opacity-50" : ""}`}
-            >
-              {p === "24h"
-                ? "Last 24h"
-                : p === "7d"
-                  ? "Last 7d"
-                  : p === "30d"
-                    ? "Last 30d"
-                    : "Custom"}
-            </button>
-          );
-        })}
+        <div className="flex flex-wrap items-center gap-3">
+          {DATE_RANGE_PRESETS.map((p) => {
+            const isStub = p === "custom";
+            return (
+              <button
+                key={p}
+                type="button"
+                aria-pressed={preset === p}
+                onClick={() => onPresetChange(p)}
+                disabled={isStub}
+                aria-describedby={isStub ? "range-custom-coming-soon" : undefined}
+                title={
+                  isStub ? "Custom date range inputs are deferred to a future story" : undefined
+                }
+                data-testid={`range-${p}`}
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  preset === p
+                    ? "border-primary bg-primary text-white"
+                    : "border-neutral-border bg-neutral-page text-neutral-secondary"
+                } ${isStub ? "cursor-not-allowed opacity-50" : ""}`}
+              >
+                {p === "24h"
+                  ? "Last 24h"
+                  : p === "7d"
+                    ? "Last 7d"
+                    : p === "30d"
+                      ? "Last 30d"
+                      : "Custom"}
+              </button>
+            );
+          })}
+        </div>
         {/* eslint-disable-next-line react/forbid-dom-props -- id is required by `aria-describedby` (ARIA spec). */}
         <span id="range-custom-coming-soon" className="sr-only">
           Custom date range inputs are deferred to a future story.
         </span>
       </section>
-    </>
+    </section>
   );
 };
 
@@ -416,29 +433,38 @@ const AuditLogResultsPanel = (props: AuditLogResultsPanelProps) => {
   } = props;
   if (query.isLoading) {
     return (
-      <div data-testid="audit-log-loading" className="text-md text-neutral-secondary">
+      <p
+        data-testid="audit-log-loading"
+        className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
+      >
         Loading audit log…
-      </div>
+      </p>
     );
   }
   if (query.isError) {
     return (
-      <div data-testid="audit-log-error" className="text-md text-severity-critical-text">
+      <div
+        data-testid="audit-log-error"
+        className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-severity-critical-text"
+      >
         Unable to load audit log. Retry shortly.
       </div>
     );
   }
   if (entries.length === 0) {
     return (
-      <div data-testid="audit-log-empty" className="text-md text-neutral-secondary">
+      <div
+        data-testid="audit-log-empty"
+        className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
+      >
         {isFiltered ? (
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <span>No audit events match the current filters.</span>
             <button
               type="button"
               onClick={onResetFilters}
               data-testid="audit-log-reset-filters"
-              className="rounded-md border border-primary bg-primary px-3 py-1 text-sm text-white"
+              className="rounded-input border border-primary bg-primary px-3 py-1 text-sm font-medium text-white hover:bg-primary-hover"
             >
               Show last 30d
             </button>
@@ -451,33 +477,50 @@ const AuditLogResultsPanel = (props: AuditLogResultsPanelProps) => {
   }
   return (
     <>
-      <div className="mb-2 text-md text-neutral-secondary" data-testid="audit-log-summary">
-        {isTruncated
-          ? `Showing ${entries.length} of ${total}+ events (most recent first).`
-          : `Showing all ${entries.length} event${entries.length === 1 ? "" : "s"}.`}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-neutral-border bg-neutral-surface px-4 py-3 text-md text-neutral-secondary shadow-elevation-card">
+        <span data-testid="audit-log-summary">
+          {isTruncated
+            ? `Showing ${entries.length} of ${total}+ events (most recent first).`
+            : `Showing all ${entries.length} event${entries.length === 1 ? "" : "s"}.`}
+        </span>
+        {isFiltered && (
+          <button
+            type="button"
+            onClick={onResetFilters}
+            data-testid="audit-log-reset-filters"
+            className="rounded-input border border-primary bg-primary px-3 py-1 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
-      <table className="w-full border-collapse" data-testid="audit-log-table">
-        <thead>
-          <tr className="border-b border-neutral-border text-left text-sm text-neutral-secondary">
-            <th className="py-2 pr-4">Actor</th>
-            <th className="py-2 pr-4">Event</th>
-            <th className="py-2 pr-4">Resource</th>
-            <th className="py-2 pr-4">Resource ID</th>
-            <th className="py-2 pr-4">Outcome</th>
-            <th className="py-2 pr-4">Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <AuditLogRow
-              key={entry.id}
-              row={entry}
-              isExpanded={expandedId === entry.id}
-              onToggle={() => onToggleExpanded(entry.id)}
-            />
-          ))}
-        </tbody>
-      </table>
+      <section
+        aria-label="Audit log events"
+        className="metric-card rounded-card border border-neutral-border bg-neutral-surface p-0 shadow-elevation-card"
+      >
+        <table className="w-full border-collapse" data-testid="audit-log-table">
+          <thead>
+            <tr className="border-b border-neutral-border bg-neutral-page text-xs uppercase tracking-wider text-neutral-secondary">
+              <th className="px-4 py-2 text-left font-semibold">Actor</th>
+              <th className="px-4 py-2 text-left font-semibold">Event</th>
+              <th className="px-4 py-2 text-left font-semibold">Resource</th>
+              <th className="px-4 py-2 text-left font-semibold">Resource ID</th>
+              <th className="px-4 py-2 text-left font-semibold">Outcome</th>
+              <th className="px-4 py-2 text-left font-semibold">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <AuditLogRow
+                key={entry.id}
+                row={entry}
+                isExpanded={expandedId === entry.id}
+                onToggle={() => onToggleExpanded(entry.id)}
+              />
+            ))}
+          </tbody>
+        </table>
+      </section>
     </>
   );
 };
@@ -528,21 +571,23 @@ const AuditLogRow = ({ row, isExpanded, onToggle }: AuditLogRowProps) => {
             onToggle();
           }
         }}
-        className="cursor-pointer border-b border-neutral-border text-sm text-neutral-body hover:bg-neutral-bg focus:bg-neutral-bg focus:outline focus:outline-2 focus:outline-primary"
+        className="cursor-pointer border-b border-neutral-border text-md text-neutral-body last:border-b-0 hover:bg-neutral-page focus:bg-neutral-page focus:outline focus:outline-2 focus:outline-primary"
       >
-        <td className="py-2 pr-4">{actorLabel}</td>
-        <td className="py-2 pr-4">{row.auditAction}</td>
-        <td className="py-2 pr-4">{row.resource}</td>
-        <td className="py-2 pr-4">{row.resourceId === null ? "—" : entityLabel}</td>
-        <td className="py-2 pr-4">
+        <td className="px-4 py-3">{actorLabel}</td>
+        <td className="px-4 py-3">{row.auditAction}</td>
+        <td className="px-4 py-3">{row.resource}</td>
+        <td className="px-4 py-3 font-mono text-xs text-neutral-secondary">
+          {row.resourceId === null ? "—" : entityLabel}
+        </td>
+        <td className="px-4 py-3">
           <span
-            className={`rounded-full px-2 py-0.5 text-xs ${outcomeClass}`}
+            className={`inline-block rounded-full px-2 py-0.5 text-xs ${outcomeClass}`}
             data-testid={`audit-log-outcome-${row.id}`}
           >
             {row.outcome}
           </span>
         </td>
-        <td className="py-2 pr-4">{formatDate(row.createdAt)}</td>
+        <td className="px-4 py-3">{formatDate(row.createdAt)}</td>
       </tr>
       {isExpanded && (
         <tr

@@ -22,6 +22,7 @@ import { RbacDenied } from "../access/RbacDenied";
 import { AttachmentsSection } from "../attachments/AttachmentsSection";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { readUserIdFromStore } from "../auth/tokenStore";
+import { PageHeader } from "../components/PageHeader";
 
 import { ErrorState } from "./ErrorState";
 import {
@@ -265,21 +266,26 @@ const IncidentDetailBody = ({
     data-severity={incident.severity}
     className="flex flex-col gap-6"
   >
-    <header className="flex items-center justify-between">
-      <h1 className="text-lg font-semibold text-neutral-body">Incident {incident.id}</h1>
-      <div className="flex items-center gap-2 text-sm text-neutral-body">
-        <span
-          aria-hidden
-          data-testid="incident-detail-severity-dot"
-          className={`inline-block size-2 rounded-full ${SEVERITY_DOT_BG[incident.severity]}`}
-        />
-        <span data-testid="incident-detail-severity-label">
-          {SEVERITY_LABEL[incident.severity]}
-        </span>
-        <span className="text-neutral-secondary">·</span>
-        <span data-testid="incident-detail-state-label">{STATE_LABEL[incident.state]}</span>
-      </div>
-    </header>
+    <PageHeader
+      title={`Incident ${incident.id}`}
+      actions={
+        <div
+          data-testid="incident-detail-status"
+          className="flex items-center gap-2 text-sm text-neutral-body"
+        >
+          <span
+            aria-hidden
+            data-testid="incident-detail-severity-dot"
+            className={`inline-block size-2 rounded-full ${SEVERITY_DOT_BG[incident.severity]}`}
+          />
+          <span data-testid="incident-detail-severity-label">
+            {SEVERITY_LABEL[incident.severity]}
+          </span>
+          <span className="text-neutral-secondary">·</span>
+          <span data-testid="incident-detail-state-label">{STATE_LABEL[incident.state]}</span>
+        </div>
+      }
+    />
 
     <dl className="grid grid-cols-2 gap-3 rounded-card border border-neutral-border bg-neutral-surface p-4 text-sm">
       <dt className="text-neutral-secondary">Device</dt>

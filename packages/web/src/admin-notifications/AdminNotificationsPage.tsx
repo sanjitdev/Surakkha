@@ -126,7 +126,7 @@ export const AdminNotificationsPage = ({
   }
 
   return (
-    <div data-testid={testId} className="p-6">
+    <div data-testid={testId} className="flex flex-col gap-6">
       <PageHeader
         title="Notifications"
         description="Audit-lens view across all roles and acknowledgment states."
