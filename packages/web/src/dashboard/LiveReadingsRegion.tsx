@@ -11,6 +11,8 @@ import {
 } from "@surakkha/shared/dashboard";
 import { useMemo } from "react";
 
+import { RegionCard } from "../components/RegionCard";
+
 import { LiveReadingsRow } from "./LiveReadingsRow";
 
 interface LiveReadingsRegionProps {
@@ -30,20 +32,26 @@ const compareRows = (a: LatestReadingPayload, b: LatestReadingPayload): number =
   return a.device_id.localeCompare(b.device_id);
 };
 
+const CountChip = ({ count }: { readonly count: number }) => (
+  <span
+    data-testid="dashboard-live-readings-count"
+    className="rounded-pill bg-neutral-page px-2 py-0.5 text-xs text-neutral-secondary"
+  >
+    {count === 0 ? "0 devices" : `${count} device${count === 1 ? "" : "s"}`}
+  </span>
+);
+
 export const LiveReadingsRegion = ({ readings }: LiveReadingsRegionProps) => {
   const isEmpty = readings.length === 0;
   const sortedReadings = useMemo(() => [...readings].sort(compareRows), [readings]);
 
   return (
-    <section
-      data-testid="dashboard-live-readings-region"
-      data-region="live-readings"
-      aria-label="Live Readings"
-      className="rounded-card border border-neutral-border bg-neutral-surface p-density-card"
-    >
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h2 className="text-md font-semibold text-neutral-body">Live Readings</h2>
+    <RegionCard
+      title="Live Readings"
+      region="live-readings"
+      testId="dashboard-live-readings-region"
+      rightSlot={
+        <>
           {/* "LIVE" pulse indicator — primary-coloured 8px dot with the
               `live-pulse` motion token (1200ms transient outline).
               Tells the operator this surface is realtime without
@@ -51,20 +59,19 @@ export const LiveReadingsRegion = ({ readings }: LiveReadingsRegionProps) => {
           <span
             aria-hidden
             data-testid="dashboard-live-readings-pulse"
-            className="inline-block size-2 rounded-full bg-primary animate-live-pulse"
+            className="mr-2 inline-block size-2 rounded-full bg-primary animate-live-pulse"
           />
-          <span className="text-xs font-semibold uppercase tracking-wide text-primary">Live</span>
-        </div>
-        <span className="text-xs text-neutral-secondary">
-          {sortedReadings.length === 0
-            ? "0 devices"
-            : `${sortedReadings.length} device${sortedReadings.length === 1 ? "" : "s"}`}
-        </span>
-      </header>
+          <span className="mr-3 text-xs font-semibold uppercase tracking-wide text-primary">
+            Live
+          </span>
+          <CountChip count={sortedReadings.length} />
+        </>
+      }
+    >
       {isEmpty ? (
         <div
           data-testid="dashboard-live-readings-empty"
-          className="mt-3 rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
+          className="mt-3 rounded-input border border-dashed border-neutral-border py-8 text-center text-sm text-neutral-secondary"
         >
           No readings yet
         </div>
@@ -77,7 +84,7 @@ export const LiveReadingsRegion = ({ readings }: LiveReadingsRegionProps) => {
         >
           <div
             role="row"
-            className="flex items-center gap-4 px-3 py-1 text-xs uppercase tracking-wide text-neutral-secondary"
+            className="flex items-center gap-4 border-b border-neutral-border px-3 pb-2 text-xs uppercase tracking-wide text-neutral-secondary"
           >
             <span role="columnheader" className="flex-1">
               Device
@@ -97,6 +104,6 @@ export const LiveReadingsRegion = ({ readings }: LiveReadingsRegionProps) => {
           ))}
         </div>
       )}
-    </section>
+    </RegionCard>
   );
 };

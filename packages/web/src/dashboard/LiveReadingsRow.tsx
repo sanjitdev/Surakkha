@@ -4,6 +4,9 @@
  * `animate-live-pulse` glow on every `server_received_at` advancement;
  * `prefers-reduced-motion` is handled at the CSS layer. Read-only —
  * no per-row action affordances (Epic 4 territory).
+ *
+ * The "X seconds/minutes ago" formatter lives in `./ageFormat` so
+ * `RecentIncidentsRegion` can render the same age column in lockstep.
  */
 import {
   breachedMetric,
@@ -12,30 +15,14 @@ import {
 } from "@surakkha/shared/dashboard";
 import { useEffect, useRef } from "react";
 
+import { formatAge } from "./ageFormat";
 import { SEVERITY_CLASS, SEVERITY_GLYPH } from "./severityTokens";
 
 interface LiveReadingsRowProps {
   readonly reading: LatestReadingPayload;
 }
 
-const JUST_NOW_THRESHOLD_MS = 5_000;
-const MINUTES_THRESHOLD_MS = 60_000;
-const MS_PER_SECOND = 1_000;
-const MISSING_AGE_GLYPH = "\u2014";
 const DEVICE_ID_SHORT_PREFIX_LENGTH = 8;
-
-const formatAge = (serverReceivedAt: string, now: number): string => {
-  const ts = Date.parse(serverReceivedAt);
-  if (!Number.isFinite(ts)) return MISSING_AGE_GLYPH;
-  // Clamp clock-skew negative deltas to zero.
-  const deltaMs = Math.max(0, now - ts);
-  if (deltaMs < JUST_NOW_THRESHOLD_MS) return "just now";
-  if (deltaMs < MINUTES_THRESHOLD_MS) {
-    return `${Math.floor(deltaMs / MS_PER_SECOND)}s ago`;
-  }
-  const minutes = Math.floor(deltaMs / MINUTES_THRESHOLD_MS);
-  return `${minutes}m ago`;
-};
 
 // LITERAL class string — must not be built via template-literal
 // interpolation (Tailwind's JIT scanner only sees complete literals).
