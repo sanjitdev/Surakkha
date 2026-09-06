@@ -5,10 +5,14 @@
  * navigation), and renders `AppShell` once so the sidebar's
  * `drawerOpen` state and breakpoint listener survive navigation.
  *
- * Replaces the duplicated `<CurrentRoleProvider><AppShell>` wrapper
- * that previously appeared inline in every `<Route element={…}>`
- * in `main.tsx`. `<Outlet />` mounts the matched child route inside
- * the AppShell canvas.
+ * `configureApiClient` is NOT wired here — that lives in
+ * `<ApiClientProvider />` (above the `<Routes>` tree) so it runs
+ * before `LoginRoute` submits AND before any protected route fires
+ * its first `apiFetch`. Replaces the duplicated
+ * `<CurrentRoleProvider><AppShell>` wrapper that previously appeared
+ * inline in every `<Route element={…}>` in `main.tsx`.
+ * `<Outlet />` mounts the matched child route inside the AppShell
+ * canvas.
  */
 import { Outlet } from "react-router-dom";
 

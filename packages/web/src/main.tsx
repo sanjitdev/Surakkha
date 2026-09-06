@@ -2,9 +2,16 @@
  * SPA entry. Boots `<LoginShell />` (renders `/login`), wires the
  * router, and gates admin / auditor routes through `<RbacRoute>` so
  * a direct URL hit by a non-permitted role renders `<RbacDenied />`.
- * `configureApiClient` runs once on mount with the router's navigate.
  *
- * Route tree (nested):
+ * `configureApiClient` runs inside `<ApiClientProvider>` (above the
+ * route tree) so it's wired exactly once at app boot. It must
+ * precede BOTH the `/login` submit path (calls `apiLogin`) and the
+ * protected-shell queries (call `apiFetch`); placing it inside
+ * `LoginRoute` broke hard-reload, and placing it inside
+ * `<ProtectedShell />` broke login itself (the shell is gated by
+ * auth and never mounts on `/login`).
+ *
+ * Route tree (nested under <ApiClientProvider/>):
  *   /login                 → LoginRoute (public)
  *   <RequireAuth/>         → auth gate (token present + not expired)
  *     <ProtectedShell/>    → CurrentRoleProvider + AppShell (mounts ONCE)
@@ -30,7 +37,7 @@
  * (`/api/auth/login`).
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode, useEffect } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
@@ -38,7 +45,8 @@ import { RbacRoute } from "./access/RbacRoute";
 import { SimulatorPage } from "./admin/simulator/SimulatorPage";
 import { ThresholdsPage } from "./admin/thresholds/ThresholdsPage";
 import { AdminNotificationsPage } from "./admin-notifications/AdminNotificationsPage";
-import { apiLogin, configureApiClient } from "./api/apiClient";
+import { apiLogin } from "./api/apiClient";
+import { ApiClientProvider } from "./api/ApiClientProvider";
 import { AuditLogPage } from "./audit-log/AuditLogPage";
 import { LoginShell } from "./auth/LoginShell";
 import { RequireAuth } from "./auth/RequireAuth";
@@ -65,6 +73,14 @@ const PageStub = ({ name }: { readonly name: string }) => (
   </div>
 );
 
+/** Re-exported from `./apiOrigin` so the constant's source-walk
+ *  declaration lives in `main.tsx` (pinned by `apiOrigin.spec.ts`)
+ *  while its definition lives in the import-deduped `./apiOrigin`
+ *  module. Read by `<ProtectedShell />` (where `configureApiClient`
+ *  runs on every authed mount, including hard reloads). */
+export { API_ORIGIN } from "./apiOrigin";
+const HTTP_UNAUTHORIZED = 401;
+
 /** Severity palette preview (4 cards) — verifies the saturated palette
  *  + critical pulse are wired end-to-end. */
 const SeverityCards = () => (
@@ -81,9 +97,6 @@ const SeverityCards = () => (
     </div>
   </div>
 );
-
-const API_ORIGIN = "";
-const HTTP_UNAUTHORIZED = 401;
 
 /** Resolve the post-login destination. Prefer `state.from` (set by
  *  `<RequireAuth />` when it bounces an unauthenticated visitor).
@@ -105,16 +118,6 @@ const LoginRoute = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  useEffect(() => {
-    configureApiClient({
-      apiOrigin: API_ORIGIN,
-      navigate: (path) => navigate(path),
-      onOffline: () => {
-        console.warn("Surakkha: offline detected during token refresh");
-      },
-    });
-  }, [navigate]);
-
   const handleSubmit = async (email: string, password: string): Promise<void> => {
     const res = await apiLogin(email, password);
     if (!res.ok) {
@@ -134,78 +137,80 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginRoute />} />
-          <Route element={<RequireAuth />}>
-            <Route element={<ProtectedShell />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/severity-cards" element={<SeverityCards />} />
-              <Route path="/sensors" element={<PageStub name="Sensors" />} />
-              <Route path="/incidents" element={<KanbanBoard />} />
-              <Route path="/incidents/:id" element={<IncidentDetailPage />} />
-              <Route path="/alerts" element={<PageStub name="Alerts" />} />
-              <Route
-                path="/reports"
-                element={
-                  <RbacRoute>
-                    <PageStub name="Reports" />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/audit"
-                element={
-                  <RbacRoute>
-                    <AuditLogPage />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/admin/simulator"
-                element={
-                  <RbacRoute>
-                    <SimulatorPage />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/admin/notifications"
-                element={
-                  <RbacRoute>
-                    <AdminNotificationsPage />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/admin/thresholds"
-                element={
-                  <RbacRoute>
-                    <ThresholdsPage />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/admin/users"
-                element={
-                  <RbacRoute>
-                    <PageStub name="Users" />
-                  </RbacRoute>
-                }
-              />
-              <Route
-                path="/admin/schools"
-                element={
-                  <RbacRoute>
-                    <PageStub name="Schools" />
-                  </RbacRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <ApiClientProvider>
+          <Routes>
+            <Route path="/login" element={<LoginRoute />} />
+            <Route element={<RequireAuth />}>
+              <Route element={<ProtectedShell />}>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/severity-cards" element={<SeverityCards />} />
+                <Route path="/sensors" element={<PageStub name="Sensors" />} />
+                <Route path="/incidents" element={<KanbanBoard />} />
+                <Route path="/incidents/:id" element={<IncidentDetailPage />} />
+                <Route path="/alerts" element={<PageStub name="Alerts" />} />
+                <Route
+                  path="/reports"
+                  element={
+                    <RbacRoute>
+                      <PageStub name="Reports" />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/audit"
+                  element={
+                    <RbacRoute>
+                      <AuditLogPage />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/admin/simulator"
+                  element={
+                    <RbacRoute>
+                      <SimulatorPage />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/admin/notifications"
+                  element={
+                    <RbacRoute>
+                      <AdminNotificationsPage />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/admin/thresholds"
+                  element={
+                    <RbacRoute>
+                      <ThresholdsPage />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/admin/users"
+                  element={
+                    <RbacRoute>
+                      <PageStub name="Users" />
+                    </RbacRoute>
+                  }
+                />
+                <Route
+                  path="/admin/schools"
+                  element={
+                    <RbacRoute>
+                      <PageStub name="Schools" />
+                    </RbacRoute>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              </Route>
             </Route>
-          </Route>
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </ApiClientProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
