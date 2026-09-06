@@ -41,7 +41,7 @@ const COLUMN_HEADLINE: Record<KanbanColumn, string> = {
   OPEN_CRITICAL: "Open · Critical",
   OPEN_WARNING: "Open · Warning",
   ACKNOWLEDGED: "Acknowledged",
-  RESOLVED: "Resolved",
+  RESOLVED: "Pending Close",
 };
 
 /** Severity treatment for each column's header chip + outline.

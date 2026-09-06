@@ -392,7 +392,17 @@ The 7-state incident machine above is the source of truth. The Kanban UI on `/in
 | `Open · Critical` | `OPEN` with severity = `critical`          |
 | `Open · Warning`  | `OPEN` with severity = `warning`           |
 | `Acknowledged`    | `ACKNOWLEDGED`, `INSPECTING`               |
-| `Resolved`        | `SAFE`, `UNSAFE`, `MONITORING`, `RESOLVED` |
+| `Pending Close`   | `SAFE`, `UNSAFE`, `MONITORING`, `RESOLVED` |
+
+The rightmost column is labelled "Pending Close" rather than "Resolved"
+because three of the four states it carries (`SAFE`, `UNSAFE`, `MONITORING`)
+still have an outstanding Operator action — a single click on the
+incident's `Resolve` button transitions the row to the terminal `RESOLVED`
+state. Naming the column "Resolved" hid that fact behind a closed-looking
+label; "Pending Close" makes the outstanding action obvious from the
+Kanban alone. The card's per-row status pill (e.g., "Safe", "Monitoring",
+"Resolved") still reflects each row's actual `IncidentState`, so the
+column label and the row pill are not redundant.
 
 Rules:
 
