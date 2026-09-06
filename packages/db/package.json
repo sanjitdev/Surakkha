@@ -16,6 +16,7 @@
     "seed:rules": "node seed-rules.mjs",
     "seed:incidents": "node seed-incidents.mjs",
     "db:seed": "pnpm migrate && pnpm seed:users && pnpm seed:devices && pnpm seed:rules && pnpm seed:incidents",
+    "db:seed:docker": "node seed-docker.mjs",
     "generate": "prisma generate",
     "studio": "prisma studio",
     "test": "vitest run",

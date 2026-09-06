@@ -22,6 +22,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "db:seed": "pnpm --filter @surakkha/db db:seed",
+    "db:seed:docker": "pnpm --filter @surakkha/db db:seed:docker",
     "prepare": "husky",
     "clean": "pnpm -r clean && rm -rf node_modules"
   },
