@@ -6,6 +6,7 @@
 import { type RuleRow } from "@surakkha/shared";
 import { useState } from "react";
 
+import { PageHeader } from "../../components/PageHeader";
 import { type ToastEntry, ToastRegion } from "../../incidents/toast";
 
 import { EditRuleModal, type NewRuleForm, NewRuleModal } from "./ThresholdsModals";
@@ -102,31 +103,33 @@ export const ThresholdsPopulatedView = ({
 
   return (
     <div data-testid="thresholds-page" className="flex flex-col gap-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-neutral-body">Thresholds</h1>
-        <div className="flex items-center gap-3">
-          <span data-testid="thresholds-active-count" className="text-md text-neutral-secondary">
-            {activeCount} active
-          </span>
-          <label className="text-md text-neutral-secondary">
-            <input
-              type="checkbox"
-              data-testid="thresholds-show-history"
-              checked={isShown}
-              onChange={(e) => onToggleHistory(e.target.checked)}
-            />
-            <span className="ml-1">Show history</span>
-          </label>
-          <button
-            type="button"
-            data-testid="thresholds-new-rule"
-            onClick={() => setCreating(true)}
-            className="rounded-input border border-primary bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
-          >
-            New Rule
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Thresholds"
+        actions={
+          <>
+            <span data-testid="thresholds-active-count" className="text-md text-neutral-secondary">
+              {activeCount} active
+            </span>
+            <label className="text-md text-neutral-secondary">
+              <input
+                type="checkbox"
+                data-testid="thresholds-show-history"
+                checked={isShown}
+                onChange={(e) => onToggleHistory(e.target.checked)}
+              />
+              <span className="ml-1">Show history</span>
+            </label>
+            <button
+              type="button"
+              data-testid="thresholds-new-rule"
+              onClick={() => setCreating(true)}
+              className="rounded-input border border-primary bg-primary px-4 py-2 text-md font-medium text-white hover:bg-primary-hover"
+            >
+              New Rule
+            </button>
+          </>
+        }
+      />
 
       <table data-testid="thresholds-table" className="w-full border-collapse bg-neutral-surface">
         <thead>

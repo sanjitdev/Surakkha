@@ -4,6 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Surakkha</title>
+    <!--
+      Inter variable font (DESIGN.md §Typography — "Inter (variable),
+      weights 400/500/600/700"). Served from rsms.me, the canonical
+      Inter CDN. `preconnect` warms the TLS handshake so the
+      woff2-variations file lands before first paint; the stylesheet
+      also pre-hints the recommended render weights.
+
+      Tailwind's `font-family: ["Inter", system-ui, ...]` and the
+      `html, body { font-family: Inter, ... }` rule in `index.css`
+      both assume Inter is loaded — without this link the browser
+      silently falls through to the OS default (Segoe UI / San
+      Francisco / Roboto) and every text surface loses the
+      "instrument-panel" voice DESIGN.md specifies.
+    -->
+    <link rel="preconnect" href="https://rsms.me/" />
+    <link rel="preconnect" href="https://rsms.me/" crossorigin />
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
   </head>
   <body>
     <div id="root"></div>

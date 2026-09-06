@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 
 import { RbacDenied } from "../access/RbacDenied";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
+import { PageHeader } from "../components/PageHeader";
 
 import { AdminAuditLogRbacDeniedError } from "./AdminAuditLogRbacDeniedError";
 import { type AuditLogHookFilters, useAuditLogList } from "./useAuditLogList";
@@ -149,10 +150,10 @@ export const AuditLogPage = ({ testId = "audit-log-page" }: AuditLogPageProps) =
 
   return (
     <div data-testid={testId} className="p-6">
-      <h1 className="mb-2 text-2xl font-semibold text-neutral-body">Audit Log</h1>
-      <p className="mb-6 text-md text-neutral-secondary">
-        Admin-only audit trail — read-only record of every audit emit across the platform.
-      </p>
+      <PageHeader
+        title="Audit Log"
+        description="Admin-only audit trail — read-only record of every audit emit across the platform."
+      />
       <AuditLogFilterPanel
         actorIds={actorIds}
         onRemoveActor={(id) => setActorIds((cur) => cur.filter((a) => a !== id))}

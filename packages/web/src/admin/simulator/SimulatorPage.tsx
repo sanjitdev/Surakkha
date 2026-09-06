@@ -6,6 +6,7 @@
  */
 import { useEffect } from "react";
 
+import { PageHeader } from "../../components/PageHeader";
 import { ToastRegion, useToasts } from "../../incidents/toast";
 
 import { DeviceRow } from "./DeviceRow";
@@ -59,8 +60,7 @@ export const SimulatorPage = () => {
   if (statusQuery.isLoading || devicesQuery.isLoading) {
     return (
       <div data-testid="simulator-page-loading">
-        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
-        <p className="mt-2 text-md text-neutral-secondary">Loading…</p>
+        <PageHeader title="Simulator" description="Loading…" />
       </div>
     );
   }
@@ -68,7 +68,7 @@ export const SimulatorPage = () => {
   if (statusQuery.data?.enabled === false) {
     return (
       <div data-testid="simulator-page-disabled" className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <PageHeader title="Simulator" />
         <DisabledBanner />
       </div>
     );
@@ -77,7 +77,7 @@ export const SimulatorPage = () => {
   if (statusQuery.isError) {
     return (
       <div data-testid="simulator-page-status-error" className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <PageHeader title="Simulator" />
         <p className="rounded-input border border-severity-critical-value bg-severity-critical-bg px-4 py-2 text-md text-severity-critical-text">
           Failed to load simulator status. Reload the page.
         </p>
@@ -88,7 +88,7 @@ export const SimulatorPage = () => {
   if (devicesQuery.isError) {
     return (
       <div data-testid="simulator-page-error" className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
+        <PageHeader title="Simulator" />
         <p className="rounded-input border border-severity-critical-value bg-severity-critical-bg px-4 py-2 text-md text-severity-critical-text">
           Failed to load devices.
         </p>
@@ -108,12 +108,14 @@ export const SimulatorPage = () => {
 
   return (
     <div data-testid="simulator-page" className="flex flex-col gap-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-neutral-body">Simulator</h1>
-        <span data-testid="simulator-device-count" className="text-md text-neutral-secondary">
-          {devices.length} device{devices.length === 1 ? "" : "s"}
-        </span>
-      </header>
+      <PageHeader
+        title="Simulator"
+        actions={
+          <span data-testid="simulator-device-count" className="text-md text-neutral-secondary">
+            {devices.length} device{devices.length === 1 ? "" : "s"}
+          </span>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {devices.map((d) => (

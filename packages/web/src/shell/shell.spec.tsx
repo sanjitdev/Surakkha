@@ -178,8 +178,17 @@ describe("Story 1.2b — topbar", () => {
 
   it("renders the brand mark with the primary gradient", () => {
     renderShell("Admin");
-    const mark = screen.getByText("S");
-    const parent = mark.parentElement;
+    // Both the TopBar and the Sidebar (Story 5.x sidebar lockup) carry
+    // an "S" mark; the test pins the TopBar's gradient specifically so
+    // a future lockup variant doesn't silently satisfy the assertion
+    // against the wrong element. Filter to the spans carrying the "S"
+    // glyph (the hamburger's three decorative spans are empty).
+    const topbar = screen.getByTestId("topbar");
+    const marks = Array.from(topbar.querySelectorAll("span")).filter(
+      (s) => (s.textContent ?? "").trim() === "S",
+    );
+    expect(marks.length).toBeGreaterThan(0);
+    const parent = marks[0]?.parentElement;
     expect(parent?.style.backgroundImage).toBe("linear-gradient(135deg, #1E5BB8 0%, #0EA5E9 100%)");
   });
 });

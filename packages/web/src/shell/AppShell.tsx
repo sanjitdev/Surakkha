@@ -6,7 +6,8 @@
  * hydration.
  */
 import { type Role } from "@surakkha/shared/rbac";
-import { type PropsWithChildren, useEffect, useState } from "react";
+import { type PropsWithChildren, useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { useCurrentRole } from "../auth/CurrentRoleContext";
 import { SeverityBanner } from "../incidents/SeverityBanner";
@@ -44,8 +45,16 @@ interface AppShellProps extends PropsWithChildren {
 export const AppShell = ({ currentRole, children }: AppShellProps) => {
   const contextRole = useCurrentRole();
   const effectiveRole = currentRole ?? contextRole;
+  const navigate = useNavigate();
   const [breakpoint, setBreakpoint] = useState<Breakpoint>("lg");
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Sign-out: the UserMenu clears the token store; we route back to
+  // /login. Routed here (not in the UserMenu) so the TopBar stays
+  // unit-testable without a router.
+  const handleSignOut = useCallback((): void => {
+    navigate("/login", { replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     const update = () => setBreakpoint(detectBreakpoint());
@@ -74,7 +83,7 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
         <SeverityBanner />
       </div>
 
-      <TopBar onHamburger={() => setDrawerOpen(true)} />
+      <TopBar onHamburger={() => setDrawerOpen(true)} onSignOut={handleSignOut} />
 
       <div className="flex">
         <Sidebar

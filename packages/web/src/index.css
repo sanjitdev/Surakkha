@@ -42,6 +42,7 @@
   html,
   body {
     font-family:
+      "Inter var",
       Inter,
       system-ui,
       -apple-system,
@@ -55,6 +56,19 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-variant-numeric: tabular-nums;
+    /*
+     * Inter stylistic sets (DESIGN.md §Typography). Premium
+     * instrument-panel UIs lean on:
+     *   cv11  — single-storey 'a' (matches the brand mark's "S")
+     *   ss01  — open digits (4 / 6 / 9 with open apertures, easier
+     *           to read at a glance in KPI numerals)
+     *   ss03  — curly 'b' / 'd' / 'p' / 'q' (more legible in dense
+     *           body text)
+     * The font itself ships these as available features; turning
+     * them on at the document level means every surface gets them
+     * without per-component opt-ins.
+     */
+    font-feature-settings: "cv11", "ss01", "ss03";
   }
 
   @media (prefers-color-scheme: dark) {

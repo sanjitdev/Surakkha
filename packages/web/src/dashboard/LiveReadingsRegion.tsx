@@ -42,7 +42,19 @@ export const LiveReadingsRegion = ({ readings }: LiveReadingsRegionProps) => {
       className="rounded-card border border-neutral-border bg-neutral-surface p-density-card"
     >
       <header className="flex items-center justify-between">
-        <h2 className="text-md font-semibold text-neutral-body">Live Readings</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-md font-semibold text-neutral-body">Live Readings</h2>
+          {/* "LIVE" pulse indicator — primary-coloured 8px dot with the
+              `live-pulse` motion token (1200ms transient outline).
+              Tells the operator this surface is realtime without
+              needing to read the label. */}
+          <span
+            aria-hidden
+            data-testid="dashboard-live-readings-pulse"
+            className="inline-block size-2 rounded-full bg-primary animate-live-pulse"
+          />
+          <span className="text-xs font-semibold uppercase tracking-wide text-primary">Live</span>
+        </div>
         <span className="text-xs text-neutral-secondary">
           {sortedReadings.length === 0
             ? "0 devices"

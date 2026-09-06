@@ -30,6 +30,29 @@ const VIEWER: Role = "Viewer";
 const DISABLED_BELL_TESTID = "notification-bell-disabled";
 const DISABLED_BELL_TITLE = "Notifications are not available for your role.";
 
+/** Bell glyph. The earlier `\u2407` (the "alert symbol" ␇) read
+ *  as a triangle/flag on the white topbar and failed to telegraph
+ *  "notifications" — a proper bell-shaped SVG fixes both the
+ *  recognition gap AND the WCAG contrast on the disabled variant.
+ *  Single source of truth so the active + disabled variants stay
+ *  pixel-identical apart from colour. */
+const BellGlyph = ({ className }: { readonly className: string }) => (
+  <svg
+    aria-hidden="true"
+    focusable="false"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.6}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M4.5 14.5h11l-1.5-2v-3.5a4 4 0 0 0-8 0v3.5l-1.5 2Z" />
+    <path d="M8 16.5a2 2 0 0 0 4 0" />
+  </svg>
+);
+
 const SEVERITY_BORDER_CLASS: Record<NotificationSeverity, string> = {
   info: "border-severity-healthy-value",
   warning: "border-severity-warning-value",
@@ -245,9 +268,7 @@ const DisabledNotificationBell = () => (
     title={DISABLED_BELL_TITLE}
     className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-input text-neutral-disabled"
   >
-    <span aria-hidden className="text-lg">
-      {"\u2407"}
-    </span>
+    <BellGlyph className="size-5" />
   </button>
 );
 
@@ -354,9 +375,7 @@ const OpenNotificationBell = ({
         onClick={handleBellClick}
         className="relative inline-flex min-h-touch min-w-touch items-center justify-center rounded-input text-neutral-body hover:bg-neutral-page"
       >
-        <span aria-hidden className="text-lg">
-          {"\u2407"}
-        </span>
+        <BellGlyph className="size-5" />
         {unreadCount > 0 ? (
           <span
             data-testid="notification-bell-badge"

@@ -230,9 +230,15 @@ export const apiLogin = async (email: string, password: string): Promise<Respons
     const body: unknown = await res.json();
     const parsed = AccessTokenSchema.safeParse(body);
     if (parsed.success) {
+      // Stash the email alongside the token so the TopBar can greet
+      // the viewer on hard-reload without a `/me` round-trip. The
+      // JWT does not carry the email; the store is the only place
+      // this metadata lives. Clear via `clearTokens()` to wipe both
+      // fields in lockstep.
       useTokenStore.getState().setAccessToken({
         token: parsed.data.access_token,
         expiresIn: parsed.data.expires_in,
+        email,
       });
     }
   }

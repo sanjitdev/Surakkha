@@ -1,9 +1,12 @@
 /**
  * `TopBar` — sticky 56px-tall header. Hamburger (visible < 1024px),
- * brand mark + wordmark, placeholder-only search, and the
- * NotificationBell slot. Visual contract: DESIGN.md §TopBar.
+ * brand mark + wordmark, placeholder-only search, NotificationBell
+ * slot, and the UserMenu identity slot. Visual contract:
+ * DESIGN.md §TopBar.
  */
 import { NotificationBell } from "../notifications/NotificationBell";
+
+import { UserMenu } from "./UserMenu";
 
 const TOPBAR_HEIGHT_PX = 56;
 const BRAND_GRADIENT =
@@ -11,9 +14,17 @@ const BRAND_GRADIENT =
 
 interface TopBarProps {
   readonly onHamburger: () => void;
+  /**
+   * Called when the user selects "Sign out" from the UserMenu.
+   * The TopBar doesn't navigate directly — it signals upward — so
+   * the parent (AppShell) owns the router-aware redirect to
+   * `/login`. Decoupling keeps the TopBar unit-testable without a
+   * `<BrowserRouter />`.
+   */
+  readonly onSignOut: () => void;
 }
 
-export const TopBar = ({ onHamburger }: TopBarProps) => (
+export const TopBar = ({ onHamburger, onSignOut }: TopBarProps) => (
   <header
     data-testid="topbar"
     className="sticky top-0 z-30 flex items-center gap-3 bg-neutral-surface px-4 shadow-elevation-topbar lg:px-6"
@@ -57,6 +68,9 @@ export const TopBar = ({ onHamburger }: TopBarProps) => (
     <div className="ml-auto flex items-center gap-3">
       <div data-testid="notification-bell-slot">
         <NotificationBell />
+      </div>
+      <div data-testid="user-menu-slot" className="h-10 border-l border-neutral-border pl-3">
+        <UserMenu onSignOut={onSignOut} />
       </div>
     </div>
   </header>

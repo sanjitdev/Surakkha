@@ -51,6 +51,7 @@ import { AuditLogPage } from "./audit-log/AuditLogPage";
 import { LoginShell } from "./auth/LoginShell";
 import { RequireAuth } from "./auth/RequireAuth";
 import { KpiStat } from "./components/KpiStat";
+import { PageHeader } from "./components/PageHeader";
 import { Dashboard } from "./dashboard/Dashboard";
 import { IncidentDetailPage } from "./incidents/IncidentDetailPage";
 import { KanbanBoard } from "./incidents/KanbanBoard";
@@ -66,10 +67,7 @@ if (root === null) {
 
 const PageStub = ({ name }: { readonly name: string }) => (
   <div data-testid={`page-stub-${name.toLowerCase()}`}>
-    <h1 className="text-2xl font-semibold text-neutral-body">{name}</h1>
-    <p className="mt-2 text-md text-neutral-secondary">
-      Story roadmap wires this surface in a later slice.
-    </p>
+    <PageHeader title={name} description="Story roadmap wires this surface in a later slice." />
   </div>
 );
 

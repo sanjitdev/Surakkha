@@ -17,6 +17,7 @@ import { useMemo, useState } from "react";
 
 import { RbacDenied } from "../access/RbacDenied";
 import { useCurrentRole } from "../auth/CurrentRoleContext";
+import { PageHeader } from "../components/PageHeader";
 import { AdminNotificationsRbacDeniedError } from "../notifications/AdminNotificationsRbacDeniedError";
 import {
   type AdminNotificationFilters,
@@ -126,10 +127,10 @@ export const AdminNotificationsPage = ({
 
   return (
     <div data-testid={testId} className="p-6">
-      <h1 className="mb-2 text-2xl font-semibold text-neutral-body">Notifications</h1>
-      <p className="mb-6 text-md text-neutral-secondary">
-        Audit-lens view across all roles and acknowledgment states.
-      </p>
+      <PageHeader
+        title="Notifications"
+        description="Audit-lens view across all roles and acknowledgment states."
+      />
 
       <section
         aria-labelledby="severity-filter-heading"

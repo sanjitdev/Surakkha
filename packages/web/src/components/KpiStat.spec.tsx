@@ -28,7 +28,13 @@ import { KpiStat } from "./KpiStat";
 const SEVERITY = {
   healthy: { value: "#1F9D55", text: "#0F6B3A", fill: "#16A34A", bg: "#E8F6EE", glow: "#1F9D5533" },
   warning: { value: "#D97706", text: "#92400E", fill: "#F59E0B", bg: "#FFF3DA", glow: "#F59E0B33" },
-  critical: { value: "#DC2626", text: "#7F1D1D", fill: "#EF4444", bg: "#FEE2E2", glow: "#EF444433" },
+  critical: {
+    value: "#DC2626",
+    text: "#7F1D1D",
+    fill: "#EF4444",
+    bg: "#FEE2E2",
+    glow: "#EF444433",
+  },
   offline: { value: "#64748B", text: "#475569", fill: "#94A3B8", bg: "#F1F5F9", glow: "#64748B33" },
 } as const;
 
@@ -52,8 +58,13 @@ describe("Story 1.9 — AC1: sample severity card uses the registered tokens", (
     // glow) all resolve to the critical severity.
     expect(card.className).toContain("border-severity-critical-value");
     expect(card.className).toContain("border-l-4");
-    // The shadow string contains the critical glow colour.
-    expect(card.className).toContain("shadow-elevation-card");
+    // The card uses the shared `.metric-card` global class — that
+    // class supplies `box-shadow: elevation.card` so the rendered
+    // shadow is still present without doubling the utility class
+    // (a regression that re-adds `shadow-elevation-card` to the
+    // element-level className would re-stack the shadow stack and
+    // read as visibly heavier than the other cards).
+    expect(card.className).toContain("metric-card");
   });
 
   it("applies the healthy palette when severity is healthy", () => {

@@ -44,6 +44,19 @@ const COLUMN_HEADLINE: Record<KanbanColumn, string> = {
   RESOLVED: "Resolved",
 };
 
+/** Severity treatment for each column's header chip + outline.
+ *  - OPEN_CRITICAL → critical (the lane where fresh criticals land)
+ *  - OPEN_WARNING  → warning  (the lane where fresh warnings land)
+ *  - ACKNOWLEDGED  → healthy  (in-flight, de-escalated, but not yet SAFE)
+ *  - RESOLVED      → offline  (neutral; not active state)
+ */
+const COLUMN_SEVERITY: Record<KanbanColumn, "critical" | "warning" | "healthy" | "offline"> = {
+  OPEN_CRITICAL: "critical",
+  OPEN_WARNING: "warning",
+  ACKNOWLEDGED: "healthy",
+  RESOLVED: "offline",
+};
+
 const COLUMN_ACCENT: Record<KanbanColumn, string> = {
   OPEN_CRITICAL: "border-severity-critical-value",
   OPEN_WARNING: "border-severity-warning-value",
@@ -189,39 +202,51 @@ interface KanbanColumnGridProps {
 
 const KanbanColumnGrid = ({ columns, onCardClick }: KanbanColumnGridProps) => (
   <>
-    {columns.map(({ column, incidents }) => (
-      <section
-        key={column}
-        data-testid={`kanban-column-${column}`}
-        aria-label={COLUMN_HEADLINE[column]}
-        className={`flex min-h-[40vh] flex-col gap-3 rounded-card border bg-neutral-surface p-3 ${COLUMN_ACCENT[column]}`}
-      >
-        <header className="flex items-center justify-between">
-          <h2 className="text-md font-semibold text-neutral-body">{COLUMN_HEADLINE[column]}</h2>
-          <span
-            data-testid={`kanban-column-${column}-count`}
-            className="text-xs text-neutral-secondary"
-          >
-            {incidents.length}
-          </span>
-        </header>
-        {incidents.length === 0 ? (
-          <p
-            data-testid={`kanban-column-${column}-empty`}
-            className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
-          >
-            No incidents
-          </p>
-        ) : (
-          <ul data-testid={`kanban-column-${column}-list`} className="flex flex-col gap-2">
-            {incidents.map((incident) => (
-              <li key={incident.id} className="list-none">
-                <KanbanCard incident={incident} onClick={onCardClick} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    ))}
+    {columns.map(({ column, incidents }) => {
+      const severity = COLUMN_SEVERITY[column];
+      return (
+        <section
+          key={column}
+          data-testid={`kanban-column-${column}`}
+          aria-label={COLUMN_HEADLINE[column]}
+          className={`flex min-h-[40vh] flex-col gap-3 rounded-card border bg-neutral-surface p-3 ${COLUMN_ACCENT[column]}`}
+        >
+          <header className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-md font-semibold text-neutral-body">
+              <span
+                aria-hidden
+                data-testid={`kanban-column-${column}-severity-chip`}
+                className={`inline-block size-2 rounded-full bg-severity-${severity}-value`}
+              />
+              <span className={`status-pill status-pill--${severity}`}>
+                {COLUMN_HEADLINE[column]}
+              </span>
+            </h2>
+            <span
+              data-testid={`kanban-column-${column}-count`}
+              className="rounded-pill border border-neutral-border bg-neutral-surface px-2 py-0.5 text-xs font-medium text-neutral-secondary"
+            >
+              {incidents.length}
+            </span>
+          </header>
+          {incidents.length === 0 ? (
+            <p
+              data-testid={`kanban-column-${column}-empty`}
+              className="rounded-input border border-dashed border-neutral-border p-6 text-center text-sm text-neutral-secondary"
+            >
+              No incidents
+            </p>
+          ) : (
+            <ul data-testid={`kanban-column-${column}-list`} className="flex flex-col gap-3">
+              {incidents.map((incident) => (
+                <li key={incident.id} className="list-none">
+                  <KanbanCard incident={incident} onClick={onCardClick} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      );
+    })}
   </>
 );

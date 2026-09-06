@@ -10,6 +10,7 @@
 import { type RuleRow } from "@surakkha/shared";
 import { useMemo, useState } from "react";
 
+import { PageHeader } from "../../components/PageHeader";
 import { useToasts } from "../../incidents/toast";
 
 import { type NewRuleForm } from "./ThresholdsModals";
@@ -111,8 +112,7 @@ export const ThresholdsPage = () => {
   if (listQuery.isLoading) {
     return (
       <div data-testid="thresholds-page-loading">
-        <h1 className="text-2xl font-semibold text-neutral-body">Thresholds</h1>
-        <p className="mt-2 text-md text-neutral-secondary">Loading…</p>
+        <PageHeader title="Thresholds" description="Loading…" />
       </div>
     );
   }
@@ -120,7 +120,7 @@ export const ThresholdsPage = () => {
   if (listQuery.isError) {
     return (
       <div data-testid="thresholds-page-error" className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold text-neutral-body">Thresholds</h1>
+        <PageHeader title="Thresholds" />
         <p className="rounded-input border border-severity-critical-value bg-severity-critical-bg px-4 py-2 text-md text-severity-critical-text">
           Failed to load thresholds.
         </p>

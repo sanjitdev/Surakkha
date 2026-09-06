@@ -31,6 +31,22 @@ import type { Config } from "tailwindcss";
 // identifiers — Tailwind's pattern is neither.
 const tailwindConfig = {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Safelist dynamically-constructed severity class names so the
+  // JIT scanner picks them up even though the runtime string is
+  // built from a record lookup, not a literal in source. The
+  // patterns cover:
+  //   - severity dot/chip backgrounds resolved by KanbanBoard's
+  //     COLUMN_SEVERITY map (`bg-severity-<x>-value`)
+  //   - status-pill modifiers used by the column headers
+  //     (`status-pill--<x>`) — these are global classes in
+  //     index.css, so the safelist pin is moot for them, but the
+  //     literal keeps the contract visible in one place.
+  safelist: [
+    "bg-severity-healthy-value",
+    "bg-severity-warning-value",
+    "bg-severity-critical-value",
+    "bg-severity-offline-value",
+  ],
   darkMode: "media", // Story 1.2a AC: system-default, no manual toggle in v1.
   theme: {
     // Replace the default spacing scale with the one DESIGN.md mandates:
