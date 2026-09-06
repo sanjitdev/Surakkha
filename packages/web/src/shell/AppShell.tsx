@@ -11,21 +11,25 @@
  *   - The fixed Sidebar (rendered at `lg`+) is `position: fixed`,
  *     anchored to `(left: 0, top: 56px)` with `width: 240px` and
  *     `height: calc(100vh - 56px)`. It does NOT participate in the
- *     document flow, so the canvas offsets it via `lg:pl-[240px]`.
+ *     document flow, so the canvas offsets it via `lg:pl-[264px]`
+ *     — that's 240px to clear the rail PLUS a 24px gutter
+ *     (DESIGN.md §Layout & Spacing `lg` page gutter) so the canvas
+ *     reads as "page beside rail" rather than "page flush against
+ *     rail".
  *   - The `<main>` clears the TopBar with `pt-[56px]` and clears
- *     the rail with `lg:pl-[240px]`. Below `lg` the rail collapses
- *     and the canvas's `lg:pl-[240px]` flips off, so the page
+ *     the rail with `lg:pl-[264px]`. Below `lg` the rail collapses
+ *     and the canvas's `lg:pl-[264px]` flips off, so the page
  *     content reflows to full width.
  *   - The canvas provides the page gutter (DESIGN.md §Layout &
  *     Spacing: 24px / 16px / 12px per breakpoint). At `lg+` it's
  *     `pr-6` (right-only) so the `padding-left` slot stays free for
- *     `lg:pl-[240px]` to clear the rail — using `px-6` here would
- *     let the shorthand `padding-left` cascade-order against
- *     `lg:pl-[240px]` and leave content touching (or sliding under)
- *     the rail. At `md` / `sm` the rail is collapsed and
- *     `lg:pl-[240px]` doesn't activate, so the canvas falls back to
- *     symmetric `px-{4|3}` to keep the DESIGN.md gutter on both
- *     sides.
+ *     the combined `lg:pl-[264px]` rail-clear + left-gutter rule —
+ *     using `px-6` here would let the shorthand `padding-left`
+ *     cascade-order against `lg:pl-[264px]` and leave content
+ *     touching (or sliding under) the rail. At `md` / `sm` the rail
+ *     is collapsed and `lg:pl-[264px]` doesn't activate, so the
+ *     canvas falls back to symmetric `px-{4|3}` to keep the
+ *     DESIGN.md gutter on both sides.
  *   - The banner slots stay in the document flow above the TopBar
  *     in DOM order. As the user scrolls, the banner content scrolls
  *     behind the fixed TopBar (matching the previous sticky-TopBar
@@ -57,14 +61,17 @@ const detectBreakpoint = (): Breakpoint => {
 // Canvas horizontal padding per breakpoint (DESIGN.md §Layout &
 // Spacing: 24px / 16px / 12px).
 //
-//   - At `lg+` we use `pr-6` + the `lg:pl-[240px]` rail-clear declared
-//     on the `<main>`. `pr-*` is right-only so the `padding-left`
-//     slot stays free for the rail-clear; using `px-6` here would let
-//     the shorthand `padding-left` cascade-order against
-//     `lg:pl-[240px]` and leave content sitting at x=24 (behind the
-//     240px rail).
+//   - At `lg+` we use `pr-6` (24px right gutter) + the `lg:pl-[Npx]`
+//     rail-clear on the `<main>`, where `N = SIDEBAR_WIDTH_PX +
+//     RAIL_GUTTER_PX` (240 + 24 = 264). The combined longhand
+//     arbitrary keeps the cascade clean — there's only ever ONE
+//     rule setting `padding-left` at `lg+` — AND it puts a 24px
+//     gap between the rail and the page content so the canvas reads
+//     as "page beside rail" rather than "page flush against rail".
+//     `pr-*` is right-only so the shorthand `padding-left` from
+//     `px-*` can't cascade-order against the rail-clear.
 //   - At `md` / `sm` the rail is collapsed (`hidden lg:block`), so
-//     `lg:pl-[240px]` doesn't activate and the canvas reflows to
+//     the rail-clear doesn't activate and the canvas reflows to
 //     full width. We restore symmetric `px-*` here so the canvas
 //     keeps the DESIGN.md page gutter on BOTH sides (previous
 //     `pr-*`-only variant left content hugging the left viewport
@@ -75,6 +82,11 @@ const CANVAS_PADDING_CLASS: Record<Breakpoint, string> = {
   sm: "px-3",
 };
 const SIDEBAR_WIDTH_PX = 240;
+// Gap between the fixed Sidebar and the canvas content at `lg+`.
+// Equals the DESIGN.md page gutter at `lg` so the left and right
+// gutters read as visually equal (`lg:pl-[SIDEBAR_WIDTH_PX +
+// RAIL_GUTTER_PX]` = 264px → 240px rail-clear + 24px breathing room).
+const RAIL_GUTTER_PX = 24;
 const CANVAS_TOP_OFFSET_PX = TOPBAR_HEIGHT;
 
 interface AppShellProps extends PropsWithChildren {
@@ -132,16 +144,18 @@ export const AppShell = ({ currentRole, children }: AppShellProps) => {
 
       <main
         data-testid="app-canvas"
-        // `pt-[56px]` clears the fixed TopBar; `lg:pl-[240px]` clears
-        // the fixed Sidebar (off below `lg` so the canvas reflows to
-        // full width when the rail collapses); the breakpoint class
-        // (`pr-6` at `lg+`, `px-4` at `md`, `px-3` at `sm`) provides
-        // the DESIGN.md page gutter — right-only at `lg+` to keep the
+        // `pt-[56px]` clears the fixed TopBar; `lg:pl-[264px]`
+        // clears the fixed Sidebar (240px) AND adds a 24px gutter
+        // between the rail and the canvas content (off below `lg`
+        // so the canvas reflows to full width when the rail
+        // collapses); the breakpoint class (`pr-6` at `lg+`,
+        // `px-4` at `md`, `px-3` at `sm`) provides the DESIGN.md
+        // page gutter — right-only at `lg+` to keep the
         // `padding-left` slot free for the rail-clear, symmetric at
         // `md` / `sm` so content doesn't hug the left viewport edge.
         // The arbitrary values are unavoidable because the design
         // tokens expose 4/8/12/16/24/32/48/64 only.
-        className={`min-h-screen pt-[${CANVAS_TOP_OFFSET_PX}px] lg:pl-[${SIDEBAR_WIDTH_PX}px] ${CANVAS_PADDING_CLASS[breakpoint]}`}
+        className={`min-h-screen pt-[${CANVAS_TOP_OFFSET_PX}px] lg:pl-[${SIDEBAR_WIDTH_PX + RAIL_GUTTER_PX}px] ${CANVAS_PADDING_CLASS[breakpoint]}`}
       >
         {children}
       </main>

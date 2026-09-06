@@ -7,10 +7,13 @@
  *   - viewport <  1024px:  hamburger visible, fixed sidebar hidden,
  *                          drawer sidebar in DOM
  *   - viewport >= 1024px:  canvas right gutter is 24px (pr-6) and
- *                          the rail-clear is `lg:pl-[240px]`. The
- *                          left side uses longhand `lg:pl-[240px]`
- *                          (not `px-6`) so the cascade doesn't push
- *                          content back to x=24 behind the rail.
+ *                          the rail-clear is `lg:pl-[264px]`
+ *                          (= 240px rail-clear + 24px gutter, so
+ *                          the canvas reads as "page beside rail"
+ *                          rather than "page flush against rail").
+ *                          The left side uses a single longhand
+ *                          arbitrary (not `px-6`) so the cascade
+ *                          doesn't push content back to x=24.
  *   - viewport 768 - 1023px: canvas horizontal padding is symmetric
  *                          16px (px-4) — the rail is collapsed at
  *                          `md` so the canvas is full-width.
@@ -120,27 +123,29 @@ describe("Story 1.2b — canvas horizontal padding per breakpoint", () => {
   // The canvas horizontal padding has two regimes:
   //
   //   - At `lg+` the rail is fixed and the canvas uses `pr-6` for
-  //     the right gutter + `lg:pl-[240px]` to clear the rail. The
-  //     right-only padding keeps the `padding-left` slot free for
-  //     the rail-clear — using `px-6` here would let the shorthand
-  //     `padding-left` cascade-order against `lg:pl-[240px]` and
-  //     leave content sitting at x=24, behind the 240px rail.
+  //     the right gutter + `lg:pl-[264px]` to clear the rail AND
+  //     add a 24px gutter on the left. The combined longhand
+  //     arbitrary keeps the cascade clean — there's only ever ONE
+  //     rule setting `padding-left` at `lg+`. Right-only padding
+  //     (`pr-6` vs `px-6`) keeps the shorthand `padding-left` from
+  //     cascade-ordering against `lg:pl-[264px]` and leaving
+  //     content at x=24 (behind the rail).
   //   - At `md` / `sm` the rail is collapsed (`hidden lg:block`) and
-  //     `lg:pl-[240px]` doesn't activate, so the canvas falls back
+  //     `lg:pl-[264px]` doesn't activate, so the canvas falls back
   //     to symmetric `px-{4|3}` to keep the DESIGN.md gutter on
   //     BOTH sides. (Earlier `pr-*`-only variants left content
   //     hugging the left viewport edge on mobile / tablet.)
   //
   // The `lg:` prefix governs CSS application only — the literal
-  // `pl-[240px]` substring is present in the className at every
+  // `pl-[264px]` substring is present in the className at every
   // breakpoint, so we can't pin "absence" via a substring check.
 
-  it(">= 1024px applies pr-6 (24px right gutter) + lg:pl-[240px] rail clear", () => {
+  it(">= 1024px applies pr-6 (24px right gutter) + lg:pl-[264px] rail clear + left gutter", () => {
     setViewport(1280);
     renderShell("Admin");
     const cls = screen.getByTestId("app-canvas").className;
     expect(cls).toContain("pr-6");
-    expect(cls).toContain("lg:pl-[240px]");
+    expect(cls).toContain("lg:pl-[264px]");
   });
 
   it("768 - 1023px applies px-4 (16px symmetric gutter)", () => {
