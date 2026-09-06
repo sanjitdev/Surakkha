@@ -21,6 +21,7 @@
     "format:check": "prettier --check .",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "db:seed": "pnpm --filter @surakkha/db db:seed",
     "prepare": "husky",
     "clean": "pnpm -r clean && rm -rf node_modules"
   },

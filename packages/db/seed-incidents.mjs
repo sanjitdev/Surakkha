@@ -5,6 +5,11 @@
 // api image was built before Story 3.4's de-bounce wiring; this seed
 // is the fastest path to a populated Kanban for visual verification
 // of Story 4.4's surfaces.
+//
+// Idempotent: a re-run skips any device that already has an incident
+// in a non-RESOLVED state, so `pnpm db:seed` is safe to invoke
+// repeatedly without piling up duplicate rows or pushing the audit
+// timeline anchor back.
 import { PrismaClient } from "@prisma/client";
 
 const c = new PrismaClient();
@@ -69,8 +74,7 @@ const findRule = async (metric, severity) => {
 
 const minutesAgo = (m) => new Date(Date.now() - m * 60_000);
 
-let seeded = 0;
-for (const d of devices) {
+const seedOne = async (d) => {
   const ruleId = await findRule(d.metric, d.severity);
 
   // Anchor timeline on the alert open moment (60 min ago for all).
@@ -161,7 +165,25 @@ for (const d of devices) {
   }
 
   await c.incidentEvent.createMany({ data: events });
-  seeded++;
+};
+
+let seeded = 0;
+for (const d of devices) {
+  // Idempotency: skip devices that already have a non-RESOLVED
+  // incident so re-running `pnpm db:seed` doesn't pile up duplicates
+  // or push the audit timeline anchor back. RESOLVED rows are NOT
+  // considered here — those are intentional closures from a previous
+  // resolve flow and must be preserved.
+  const existing = await c.incident.findFirst({
+    where: { deviceId: d.id, state: { not: "RESOLVED" } },
+    select: { id: true },
+  });
+  if (existing !== null) {
+    globalThis.console.log(`skip ${d.id} (already has incident ${existing.id})`);
+    continue;
+  }
+  await seedOne(d);
+  seeded += 1;
 }
 
 globalThis.console.log("seeded", seeded, "incidents + alerts + events");
