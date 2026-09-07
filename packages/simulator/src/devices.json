@@ -1,5 +1,5 @@
 {
-  "tick_interval_ms": 2000,
+  "tick_interval_ms": 3000,
   "devices": [
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000001",
@@ -22,20 +22,20 @@
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000004",
       "scenario": "ChlorineDrop",
-      "lat": 23.7280,
+      "lat": 23.728,
       "lng": 90.3965
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000005",
       "scenario": "Offline",
-      "lat": 23.7920,
-      "lng": 90.4250
+      "lat": 23.792,
+      "lng": 90.425
     },
     {
       "device_id": "9b1c4f00-0000-4000-8000-000000000006",
       "scenario": "RandomFailure",
-      "lat": 23.7590,
-      "lng": 90.4480
+      "lat": 23.759,
+      "lng": 90.448
     }
   ]
 }

@@ -21,8 +21,12 @@ import { runScenario, SCENARIO_NAMES, type ScenarioName } from "./scenarios.js";
 /** Frame buffer cap per device (architecture §6.1, I-2). */
 export const BUFFER_CAP = 5_000;
 
-/** Default tick interval, ms. Mirrored in `devices.json` and `.env.example`. */
-export const DEFAULT_TICK_INTERVAL_MS = 2_000;
+/** Default tick interval, ms. Mirrored in `devices.json` and `.env.example`.
+ *  Must be ≥ the api's per-device rate-limit window (`packages/api/src/ingest/rateLimit.ts:8`,
+ *  2_000 ms) by a comfortable margin — 3000 ms gives 1 s safety against
+ *  clock skew so a single tick can never land inside the api's
+ *  `previous + RATE_LIMIT_WINDOW_MS` rejection window. */
+export const DEFAULT_TICK_INTERVAL_MS = 3_000;
 /** Minimum tick interval — anything faster hits the rate cap (architecture §3.2). */
 export const MIN_TICK_INTERVAL_MS = 1_000;
 /** Backoff schedule (architecture §6.1, I-2). */
@@ -259,10 +263,7 @@ export class WsClient {
   };
 
   /** Test seam: deliver a fake envelope to the per-socket listener. */
-  public __test__deliverEnvelope = (
-    event: string,
-    payload: unknown,
-  ): void => {
+  public __test__deliverEnvelope = (event: string, payload: unknown): void => {
     if (this.socket !== null) {
       this.handleEnvelope(event, payload);
     }
@@ -307,24 +308,14 @@ export class WsClient {
     socket.on("connect", () => this.onSocketConnect());
     socket.on("disconnect", () => this.onSocketDisconnect());
     socket.on("connect_error", (err: Error) => this.onSocketConnectError(err));
-    socket.on(ENVELOPE_RATE_LIMITED, (raw) =>
-      this.handleEnvelope(ENVELOPE_RATE_LIMITED, raw),
-    );
-    socket.on(ENVELOPE_BAD_REQUEST, (raw) =>
-      this.handleEnvelope(ENVELOPE_BAD_REQUEST, raw),
-    );
-    socket.on(ENVELOPE_STALE_FRAME, (raw) =>
-      this.handleEnvelope(ENVELOPE_STALE_FRAME, raw),
-    );
+    socket.on(ENVELOPE_RATE_LIMITED, (raw) => this.handleEnvelope(ENVELOPE_RATE_LIMITED, raw));
+    socket.on(ENVELOPE_BAD_REQUEST, (raw) => this.handleEnvelope(ENVELOPE_BAD_REQUEST, raw));
+    socket.on(ENVELOPE_STALE_FRAME, (raw) => this.handleEnvelope(ENVELOPE_STALE_FRAME, raw));
     socket.on(ENVELOPE_UNAUTHENTICATED, () =>
       this.handleEnvelope(ENVELOPE_UNAUTHENTICATED, undefined),
     );
-    socket.on(ENVELOPE_AUTH_ERROR, (raw) =>
-      this.handleEnvelope(ENVELOPE_AUTH_ERROR, raw),
-    );
-    socket.on(ENVELOPE_PERSIST_FAILED, (raw) =>
-      this.handleEnvelope(ENVELOPE_PERSIST_FAILED, raw),
-    );
+    socket.on(ENVELOPE_AUTH_ERROR, (raw) => this.handleEnvelope(ENVELOPE_AUTH_ERROR, raw));
+    socket.on(ENVELOPE_PERSIST_FAILED, (raw) => this.handleEnvelope(ENVELOPE_PERSIST_FAILED, raw));
     socket.on(ENVELOPE_INTERNAL_ERROR, () =>
       this.handleEnvelope(ENVELOPE_INTERNAL_ERROR, undefined),
     );
@@ -333,7 +324,12 @@ export class WsClient {
   private onSocketConnect = (): void => {
     this.reconnectAttempts = 0;
     this.logger.info("simulator: connected");
-    this.flushBuffer();
+    // Buffer drain is now driven by the tick loop (`tickOnce` calls
+    // `flushBuffer` after every successful live dispatch) so the
+    // api's rate-limit cadence is honoured. Draining the whole buffer
+    // here used to fire up to BUFFER_CAP frames in one micro-task,
+    // tripping the api's `PerDeviceRateLimiter` and triggering the
+    // disconnect/reconnect storm.
   };
 
   private onSocketDisconnect = (): void => {
@@ -363,10 +359,7 @@ export class WsClient {
       (this.opts.clearTimer ?? defaultClearTimer)(this.reconnectHandle);
       this.reconnectHandle = null;
     }
-    const delayMs = Math.min(
-      BACKOFF_INITIAL_MS * 2 ** this.reconnectAttempts,
-      BACKOFF_MAX_MS,
-    );
+    const delayMs = Math.min(BACKOFF_INITIAL_MS * 2 ** this.reconnectAttempts, BACKOFF_MAX_MS);
     this.reconnectAttempts += 1;
     this.logger.info(
       { attempt: this.reconnectAttempts, delayMs },
@@ -462,8 +455,31 @@ export class WsClient {
       return;
     }
 
-    this.dispatch(parsed.data);
+    this.dispatchParsedFrame(parsed.data);
     this.scheduleNextTick(this.opts.tickIntervalMs);
+  };
+
+  /**
+   * Buffer-aware dispatch helper. If the per-device buffer is
+   * non-empty AND the socket is connected, emit ONE buffered frame
+   * INSTEAD of the live one — never both. The previous implementation
+   * emitted the live frame AND a buffered frame on the same tick,
+   * which doubled the wire rate on the first tick after a reconnect
+   * and tripped the api's rate limiter on every reconnect (1 frame
+   * accepted, 1 rejected).
+   *
+   * The next tick (3 s later at the new default cadence) emits the
+   * NEXT buffered frame if any remain, or the live frame if the
+   * buffer is empty. This preserves the per-tick cadence for both
+   * flows and lets the buffer drain at exactly the rate the api
+   * accepts.
+   */
+  private dispatchParsedFrame = (frame: TelemetryFrame): void => {
+    if (this.buffer.length > 0 && this.socket !== null && this.socket.connected) {
+      this.flushBuffer();
+      return;
+    }
+    this.dispatch(frame);
   };
 
   /**
@@ -484,10 +500,7 @@ export class WsClient {
       // against in-place mutation.
       this.buffer = this.buffer.slice(1);
       if (!this.overflowLoggedThisRun) {
-        this.logger.warn(
-          { cap: BUFFER_CAP },
-          "simulator: buffer overflow",
-        );
+        this.logger.warn({ cap: BUFFER_CAP }, "simulator: buffer overflow");
         this.overflowLoggedThisRun = true;
       }
     }
@@ -495,22 +508,31 @@ export class WsClient {
   };
 
   /**
-    Flush buffer on reconnect. Frames are produced monotonically per
-    device so `buffer[0]` is always the lowest `seq` — iterate in
-    order. The server rate-cap (1 reading / 2s) means we honour it by
-    leaving the buffer flush at the per-tick cadence: the per-device
-    timer is still ticking; flushing one frame per tick is the same
-    rate as live emission.
+    Drain at most ONE frame from the buffer. Called from the tick
+    loop (`tickOnce`), which is already gated by the rate-limit /
+    paused / offline guards above — so calling `flushBuffer` from
+    inside the tick body yields the cadence the api expects
+    (1 frame per tickInterval, well below the api's 2 s
+    rate-limit window).
 
-    The buffer is cleared after a successful flush. The wire contract
-    has no explicit ACK envelope; absence of a negative envelope
+    Why per-call single-frame (not the previous "flush all in a
+    synchronous loop" behaviour): the previous implementation called
+    `flushBuffer()` from `onSocketConnect`, which fired the entire
+    buffer (up to BUFFER_CAP = 5,000 frames) in one micro-task. The
+    api's `PerDeviceRateLimiter` accepted the first frame and rejected
+    every subsequent one as `rate_limited`. The simulator then
+    disconnected and reconnected, refilling the buffer from the live
+    tick loop, and the cycle repeated — a self-sustaining
+    disconnect/reconnect storm where NO frame ever reached the rule
+    engine. Draining one frame per tick eliminates the burst entirely.
+
+    Frames are produced monotonically per device so `buffer[0]` is
+    always the lowest `seq`; we pop the head. The wire contract has
+    no explicit ACK envelope; absence of a negative envelope
     (`bad_request` / `stale_frame` / `persist_failed`) is the canonical
-    "frame was accepted" signal. Clearing on flush prevents unbounded
-    growth across reconnect cycles — without this, frames buffered in
-    one disconnect cycle would re-emit on the next cycle and the server
-    would reject them as `out_of_order`. If a frame is rejected by the
-    server after flush, it arrives as an envelope against an empty
-    buffer; the drop is a no-op (the frame is gone).
+    "frame was accepted" signal. A rejected frame drops its own entry
+    via `dropOldestFrame` (no full-buffer clear), and the next drain
+    sends the next-oldest frame.
    */
   private flushBuffer = (): void => {
     if (this.buffer.length === 0) {
@@ -519,13 +541,17 @@ export class WsClient {
     if (this.socket === null || !this.socket.connected) {
       return;
     }
-    const drained = this.buffer;
-    this.overflowLoggedThisRun = false;
-    this.buffer = [];
-    for (const frame of drained) {
-      this.socket.emit(FRAME_EVENT, frame);
+    const head = this.buffer[0];
+    if (head === undefined) {
+      return;
     }
-    this.logger.info({ flushed: drained.length }, "simulator: buffer flushed");
+    // Reset the "overflow" log gate every time we successfully emit
+    // a buffered frame — the next overflow should be visible in logs
+    // even if a previous one was logged earlier in the run.
+    this.overflowLoggedThisRun = false;
+    this.buffer = this.buffer.slice(1);
+    this.socket.emit(FRAME_EVENT, head);
+    this.logger.info({ remaining: this.buffer.length }, "simulator: buffer drained 1 frame");
   };
 
   // ---------------------------------------------------------------------------
@@ -575,9 +601,8 @@ export class WsClient {
 
   private handleRateLimited = (raw: unknown): void => {
     const payload = raw as RateLimitedEnvelope | undefined;
-    const retrySeconds = typeof payload?.retry_after_seconds === "number"
-      ? payload.retry_after_seconds
-      : 2;
+    const retrySeconds =
+      typeof payload?.retry_after_seconds === "number" ? payload.retry_after_seconds : 2;
     const nowMs = (this.opts.now ?? defaultNow)();
     this.pausedUntilMs = nowMs + retrySeconds * 1_000;
     this.logger.warn(
@@ -619,17 +644,13 @@ export class WsClient {
   };
 
   private handlePersistFailed = (): void => {
-    this.logger.error(
-      "simulator: persist_failed — tearing down + reconnecting",
-    );
+    this.logger.error("simulator: persist_failed — tearing down + reconnecting");
     this.dropOldestFrame();
     this.tearDownAndReconnect();
   };
 
   private handleInternalError = (): void => {
-    this.logger.error(
-      "simulator: internal_error envelope from api — tearing down",
-    );
+    this.logger.error("simulator: internal_error envelope from api — tearing down");
     this.tearDownAndReconnect();
   };
 }
@@ -652,8 +673,7 @@ const defaultConnect = (
   return socket as unknown as MinimalSocket;
 };
 
-const defaultSetTimer = (fn: () => void, ms: number): NodeJS.Timeout =>
-  setTimeout(fn, ms);
+const defaultSetTimer = (fn: () => void, ms: number): NodeJS.Timeout => setTimeout(fn, ms);
 
 const defaultClearTimer = (handle: NodeJS.Timeout): void => {
   clearTimeout(handle);

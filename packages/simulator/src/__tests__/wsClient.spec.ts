@@ -43,8 +43,7 @@ import {
 
 const DEVICE_ID = "9b1c4f00-0000-4000-8000-000000000001";
 
-const silentLogger = (): Logger =>
-  pino({ level: "silent" });
+const silentLogger = (): Logger => pino({ level: "silent" });
 
 interface StubSocket extends MinimalSocket {
   readonly emit: ReturnType<typeof vi.fn>;
@@ -86,10 +85,10 @@ const fireEnvelope = (socket: StubSocket, event: string, payload?: unknown): voi
 };
 
 const buildClient = (overrides: Partial<WsClientOptions> = {}): WsClient => {
-  const setTimer = vi.fn(
-    ((fn: () => void, ms: number) =>
-      setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
-  );
+  const setTimer = vi.fn(((fn: () => void, ms: number) => setTimeout(fn, ms)) as unknown as (
+    fn: () => void,
+    ms: number,
+  ) => NodeJS.Timeout);
   const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
     clearTimeout(handle);
   }) as unknown as (handle: NodeJS.Timeout) => void);
@@ -139,7 +138,7 @@ describe("WsClient — bad_request drops the offending frame", () => {
 
   it("does NOT retry a frame that the server rejected with bad_request", () => {
     // After the envelope, the dropped frame is gone. Reconnect +
-    // flush must NOT re-emit it.
+    // drain must NOT re-emit it.
     const client = buildClient();
     const socket = buildStubSocket({ connected: true });
     client.__test__setSocket(socket);
@@ -156,14 +155,22 @@ describe("WsClient — bad_request drops the offending frame", () => {
     });
     expect(client.__test__bufferLength()).toBe(1);
 
-    // Reconnect → flush.
+    // Reconnect → the connect handler does NOT drain the buffer any
+    // more (the drain moved into the tick loop to break the
+    // disconnect/reconnect storm). Subsequent ticks drain one frame
+    // per call, INSTEAD of the live frame — buffer-aware dispatch
+    // (see `tickOnce`) emits EITHER a buffered frame OR a live frame
+    // on each tick, never both.
     socket.connected = true;
-    const emitCallsBefore = socket.emit.mock.calls.length;
     client.__test__deliverConnect();
+    const emitCallsBefore = socket.emit.mock.calls.length;
+    client.__test__runTick();
     const emitCallsAfter = socket.emit.mock.calls.length;
-    // Only ONE frame flushed (the one not dropped). The dropped frame
-    // must NOT be re-sent.
+    // The dropped frame must NOT be re-sent — only the surviving
+    // buffered frame is emitted on this tick (the live frame is
+    // suppressed because the buffer was non-empty). Buffer empties.
     expect(emitCallsAfter - emitCallsBefore).toBe(1);
+    expect(client.__test__bufferLength()).toBe(0);
   });
 });
 
@@ -224,10 +231,10 @@ describe("WsClient — rate_limited pauses emissions", () => {
 
 describe("WsClient — disconnect without envelope schedules reconnect", () => {
   it("schedules a reconnect with backoff starting at 1s", () => {
-    const setTimer = vi.fn(
-      ((fn: () => void, ms: number) =>
-        setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
-    );
+    const setTimer = vi.fn(((fn: () => void, ms: number) => setTimeout(fn, ms)) as unknown as (
+      fn: () => void,
+      ms: number,
+    ) => NodeJS.Timeout);
     const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
       clearTimeout(handle);
     }) as unknown as (handle: NodeJS.Timeout) => void);
@@ -245,10 +252,10 @@ describe("WsClient — disconnect without envelope schedules reconnect", () => {
   });
 
   it("doubles the backoff on each failed attempt, capped at 30s", () => {
-    const setTimer = vi.fn(
-      ((fn: () => void, ms: number) =>
-        setTimeout(fn, ms)) as unknown as (fn: () => void, ms: number) => NodeJS.Timeout,
-    );
+    const setTimer = vi.fn(((fn: () => void, ms: number) => setTimeout(fn, ms)) as unknown as (
+      fn: () => void,
+      ms: number,
+    ) => NodeJS.Timeout);
     const clearTimer = vi.fn(((handle: NodeJS.Timeout) => {
       clearTimeout(handle);
     }) as unknown as (handle: NodeJS.Timeout) => void);
@@ -324,10 +331,166 @@ describe("WsClient — buffer overflow drops oldest", () => {
     const remaining = (client as unknown as { buffer: TelemetryFrame[] }).buffer;
     expect(remaining[0]?.seq).toBe(6);
     // A single "simulator: buffer overflow" log line was emitted.
-    const overflowCalls = warns.filter(
-      (call) => call.includes("simulator: buffer overflow"),
-    );
+    const overflowCalls = warns.filter((call) => call.includes("simulator: buffer overflow"));
     expect(overflowCalls).toHaveLength(1);
+  });
+});
+
+describe("WsClient — buffer drain is rate-limited to one frame per tick", () => {
+  // Story 2.4 — the previous implementation called `flushBuffer()` from
+  // `onSocketConnect`, which emitted the entire buffer (up to BUFFER_CAP)
+  // in one micro-task. That tripped the api's `PerDeviceRateLimiter`
+  // and the simulator entered a self-sustaining disconnect/reconnect
+  // storm where NO frame ever reached the rule engine. The fix moves
+  // the drain into the tick loop and caps it to one frame per call.
+
+  it("does NOT drain the buffer on socket connect", () => {
+    // The buffer must NOT be touched by `__test__deliverConnect()`
+    // any more — the tick loop owns the drain now.
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    // Produce 3 buffered frames while disconnected.
+    socket.connected = false;
+    client.__test__runTick();
+    client.__test__runTick();
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(3);
+
+    // Reconnect: buffer must NOT drain here.
+    socket.connected = true;
+    const emitCallsBefore = socket.emit.mock.calls.length;
+    client.__test__deliverConnect();
+    const emitCallsAfter = socket.emit.mock.calls.length;
+    expect(emitCallsAfter).toBe(emitCallsBefore);
+    expect(client.__test__bufferLength()).toBe(3);
+  });
+
+  it("emits exactly one buffered frame per tick (no live frame while buffer non-empty)", () => {
+    // The buffer-aware dispatch emits EITHER a buffered frame OR a
+    // live frame on each tick, never both. This is what keeps the
+    // wire rate at exactly 1 frame / tickInterval — well below the
+    // api's 2 s rate-limit window — even right after a reconnect.
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    // Fill the buffer while disconnected.
+    socket.connected = false;
+    for (let i = 0; i < 5; i += 1) {
+      client.__test__runTick();
+    }
+    expect(client.__test__bufferLength()).toBe(5);
+
+    // Reconnect and tick through the buffer. Each tick drains ONE
+    // buffered frame — the live frame is suppressed until the buffer
+    // is empty. The 6th tick (after the buffer is empty) emits the
+    // live frame.
+    socket.connected = true;
+    client.__test__deliverConnect();
+
+    const emitsPerTick: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const before = socket.emit.mock.calls.length;
+      client.__test__runTick();
+      emitsPerTick.push(socket.emit.mock.calls.length - before);
+    }
+    // First 5 ticks: 1 buffered frame each (live suppressed).
+    // 6th tick: 1 live frame (buffer empty).
+    expect(emitsPerTick).toEqual([1, 1, 1, 1, 1, 1]);
+    expect(client.__test__bufferLength()).toBe(0);
+
+    // Confirm the buffered frames are the OLDEST 5 by `seq` (they
+    // were produced first while disconnected) and the live frame is
+    // the NEWEST. We don't pin exact seq numbers — `seq` is
+    // incremented inside `tickOnce` for live frames but the buffered
+    // frames keep their original seq from when they were produced,
+    // so the ordering is what matters, not the literal values.
+    const frameEmits = socket.emit.mock.calls
+      .filter((call) => call[0] === FRAME_EVENT)
+      .map((call) => call[1] as TelemetryFrame);
+    const seqs = frameEmits.map((f) => f.seq);
+    const sortedSeqs = [...seqs].sort((a, b) => a - b);
+    // Buffered frames were produced in monotonic seq order, so the
+    // emitted order is the same as the sorted order.
+    expect(seqs).toEqual(sortedSeqs);
+  });
+
+  it("does NOT drain the buffer while paused (admin pause)", () => {
+    const client = buildClient();
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    socket.connected = false;
+    client.__test__runTick();
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(2);
+
+    // Reconnect, then admin-pause the device. The tick loop's
+    // `paused` short-circuit must NOT drain the buffer — we don't
+    // want to fire frames at the api while the operator has the
+    // device paused.
+    socket.connected = true;
+    client.__test__deliverConnect();
+    client.setPaused(true);
+    const emitCallsBefore = socket.emit.mock.calls.length;
+    client.__test__runTick();
+    const emitCallsAfter = socket.emit.mock.calls.length;
+    expect(emitCallsAfter).toBe(emitCallsBefore);
+    expect(client.__test__bufferLength()).toBe(2);
+  });
+
+  it("does NOT drain the buffer while rate-limited (pausedUntilMs window)", () => {
+    // Server-driven pause (rate_limited envelope) must NOT drain
+    // the buffer — same logic as the admin pause, just with a
+    // wake-up timestamp. To set this up we first need to:
+    //   1. live-tick so the simulator produces a frame,
+    //   2. wait past any potential rate-limit window using the
+    //      injected `now` clock, then
+    //   3. produce buffered frames by disconnecting and ticking.
+    // The rate-limit envelope fires AFTER the buffer is built so
+    // that the next ticks see `pausedUntilMs` in the future.
+    let now = 1_000_000_000_000;
+    const client = buildClient({ now: () => now });
+    const socket = buildStubSocket({ connected: true });
+    client.__test__setSocket(socket);
+
+    // One live tick — this is the frame the server will later
+    // rate-limit (it doesn't matter that it's not rate-limited in
+    // this stub; we just need a real frame emit so the
+    // `handleRateLimited` path can record `pausedUntilMs`).
+    client.__test__runTick();
+    const baselineEmits = socket.emit.mock.calls.length;
+
+    // Build up buffered frames while disconnected. These calls
+    // happen BEFORE the rate-limit envelope, so `pausedUntilMs` is
+    // undefined and the tick body reaches `dispatch` → `bufferFrame`.
+    socket.connected = false;
+    client.__test__runTick();
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(2);
+
+    // Reconnect and immediately get rate-limited.
+    socket.connected = true;
+    client.__test__deliverConnect();
+    fireEnvelope(socket, ENVELOPE_RATE_LIMITED, { retry_after_seconds: 2 });
+
+    // Inside the rate-limit window: tick body short-circuits BEFORE
+    // flushBuffer, so the drain must NOT fire even though the socket
+    // is up.
+    now += 1_000; // still inside the 2 s window
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(2);
+    expect(socket.emit.mock.calls.length).toBe(baselineEmits);
+
+    // After the rate-limit window expires, the buffer drains at
+    // tick cadence again — one frame per call.
+    now += 2_000;
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(1);
+    client.__test__runTick();
+    expect(client.__test__bufferLength()).toBe(0);
   });
 });
 
@@ -408,9 +571,7 @@ describe("WsClient — frame emit payload shape", () => {
     client.__test__setSocket(socket);
 
     client.__test__runTick();
-    const frameEmits = socket.emit.mock.calls.filter(
-      (call) => call[0] === FRAME_EVENT,
-    );
+    const frameEmits = socket.emit.mock.calls.filter((call) => call[0] === FRAME_EVENT);
     expect(frameEmits).toHaveLength(1);
     const frame = frameEmits[0]?.[1] as TelemetryFrame;
     expect(frame.version).toBe(1);
