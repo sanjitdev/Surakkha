@@ -69,3 +69,8 @@ tmp/
 # committed; `.review-target-*.txt` is just a marker the BMAD build
 # workflow drops at the repo root.
 .review-target-*.txt
+
+# Ad-hoc diagnostic probes dropped at the repo root while debugging
+# (similar treatment to `tmp/`). Recreate from RUNBOOK.md or scrape
+# from `git log -p -- probe.mjs` if you need to re-run one.
+probe.mjs
