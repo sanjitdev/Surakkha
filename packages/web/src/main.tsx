@@ -18,7 +18,7 @@
  *       /                  → Dashboard
  *       /dashboard         → Dashboard
  *       /severity-cards    → SeverityCards
- *       /sensors           → PageStub
+ *       /sensors           → SensorsPage (PageHeader + device roster table)
  *       /incidents         → IncidentsPage (PageHeader + KanbanBoard)
  *       /incidents/:id     → IncidentDetailPage
  *       /alerts            → PageStub
@@ -56,6 +56,7 @@ import { Dashboard } from "./dashboard/Dashboard";
 import { IncidentDetailPage } from "./incidents/IncidentDetailPage";
 import { IncidentsPage } from "./incidents/IncidentsPage";
 import { queryClient } from "./queryClient";
+import { SensorsPage } from "./sensors/SensorsPage";
 import { ProtectedShell } from "./shell/ProtectedShell";
 
 import "./index.css";
@@ -143,7 +144,7 @@ createRoot(root).render(
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/severity-cards" element={<SeverityCards />} />
-                <Route path="/sensors" element={<PageStub name="Sensors" />} />
+                <Route path="/sensors" element={<SensorsPage />} />
                 <Route path="/incidents" element={<IncidentsPage />} />
                 <Route path="/incidents/:id" element={<IncidentDetailPage />} />
                 <Route path="/alerts" element={<PageStub name="Alerts" />} />
