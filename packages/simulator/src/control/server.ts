@@ -47,8 +47,7 @@ const HTTP_BAD_REQUEST = 400;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 
-const UUID_V4_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const SECRET_HEADER = "x-simulator-secret";
 const CONTENT_TYPE_JSON = "application/json";
@@ -76,14 +75,11 @@ export interface SimulatorClientLike {
  */
 let clientsRegistry: ReadonlyMap<string, SimulatorClientLike> = new Map();
 
-export const setClientsRegistry = (
-  next: ReadonlyMap<string, SimulatorClientLike>,
-): void => {
+export const setClientsRegistry = (next: ReadonlyMap<string, SimulatorClientLike>): void => {
   clientsRegistry = next;
 };
 
-export const getClientsRegistry = (): ReadonlyMap<string, SimulatorClientLike> =>
-  clientsRegistry;
+export const getClientsRegistry = (): ReadonlyMap<string, SimulatorClientLike> => clientsRegistry;
 
 const SCENARIO_SET: ReadonlySet<ScenarioName> = new Set(SCENARIO_NAMES);
 
@@ -141,10 +137,7 @@ const readSecretFromHeader = (req: IncomingMessage): string | null => {
  * `MAX_BODY_BYTES` so a misbehaving client cannot OOM the simulator
  * with a single request.
  */
-const readJsonBody = async (
-  req: IncomingMessage,
-  limit = MAX_BODY_BYTES,
-): Promise<unknown> => {
+const readJsonBody = async (req: IncomingMessage, limit = MAX_BODY_BYTES): Promise<unknown> => {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -165,11 +158,7 @@ const readJsonBody = async (
   }
 };
 
-const sendJson = (
-  res: ServerResponse,
-  status: number,
-  body: unknown,
-): void => {
+const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   const target = res;
   target.statusCode = status;
   target.setHeader("Content-Type", CONTENT_TYPE_JSON);
@@ -211,9 +200,7 @@ const parseRoute = (rawUrl: string): ParsedRoute | null => {
   // valid GET.
   const rest = pathOnly.slice(scenarioPrefix.length);
   if (!rest.endsWith(SCENARIO_SUFFIX)) return null;
-  const deviceId = parseUuidSegment(
-    rest.slice(0, rest.length - SCENARIO_SUFFIX.length),
-  );
+  const deviceId = parseUuidSegment(rest.slice(0, rest.length - SCENARIO_SUFFIX.length));
   return deviceId === null ? null : { kind: "scenario", deviceId };
 };
 
@@ -235,9 +222,10 @@ const parseRoute = (rawUrl: string): ParsedRoute | null => {
  *      SPA's eyes), defeating the "same banner regardless of which
  *      side is unset" intent (AC2 narrative).
  */
-const disabledResponse = (
-  secretResult: { readonly ok: false; readonly reason: "missing" },
-): { readonly status: number; readonly body: unknown } => ({
+const disabledResponse = (secretResult: {
+  readonly ok: false;
+  readonly reason: "missing";
+}): { readonly status: number; readonly body: unknown } => ({
   status: HTTP_FORBIDDEN,
   body: { error: "secret_mismatch", reason: secretResult.reason },
 });
@@ -295,15 +283,12 @@ const handleScenarioRoute = async (
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     sendJson(res, HTTP_BAD_REQUEST, {
-      error:
-        message === "invalid_json" ? "invalid_json" : "payload_too_large",
+      error: message === "invalid_json" ? "invalid_json" : "payload_too_large",
     });
     return;
   }
   const bodyRecord =
-    typeof body === "object" && body !== null
-      ? (body as Record<string, unknown>)
-      : {};
+    typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   const result = applyControlBody(deviceId, bodyRecord);
   if (result === null) {
     sendJson(res, HTTP_NOT_FOUND, { error: "unknown_device" });
@@ -317,10 +302,7 @@ const handleScenarioRoute = async (
  * doesn't return an arrow function from an arrow function (eslint
  * `unicorn/consistent-function-scoping`).
  */
-const handleControlRequest = async (
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> => {
+const handleControlRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
   const route = parseRoute(req.url ?? "/");
   if (route === null) {
     sendJson(res, HTTP_NOT_FOUND, { error: "not_found" });
@@ -339,10 +321,7 @@ const handleControlRequest = async (
 
   const providedSecret = readSecretFromHeader(req);
   // Reject non-matching lengths BEFORE the constant-time compare.
-  if (
-    providedSecret === null ||
-    !constantTimeEquals(providedSecret, secretResult.value)
-  ) {
+  if (providedSecret === null || !constantTimeEquals(providedSecret, secretResult.value)) {
     sendJson(res, HTTP_FORBIDDEN, { error: "secret_mismatch" });
     return;
   }
@@ -381,7 +360,9 @@ export const buildControlHandler = (): ((
  * OS assigns a free port — important for tests that don't want to
  * pre-allocate.
  */
-export const startControlServer = async (port?: number): Promise<{
+export const startControlServer = async (
+  port?: number,
+): Promise<{
   readonly port: number;
   readonly close: () => Promise<void>;
 }> => {
@@ -395,13 +376,15 @@ export const startControlServer = async (port?: number): Promise<{
     })();
 
   const server = createHttpServer(buildControlHandler());
-  await new Promise<void>((resolve) =>
-    server.listen(resolvedPort, "127.0.0.1", () => resolve()),
-  );
+  // Bind to `0.0.0.0` (not `127.0.0.1`) so the docker compose network
+  // bridge can deliver traffic from the api container — `127.0.0.1`
+  // would scope the listener to the simulator container's loopback
+  // and the api container's `http://simulator:4001/...` calls would
+  // get connection-refused even with `ports:` published.
+  await new Promise<void>((resolve) => server.listen(resolvedPort, "0.0.0.0", () => resolve()));
   const addr = server.address();
   const actualPort =
     addr !== null && typeof addr === "object" && "port" in addr ? addr.port : resolvedPort;
-  const close = (): Promise<void> =>
-    new Promise<void>((resolve) => server.close(() => resolve()));
+  const close = (): Promise<void> => new Promise<void>((resolve) => server.close(() => resolve()));
   return { port: actualPort, close };
 };
