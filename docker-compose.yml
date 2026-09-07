@@ -45,6 +45,13 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
       DATABASE_URL: postgresql://${POSTGRES_USER:-surakkha}:${POSTGRES_PASSWORD:-surakkha}@db:5432/${POSTGRES_DB:-surakkha}
       SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      # Default in source is `http://localhost:4001`, which resolves
+      # to the api container's OWN loopback (no simulator there). The
+      # docker network routes traffic to the `simulator` service by
+      # container name; without this override the admin tab's
+      # status check returns `unreachable` (renders as
+      # "Simulator Unavailable").
+      SIMULATOR_URL: ${SIMULATOR_URL:-http://simulator:4001}
       RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
       NODE_ENV: production
       LOG_LEVEL: info
@@ -86,6 +93,13 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # Expose the control server (default port 4001) on the host so
+    # out-of-stack tooling (curl, the SPA's status probe when the
+    # api-side proxy is unavailable) can reach it. Inside the docker
+    # network the api reaches it via `http://simulator:4001` (see
+    # the api service's `SIMULATOR_URL` above).
+    ports:
+      - "4001:4001"
     environment:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       API_URL: http://api:3000

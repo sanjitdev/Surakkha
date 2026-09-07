@@ -49,6 +49,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a 32+ char string}
       DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@host.docker.internal:5432/${POSTGRES_DB:?POSTGRES_DB required}
       SIMULATOR_SECRET: ${SIMULATOR_SECRET:-}
+      SIMULATOR_URL: ${SIMULATOR_URL:-http://simulator:4001}
       RETENTION_CRON: ${RETENTION_CRON:-5 * * * *}
       # F-W1: api runtime image lacks the db package's prisma/tsx
       # toolchain; migrations are run from the host before this
@@ -62,7 +63,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://localhost:3000/health'').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -92,6 +97,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    ports:
+      - "4001:4001"
     environment:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       # Simulator reads `API_URL` (packages/simulator/src/index.ts:210),

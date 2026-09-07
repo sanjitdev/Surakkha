@@ -42,19 +42,16 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 # Docker COPY follows symlinks and rewrites them to host-side
 # absolute paths, which would break the pnpm symlink farm.
 COPY --from=deps /repo/ ./
-RUN pnpm -F @surakkha/shared build && pnpm -F @surakkha/api build
-# Generate the Prisma client here, in a stage that already has the
-# `prisma` CLI installed (it's a devDep of `@surakkha/db`, pulled in
-# by the deps stage via `--filter @surakkha/db...` on line 21) and
-# already has the schema (line 19). Running `pnpm exec prisma` from
-# the runtime stage used to fail with "Command 'prisma' not found"
-# because the runtime install did not hoist the prisma CLI to
-# `node_modules/.bin/` under pnpm's isolated node-linker.
-#
-# `--schema` is resolved relative to the cwd of the `prisma` process;
-# `pnpm -F @surakkha/db exec` sets cwd to `packages/db`, so we have
-# to pass the workspace-absolute path.
+# Generate the Prisma client BEFORE `tsc -p api`. `@prisma/client`'s
+# type exports (`Prisma.defineExtension`, the generated model
+# types, `$Enums`, ...) are re-exported from the generated client
+# directory; if `prisma generate` hasn't run yet, the api's `tsc`
+# step fails with TS2305 "Module has no exported member 'Prisma'".
+# The runtime install (line below) still needs the generated
+# client too — running `prisma generate` exactly once here is the
+# cheapest place to do it.
 RUN pnpm -F @surakkha/db exec prisma generate --schema=/repo/packages/db/prisma/schema.prisma
+RUN pnpm -F @surakkha/shared build && pnpm -F @surakkha/api build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
